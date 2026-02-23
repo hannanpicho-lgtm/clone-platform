@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx vite",
-    "build": "npx vite build",
+    "build": "echo 'Using pre-built dist folder'",
     "preview": "npx vite preview",
     "test:endpoints": "node test-new-endpoints.js",
     "test:customer-service": "node test-customer-service-endpoints.js",
