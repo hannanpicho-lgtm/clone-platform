@@ -1,0 +1,1056 @@
+openapi: 3.0.3
+info:
+  title: Clone Platform API
+  description: |
+    Complete API reference for Clone Platform - a premium product affiliate network with customer service, withdrawals, and admin controls.
+    
+    **Base URL**: `https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3`
+    
+    **Authentication**: Bearer token in Authorization header (user token for protected endpoints, admin key for admin endpoints)
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@cloneplatform.local
+  license:
+    name: Proprietary
+    url: https://cloneplatform.local/license
+
+servers:
+  - url: https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3
+    description: Production
+  - url: http://localhost:54321/functions/v1/make-server-44a642d3
+    description: Local Development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: User authentication token from /signin or /signup
+    adminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Admin API key for admin-only endpoints
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "abc123-def456"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "John Doe"
+        gender:
+          type: string
+          enum: [male, female, other]
+          example: "male"
+        vipTier:
+          type: string
+          enum: [Normal, Silver, Gold, Platinum, Diamond]
+          example: "Gold"
+        balance:
+          type: number
+          format: double
+          example: 1500.50
+        invitationCode:
+          type: string
+          example: "ABCD1234"
+        parentUserId:
+          type: string
+          format: uuid
+          nullable: true
+          example: "parent-uuid"
+        accountFrozen:
+          type: boolean
+          example: false
+        freezeAmount:
+          type: number
+          format: double
+          example: 0
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-02-23T10:00:00Z"
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "User not found"
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+---
+# CORE ENDPOINTS
+
+## Health & System
+
+### GET /health
+Health check endpoint
+- **Auth**: None required
+- **Status Code**: 200
+
+```yaml
+responses:
+  '200':
+    description: Service is healthy
+    content:
+      application/json:
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "ok"
+```
+
+---
+
+## Authentication
+
+### POST /signup
+Create new user account
+
+- **Auth**: None required
+- **Request Body**:
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "SecurePassword123!",
+    "name": "John Doe",
+    "gender": "male",
+    "withdrawalPassword": "WithdrawPass123!",
+    "invitationCode": "OPTIONAL_PARENT_CODE"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "user": {
+      "id": "uuid",
+      "email": "user@example.com",
+      "name": "John Doe",
+      "invitationCode": "GENERATED_CODE",
+      "vipTier": "Normal"
+    },
+    "session": {
+      "access_token": "eyJhbGc...",
+      "token_type": "bearer",
+      "expires_in": 3600
+    }
+  }
+  ```
+
+- **Error**: 400
+  ```json
+  {
+    "error": "Email already exists"
+  }
+  ```
+
+---
+
+### POST /signin
+Authenticate and get session token
+
+- **Auth**: None required
+- **Request Body**:
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "user": {
+      "id": "uuid",
+      "email": "user@example.com",
+      "name": "John Doe",
+      "vipTier": "Gold"
+    },
+    "session": {
+      "access_token": "eyJhbGc...",
+      "token_type": "bearer",
+      "expires_in": 3600
+    }
+  }
+  ```
+
+- **Error**: 401
+  ```json
+  {
+    "error": "Invalid email or password"
+  }
+  ```
+
+---
+
+## User Profile
+
+### GET /profile
+Get authenticated user's profile and balance
+
+- **Auth**: ✅ Required (Bearer token)
+- **Response**: 200 OK
+  ```json
+  {
+    "id": "uuid",
+    "email": "user@example.com",
+    "name": "John Doe",
+    "gender": "male",
+    "balance": 1500.50,
+    "totalEarned": 3200.00,
+    "vipTier": "Gold",
+    "invitationCode": "ABC123",
+    "createdAt": "2026-02-20T10:00:00Z",
+    "freezeAmount": 0,
+    "accountFrozen": false,
+    "childCount": 2,
+    "parentUserId": null
+  }
+  ```
+
+---
+
+## Earnings & Referrals
+
+### GET /earnings
+Get user's earnings breakdown
+
+- **Auth**: ✅ Required
+- **Response**: 200 OK
+  ```json
+  {
+    "balance": 1500.50,
+    "totalEarned": 3200.00,
+    "fromDirectChildren": 500.00,
+    "fromIndirectReferrals": 200.00,
+    "childCount": 2,
+    "totalFromChildren": 700.00,
+    "parentUserId": null
+  }
+  ```
+
+---
+
+### GET /referrals
+Get user's referral network (child users)
+
+- **Auth**: ✅ Required
+- **Query Parameters**:
+  - `limit` (optional): Max results, default 50
+  - `offset` (optional): Pagination offset, default 0
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "referrals": [
+      {
+        "childId": "uuid",
+        "childName": "Jane Doe",
+        "childEmail": "jane@example.com",
+        "totalSharedProfit": 500.00,
+        "lastProductAt": "2026-02-22T15:30:00Z",
+        "createdAt": "2026-02-15T10:00:00Z"
+      }
+    ],
+    "totalChildren": 1,
+    "totalSharedProfit": 500.00
+  }
+  ```
+
+---
+
+## Products
+
+### POST /submit-product
+Submit a product for approval and earn commission
+
+- **Auth**: ✅ Required
+- **Request Body**:
+  ```json
+  {
+    "productName": "Amazing Software Tool",
+    "productValue": 1000
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "product": {
+      "name": "Amazing Software Tool",
+      "value": 1000,
+      "userEarned": 800,
+      "commissionsCascade": [
+        {
+          "level": 1,
+          "userId": "parent-uuid",
+          "userName": "Parent Name",
+          "amount": 100
+        }
+      ]
+    },
+    "newBalance": 1500.50
+  }
+  ```
+
+- **Error**: 400
+  ```json
+  {
+    "error": "Product value must be greater than 0"
+  }
+  ```
+
+---
+
+# CUSTOMER SERVICE ENDPOINTS
+
+## Support Tickets
+
+### POST /support-tickets
+Create a new support ticket
+
+- **Auth**: ✅ Required
+- **Request Body**:
+  ```json
+  {
+    "subject": "Withdrawal not received",
+    "description": "I submitted a withdrawal 3 days ago and haven't received it yet. Order ID: WD-12345"
+  }
+  ```
+
+- **Response**: 201 Created
+  ```json
+  {
+    "success": true,
+    "ticket": {
+      "id": "ticket-uuid",
+      "userId": "user-uuid",
+      "subject": "Withdrawal not received",
+      "status": "open",
+      "createdAt": "2026-02-23T10:30:00Z"
+    }
+  }
+  ```
+
+---
+
+### GET /support-tickets
+List user's support tickets
+
+- **Auth**: ✅ Required
+- **Query Parameters**:
+  - `status` (optional): Filter by open/closed
+  - `limit` (optional): Default 20
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "tickets": [
+      {
+        "id": "ticket-uuid",
+        "subject": "Withdrawal not received",
+        "status": "open",
+        "createdAt": "2026-02-23T10:30:00Z",
+        "replyCount": 2
+      }
+    ],
+    "total": 1
+  }
+  ```
+
+---
+
+### GET /support-tickets/{ticketId}
+Get support ticket detail with all replies
+
+- **Auth**: ✅ Required
+- **Path Parameters**: 
+  - `ticketId` (required): Ticket ID
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "ticket": {
+      "id": "ticket-uuid",
+      "subject": "Withdrawal not received",
+      "description": "I submitted a withdrawal...",
+      "status": "open",
+      "createdAt": "2026-02-23T10:30:00Z",
+      "replies": [
+        {
+          "id": "reply-uuid",
+          "message": "We're looking into this. Thank you for your patience.",
+          "author": "support-admin",
+          "createdAt": "2026-02-23T10:35:00Z"
+        }
+      ]
+    }
+  }
+  ```
+
+---
+
+### POST /support-tickets/{ticketId}/reply
+Reply to a support ticket
+
+- **Auth**: ✅ Required
+- **Path Parameters**: `ticketId`
+- **Request Body**:
+  ```json
+  {
+    "message": "Thank you for your reply. I'll wait for the transfer."
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "reply": {
+      "id": "reply-uuid",
+      "message": "Thank you for your reply...",
+      "createdAt": "2026-02-23T11:00:00Z"
+    }
+  }
+  ```
+
+---
+
+## Live Chat
+
+### POST /chat/messages
+Send a chat message
+
+- **Auth**: ✅ Required
+- **Request Body**:
+  ```json
+  {
+    "message": "Are there any special offers for Diamond tier members?"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "message": {
+      "id": "msg-uuid",
+      "message": "Are there any special offers...",
+      "sentAt": "2026-02-23T10:45:00Z"
+    }
+  }
+  ```
+
+---
+
+### GET /chat/messages
+Get chat message history
+
+- **Auth**: ✅ Required
+- **Query Parameters**:
+  - `limit` (optional): Default 50
+  - `offset` (optional): Default 0
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "messages": [
+      {
+        "id": "msg-uuid",
+        "message": "Are there any special offers?",
+        "author": "user",
+        "sentAt": "2026-02-23T10:45:00Z"
+      },
+      {
+        "id": "msg-uuid-2",
+        "message": "Yes! Diamond members get 2% bonus on all commissions.",
+        "author": "support",
+        "sentAt": "2026-02-23T10:46:00Z"
+      }
+    ],
+    "total": 2
+  }
+  ```
+
+---
+
+## FAQ
+
+### GET /faq
+Get all FAQ items
+
+- **Auth**: None required
+- **Query Parameters**:
+  - `search` (optional): Filter by keyword
+  - `limit` (optional): Default 50
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "faqs": [
+      {
+        "id": "faq-uuid",
+        "question": "How do I withdraw my earnings?",
+        "answer": "Go to Withdrawals section, enter amount and password...",
+        "category": "withdrawals",
+        "order": 1
+      }
+    ],
+    "total": 12
+  }
+  ```
+
+---
+
+### GET /faq/search
+Search FAQs by keyword
+
+- **Auth**: None required
+- **Query Parameters**:
+  - `q` (required): Search query
+  - `limit` (optional): Default 20
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "results": [
+      {
+        "id": "faq-uuid",
+        "question": "How do I withdraw my earnings?",
+        "answer": "Go to Withdrawals...",
+        "category": "withdrawals"
+      }
+    ],
+    "total": 3
+  }
+  ```
+
+---
+
+# FINANCIAL ENDPOINTS
+
+## Withdrawals
+
+### POST /withdrawals
+Create a withdrawal request
+
+- **Auth**: ✅ Required
+- **Request Body**:
+  ```json
+  {
+    "amount": 500.00,
+    "withdrawalPassword": "WithdrawPass123!"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "withdrawal": {
+      "id": "wd-uuid",
+      "amount": 500.00,
+      "status": "pending",
+      "requestedAt": "2026-02-23T10:50:00Z"
+    }
+  }
+  ```
+
+- **Error**: 400
+  ```json
+  {
+    "error": "Insufficient balance"
+  }
+  ```
+
+---
+
+### GET /withdrawals
+Get user's withdrawal history
+
+- **Auth**: ✅ Required
+- **Query Parameters**:
+  - `status` (optional): pending/approved/denied
+  - `limit` (optional): Default 50
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "withdrawals": [
+      {
+        "id": "wd-uuid",
+        "amount": 500.00,
+        "status": "approved",
+        "requestedAt": "2026-02-23T10:50:00Z",
+        "approvedAt": "2026-02-23T11:20:00Z"
+      }
+    ],
+    "total": 5
+  }
+  ```
+
+---
+
+## Bonus Payouts
+
+### GET /bonus-payouts
+Get available bonus payouts
+
+- **Auth**: ✅ Required
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "payouts": [
+      {
+        "id": "bonus-uuid",
+        "name": "February Performance Bonus",
+        "amount": 250.00,
+        "status": "eligible",
+        "eligibleAt": "2026-02-28T00:00:00Z"
+      }
+    ],
+    "total": 2
+  }
+  ```
+
+---
+
+### POST /bonus-payouts/{bonusId}/claim
+Claim an eligible bonus
+
+- **Auth**: ✅ Required
+- **Path Parameters**: `bonusId`
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "message": "Bonus claimed successfully",
+    "newBalance": 1750.50
+  }
+  ```
+
+- **Error**: 400
+  ```json
+  {
+    "error": "Bonus not eligible yet"
+  }
+  ```
+
+---
+
+# ADMIN ENDPOINTS
+
+All admin endpoints require **admin authentication** (admin API key in Authorization header).
+
+## Premium Products
+
+### GET /admin/premium/list
+List all premium product assignments
+
+- **Auth**: ✅ Admin only
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "total": 5,
+    "assignments": [
+      {
+        "userId": "user-uuid",
+        "userEmail": "user@example.com",
+        "userName": "John Doe",
+        "assignment": {
+          "amount": 5000,
+          "position": 1,
+          "assignedAt": "2026-02-22T15:30:00Z"
+        },
+        "currentBalance": 1500.00,
+        "accountFrozen": true,
+        "freezeAmount": 3500.00
+      }
+    ]
+  }
+  ```
+
+---
+
+### POST /admin/premium
+Assign a premium product to a user
+
+- **Auth**: ✅ Admin only
+- **Request Body**:
+  ```json
+  {
+    "userId": "user-uuid",
+    "amount": 10000,
+    "position": 1
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "user": {
+      "id": "user-uuid",
+      "name": "John Doe",
+      "balance": -8500,
+      "accountFrozen": true,
+      "freezeAmount": 10000,
+      "premiumAssignment": {
+        "amount": 10000,
+        "position": 1,
+        "assignedAt": "2026-02-23T11:00:00Z"
+      }
+    },
+    "result": {
+      "boostedCommission": 10000,
+      "frozen": true
+    }
+  }
+  ```
+
+---
+
+### POST /admin/premium/revoke
+Revoke a premium assignment from a user
+
+- **Auth**: ✅ Admin only
+- **Request Body**:
+  ```json
+  {
+    "userId": "user-uuid"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "message": "Premium assignment revoked for user abc123",
+    "user": {
+      "id": "user-uuid",
+      "premiumAssignment": null,
+      "accountFrozen": false,
+      "freezeAmount": 0
+    }
+  }
+  ```
+
+---
+
+### GET /admin/premium/analytics
+Get premium product analytics and metrics
+
+- **Auth**: ✅ Admin only
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "analytics": {
+      "totalAssignments": 5,
+      "totalPremiumValue": 45000,
+      "averageValue": 9000,
+      "frozenAccounts": 3,
+      "unfrozenAccounts": 2,
+      "assignments": [
+        {
+          "userId": "uuid",
+          "amount": 10000,
+          "position": 1,
+          "assignedAt": "2026-02-23T11:00:00Z",
+          "isFrozen": true
+        }
+      ]
+    }
+  }
+  ```
+
+---
+
+## Account Management
+
+### POST /admin/unfreeze
+Unfreeze a user's frozen account
+
+- **Auth**: ✅ Admin only
+- **Request Body**:
+  ```json
+  {
+    "userId": "user-uuid"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "user": {
+      "id": "user-uuid",
+      "accountFrozen": false,
+      "freezeAmount": 0,
+      "balance": 1500.00,
+      "unfrozenAt": "2026-02-23T11:30:00Z"
+    }
+  }
+  ```
+
+---
+
+### GET /admin/users
+List all users (paginated)
+
+- **Auth**: ✅ Admin only
+- **Query Parameters**:
+  - `limit` (optional): Default 50
+  - `offset` (optional): Default 0
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "users": [
+      {
+        "id": "uuid",
+        "email": "user@example.com",
+        "name": "John Doe",
+        "balance": 1500.50,
+        "vipTier": "Gold",
+        "createdAt": "2026-02-20T10:00:00Z"
+      }
+    ],
+    "total": 125
+  }
+  ```
+
+---
+
+## Withdrawal Management
+
+### GET /admin/withdrawals
+List all pending withdrawal requests
+
+- **Auth**: ✅ Admin only
+- **Query Parameters**:
+  - `status` (optional): pending/approved/denied
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "withdrawals": [
+      {
+        "id": "wd-uuid",
+        "userId": "user-uuid",
+        "userName": "John Doe",
+        "amount": 500.00,
+        "status": "pending",
+        "requestedAt": "2026-02-23T10:50:00Z"
+      }
+    ],
+    "total": 3
+  }
+  ```
+
+---
+
+### POST /admin/approve-withdrawal
+Approve a withdrawal request
+
+- **Auth**: ✅ Admin only
+- **Request Body**:
+  ```json
+  {
+    "withdrawalId": "wd-uuid"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "withdrawal": {
+      "id": "wd-uuid",
+      "status": "approved",
+      "approvedAt": "2026-02-23T11:45:00Z"
+    }
+  }
+  ```
+
+---
+
+### POST /admin/deny-withdrawal
+Deny a withdrawal request
+
+- **Auth**: ✅ Admin only
+- **Request Body**:
+  ```json
+  {
+    "withdrawalId": "wd-uuid",
+    "reason": "Suspicious activity detected"
+  }
+  ```
+
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "withdrawal": {
+      "id": "wd-uuid",
+      "status": "denied",
+      "reason": "Suspicious activity detected"
+    }
+  }
+  ```
+
+---
+
+## Analytics
+
+### GET /admin/metrics
+Get platform-wide metrics
+
+- **Auth**: ✅ Admin only
+- **Response**: 200 OK
+  ```json
+  {
+    "success": true,
+    "metrics": {
+      "totalUsers": 342,
+      "activeUsers": 128,
+      "totalRevenue": 125430.50,
+      "totalPayouts": 45230.25,
+      "pendingWithdrawals": 8500.00
+    }
+  }
+  ```
+
+---
+
+# ERROR CODES
+
+All errors return appropriate HTTP status codes:
+
+| Code | Meaning | Example |
+|------|---------|---------|
+| **200** | Success | Request completed successfully |
+| **201** | Created | Resource created (ticket, withdrawal, etc.) |
+| **400** | Bad Request | Invalid input, missing field |
+| **401** | Unauthorized | Missing or invalid token |
+| **403** | Forbidden | Admin-only endpoint, insufficient permissions |
+| **404** | Not Found | User, ticket, or resource doesn't exist |
+| **409** | Conflict | Email already exists, duplicate request |
+| **500** | Server Error | Unexpected backend error |
+
+---
+
+# AUTHENTICATION FLOW
+
+## For User Operations
+
+1. **Signup**
+   ```bash
+   POST /signup
+   {
+     "email": "user@example.com",
+     "password": "SecurePassword123!",
+     "name": "John",
+     "gender": "male",
+     "withdrawalPassword": "WithdrawPass123!"
+   }
+   ```
+
+2. **Receive Token**
+   ```json
+   {
+     "session": {
+       "access_token": "eyJhbGc...",
+       "expires_in": 3600
+     }
+   }
+   ```
+
+3. **Use Token for Protected Endpoints**
+   ```bash
+   GET /profile
+   Authorization: Bearer eyJhbGc...
+   ```
+
+## For Admin Operations
+
+1. **Get Admin Key** (from Supabase project settings)
+2. **Use Admin Key for Admin Endpoints**
+   ```bash
+   GET /admin/premium/list
+   Authorization: Bearer <SUPABASE_ADMIN_API_KEY>
+   ```
+
+---
+
+# RATE LIMITS & BEST PRACTICES
+
+*(Note: Rate limiting recommended before production)*
+
+**Recommended Limits**:
+- User endpoints: 100 requests per minute
+- Admin endpoints: 50 requests per minute
+- Public endpoints: 1000 requests per minute
+
+**Best Practices**:
+- Cache FAQ results client-side
+- Use pagination for large lists
+- Implement exponential backoff for retries
+- Monitor API logs for unusual activity
+- Use webhooks for async operations (when implemented)
+
+---
+
+# WEBHOOKS (Planned)
+
+Future webhook events:
+- `withdrawal.approved`
+- `premium.assigned`
+- `ticket.created`
+- `user.registered`
+
+---
+
+# SDKs & CODE EXAMPLES
+
+Ready to build:
+- JavaScript/TypeScript SDK
+- Python SDK
+- cURL examples
+- Postman collection

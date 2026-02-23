@@ -1,0 +1,2 @@
+-- Baseline migration to align local history with existing remote migration 20260216131652.
+-- No-op on purpose.

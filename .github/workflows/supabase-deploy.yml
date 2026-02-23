@@ -1,0 +1,39 @@
+name: Supabase Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install supabase CLI
+        run: npm install -g supabase
+
+      - name: Deploy functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          supabase functions deploy make-server-44a642d3 --project-ref $SUPABASE_PROJECT_REF --no-verify-jwt
+
+      - name: Apply DB schema
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          supabase db query --project-ref $SUPABASE_PROJECT_REF --file supabase/schema/kv_store_44a642d3.sql
+
+      - name: Run smoke tests
+        run: |
+          node test-new-endpoints.js
+          node test-customer-service-endpoints.js

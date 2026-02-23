@@ -1,0 +1,633 @@
+{
+  "info": {
+    "name": "Clone Platform API",
+    "description": "Complete API collection for Clone Platform - User Management, Earnings, Support, Admin",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Sign Up",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"SecurePass123!\",\n  \"name\": \"John Doe\",\n  \"gender\": \"male\",\n  \"withdrawalPassword\": \"WithdrawPass456!\",\n  \"invitationCode\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/signup",
+              "host": ["{{BASE_URL}}"],
+              "path": ["signup"]
+            },
+            "description": "Create new user account and receive auth token"
+          },
+          "response": []
+        },
+        {
+          "name": "Sign In",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/signin",
+              "host": ["{{BASE_URL}}"],
+              "path": ["signin"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "User Profile",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/profile",
+              "host": ["{{BASE_URL}}"],
+              "path": ["profile"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"gender\": \"female\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/profile",
+              "host": ["{{BASE_URL}}"],
+              "path": ["profile"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Earnings & Referrals",
+      "item": [
+        {
+          "name": "Get Earnings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/earnings",
+              "host": ["{{BASE_URL}}"],
+              "path": ["earnings"]
+            },
+            "description": "View total balance and earnings breakdown"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Referrals Network",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/referrals",
+              "host": ["{{BASE_URL}}"],
+              "path": ["referrals"]
+            },
+            "description": "View all direct and indirect referrals"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Bonuses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/bonuses",
+              "host": ["{{BASE_URL}}"],
+              "path": ["bonuses"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "Submit Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productName\": \"Amazing Software\",\n  \"productValue\": 1000\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/submit-product",
+              "host": ["{{BASE_URL}}"],
+              "path": ["submit-product"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/products",
+              "host": ["{{BASE_URL}}"],
+              "path": ["products"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product Reviews",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/product-reviews",
+              "host": ["{{BASE_URL}}"],
+              "path": ["product-reviews"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Financial",
+      "item": [
+        {
+          "name": "Create Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 500,\n  \"withdrawalPassword\": \"WithdrawPass456!\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/withdrawal",
+              "host": ["{{BASE_URL}}"],
+              "path": ["withdrawal"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/withdrawals",
+              "host": ["{{BASE_URL}}"],
+              "path": ["withdrawals"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Account Frozen",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/account-frozen-status",
+              "host": ["{{BASE_URL}}"],
+              "path": ["account-frozen-status"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customer Support",
+      "item": [
+        {
+          "name": "Create Support Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Help with withdrawal\",\n  \"description\": \"I submitted a withdrawal but haven't received it yet\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/support-tickets",
+              "host": ["{{BASE_URL}}"],
+              "path": ["support-tickets"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Support Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/support-tickets",
+              "host": ["{{BASE_URL}}"],
+              "path": ["support-tickets"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send Chat Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What's the withdrawal minimum?\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/chat/messages",
+              "host": ["{{BASE_URL}}"],
+              "path": ["chat", "messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Chat History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{AUTH_TOKEN}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/chat/messages",
+              "host": ["{{BASE_URL}}"],
+              "path": ["chat", "messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get FAQ",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/faq",
+              "host": ["{{BASE_URL}}"],
+              "path": ["faq"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search FAQ",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/faq/search?q=withdrawal",
+              "host": ["{{BASE_URL}}"],
+              "path": ["faq", "search"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "withdrawal"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin Operations",
+      "item": [
+        {
+          "name": "Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"AdminPass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/admin-login",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin-login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List All Withdrawals",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/admin/withdrawals?status=pending",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "withdrawals"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"withdrawalId\": \"wd-uuid-here\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/admin/approve-withdrawal",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "approve-withdrawal"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin Premium Management",
+      "item": [
+        {
+          "name": "Assign Premium Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"user-uuid\",\n  \"amount\": 5000,\n  \"position\": 1\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/admin/premium",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "premium"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Premium Assignments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/admin/premium/list",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "premium", "list"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Premium Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "url": {
+              "raw": "{{BASE_URL}}/admin/premium/analytics",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "premium", "analytics"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke Premium",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ADMIN_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"user-uuid\"\n}"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/admin/premium/revoke",
+              "host": ["{{BASE_URL}}"],
+              "path": ["admin", "premium", "revoke"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health & System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{BASE_URL}}/health",
+              "host": ["{{BASE_URL}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3",
+      "type": "string"
+    },
+    {
+      "key": "AUTH_TOKEN",
+      "value": "your_user_token_here",
+      "type": "string"
+    },
+    {
+      "key": "ADMIN_KEY",
+      "value": "your_admin_api_key_here",
+      "type": "string"
+    }
+  ]
+}
