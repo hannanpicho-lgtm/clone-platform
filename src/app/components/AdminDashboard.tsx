@@ -498,6 +498,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       }
     )
       .then(async (response) => {
+        if (!response) {
+          alert('❌ Backend not reachable. Please try again.');
+          return;
+        }
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           alert(`❌ Failed to update invitation code status${errorData?.error ? `: ${errorData.error}` : ''}`);
@@ -506,6 +510,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         setInvitationCodes(prev => prev.map(item =>
           item.code === code ? { ...item, status: nextStatus } : item
         ));
+        alert(`✅ Invitation code ${code} is now ${nextStatus}.`);
       })
       .catch(() => {
         alert('❌ Failed to update invitation code status');
@@ -538,6 +543,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       }
     )
       .then(async (response) => {
+        if (!response) {
+          alert('❌ Backend not reachable. Please try again.');
+          return;
+        }
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data?.invitationCode) {
           alert(`❌ Failed to generate invitation code${data?.error ? `: ${data.error}` : ''}`);
@@ -555,6 +564,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         };
 
         setInvitationCodes(prev => [nextCode, ...prev]);
+        alert(`✅ New invitation code generated: ${nextCode.code}`);
       })
       .catch(() => {
         alert('❌ Failed to generate invitation code');
