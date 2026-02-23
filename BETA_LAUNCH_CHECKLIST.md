@@ -16,10 +16,10 @@
 - [x] Database connected and operational
 
 ### Beta User Setup
-- [ ] Beta user cohort selected (5-10 users)
+- [x] Beta user cohort selected (initial 2 users, expanding to 5-10)
 - [ ] Beta user credentials created
 - [ ] Invitation emails sent out
-- [ ] Feedback tracking system ready
+- [x] Feedback tracking system ready
 - [ ] Daily standup scheduled (5 PM EST)
 
 ### Documentation Ready
@@ -35,11 +35,11 @@
 
 | # | Name | Email | Role | Status |
 |---|------|-------|------|--------|
-| 1 | [User Name] | [email@example.com] | Product Submitter | Not Started |
-| 2 | [User Name] | [email@example.com] | Referral Builder | Not Started |
-| 3 | [User Name] | [email@example.com] | Mobile Tester | Not Started |
-| 4 | [User Name] | [email@example.com] | Admin Assistant | Not Started |
-| 5 | [User Name] | [email@example.com] | Power User | Not Started |
+| 1 | hp | hannanpicho@gmail.com | Product Submitter & Referral Builder | Invitation Ready |
+| 2 | hansen | hansenpittsburgh@gmail.com | Mobile Tester & Edge Case Finder | Invitation Ready |
+| 3 | Open Slot | [pending] | Admin Assistant | Not Started |
+| 4 | Open Slot | [pending] | Power User | Not Started |
+| 5 | Open Slot | [pending] | Additional Tester | Not Started |
 
 ---
 

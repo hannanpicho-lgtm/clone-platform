@@ -43,7 +43,7 @@ interface SystemStats {
 }
 
 export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'withdrawals' | 'products' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'products' | 'settings'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
     totalUsers: 342,
@@ -182,7 +182,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
         {/* Tab Navigation */}
         <div className="flex border-t border-slate-700/50">
           {[
-            { id: 'dashboard', label: '📊 Dashboard', icon: BarChart3 },
+            { id: 'overview', label: '📊 Overview', icon: BarChart3 },
             { id: 'users', label: '👥 Users', icon: Users },
             { id: 'withdrawals', label: '💰 Withdrawals', icon: CreditCard },
             { id: 'products', label: '🎁 Products', icon: Activity },
@@ -204,14 +204,14 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
       </div>
 
       <div className="flex-1 overflow-auto px-6 py-6">
-        {/* Dashboard Tab */}
-        {activeTab === 'dashboard' && (
+        {/* Overview Tab */}
+        {activeTab === 'overview' && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <h2 className="text-2xl font-bold mb-6">System Overview</h2>
+            <h2 className="text-2xl font-bold mb-6">Overview</h2>
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
