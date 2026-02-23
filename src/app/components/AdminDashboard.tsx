@@ -155,6 +155,37 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     }));
   };
 
+  const reloadInvitationCodes = async (backendUsers: User[]) => {
+    try {
+      const invitationResponse = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (invitationResponse && invitationResponse.ok) {
+        const invitationData = await invitationResponse.json();
+        const mappedCodes = (invitationData?.invitationCodes || []).map((item: any) => ({
+          code: item.code,
+          owner: item.ownerName || item.ownerEmail || 'Platform Invite',
+          referrals: Number(item.signups || 0),
+          status: item.status === 'disabled' ? 'disabled' : 'active',
+          generatedAt: item.createdAt || new Date().toISOString(),
+          ownerUserId: item.ownerUserId || null,
+        })) as InvitationCode[];
+
+        setInvitationCodes(mappedCodes.length > 0 ? mappedCodes : buildTrainingInvitationCodes(backendUsers));
+        return;
+      }
+    } catch {
+    }
+
+    setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
+  };
+
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
@@ -174,34 +205,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         setUsers(backendUsers);
         setMetrics(data.metrics);
 
-        try {
-          const invitationResponse = await safeFetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes`,
-            {
-              headers: {
-                Authorization: `Bearer ${publicAnonKey}`,
-              },
-            }
-          );
-
-          if (invitationResponse.ok) {
-            const invitationData = await invitationResponse.json();
-            const mappedCodes = (invitationData?.invitationCodes || []).map((item: any) => ({
-              code: item.code,
-              owner: item.ownerName || item.ownerEmail || 'Platform Invite',
-              referrals: Number(item.signups || 0),
-              status: item.status === 'disabled' ? 'disabled' : 'active',
-              generatedAt: item.createdAt || new Date().toISOString(),
-              ownerUserId: item.ownerUserId || null,
-            })) as InvitationCode[];
-
-            setInvitationCodes(mappedCodes.length > 0 ? mappedCodes : buildTrainingInvitationCodes(backendUsers));
-          } else {
-            setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
-          }
-        } catch {
-          setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
-        }
+        await reloadInvitationCodes(backendUsers);
 
         setDemoMode(false);
 
@@ -507,9 +511,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
           alert(`❌ Failed to update invitation code status${errorData?.error ? `: ${errorData.error}` : ''}`);
           return;
         }
-        setInvitationCodes(prev => prev.map(item =>
-          item.code === code ? { ...item, status: nextStatus } : item
-        ));
+        await reloadInvitationCodes(users);
         alert(`✅ Invitation code ${code} is now ${nextStatus}.`);
       })
       .catch(() => {
@@ -553,18 +555,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
           return;
         }
 
-        const code = data.invitationCode;
-        const nextCode: InvitationCode = {
-          code: code.code,
-          owner: code.ownerName || code.ownerEmail || 'Platform Invite',
-          referrals: Number(code.signups || 0),
-          status: code.status === 'disabled' ? 'disabled' : 'active',
-          generatedAt: code.createdAt,
-          ownerUserId: code.ownerUserId || null,
-        };
-
-        setInvitationCodes(prev => [nextCode, ...prev]);
-        alert(`✅ New invitation code generated: ${nextCode.code}`);
+        await reloadInvitationCodes(users);
+        alert(`✅ New invitation code generated: ${data.invitationCode.code}`);
       })
       .catch(() => {
         alert('❌ Failed to generate invitation code');
@@ -1055,8 +1047,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <div key={item.code} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
                         <div>
                           <p className="font-semibold text-gray-900">{item.code}</p>
-                          <p className="text-sm text-gray-600">Owner: {item.owner} • Referrals: {item.referrals}</p>
-                          <p className="text-xs text-gray-500 mt-1">Generated: {item.generatedAt}</p>
+                          <p className="text-sm text-gray-600">Owner: {item.owner || 'Platform Invite'} • Referrals: {Number.isFinite(item.referrals) ? item.referrals : 0}</p>
+                          <p className="text-xs text-gray-500 mt-1">Generated: {item.generatedAt || 'N/A'}</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <Button
