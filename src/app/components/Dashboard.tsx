@@ -72,6 +72,7 @@ interface UserProfile {
   id: string;
   email: string;
   contactEmail?: string | null;
+  invitationCode?: string;
   name: string;
   vipTier: string;
   createdAt: string;
@@ -431,6 +432,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         const demoProfile: UserProfile = {
           id: 'demo-123',
           email: 'demo@tanknewmedia.com',
+          invitationCode: 'DEMO1',
           name: 'Demo User',
           vipTier: 'Silver',
           createdAt: new Date().toISOString(),
@@ -469,6 +471,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       const demoProfile: UserProfile = {
         id: 'demo-123',
         email: 'demo@tanknewmedia.com',
+        invitationCode: 'DEMO1',
         name: 'Demo User',
         vipTier: 'Silver',
         createdAt: new Date().toISOString(),
@@ -517,6 +520,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const displayProfile = demoMode && !profile ? {
     id: 'demo-123',
     email: 'demo@tanknewmedia.com',
+    invitationCode: 'DEMO1',
     name: 'Demo User',
     vipTier: 'Silver',
     createdAt: new Date().toISOString(),
@@ -585,11 +589,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   </svg>
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-center space-x-2">
-                    <h3 className="text-white font-bold text-lg">{displayProfile.name}</h3>
-                    <span className="text-xl">👑</span>
+                  <h3 className="text-white font-bold text-lg leading-tight break-words">{displayProfile.name}</h3>
+                  <div className="mt-2 bg-white/10 rounded-lg p-2 space-y-1">
+                    <p className="text-blue-100 text-xs">
+                      <span className="font-semibold">Member ID:</span>{' '}
+                      <span className="font-mono tracking-wide">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
+                    </p>
+                    <p className="text-blue-100 text-xs">
+                      <span className="font-semibold">Invite Code:</span>{' '}
+                      <span className="font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</span>
+                    </p>
                   </div>
-                  <p className="text-blue-200 text-sm">Member ID: {displayProfile.id.substring(0, 6).toUpperCase()}</p>
                 </div>
               </div>
 
@@ -1359,6 +1369,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <div className="p-4 bg-gray-50 rounded-lg">
                     <p className="text-sm text-gray-600">Contact Email</p>
                     <p className="font-semibold text-gray-900">{displayProfile.contactEmail || 'Not set'}</p>
+                  </div>
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600">Invitation Code</p>
+                    <p className="font-semibold text-gray-900 font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</p>
                   </div>
 
                   {/* Account Credentials Section */}
