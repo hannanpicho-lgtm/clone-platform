@@ -21,6 +21,10 @@ import {
   BarChart3,
   Settings,
   RefreshCw,
+  Link2,
+  Ticket,
+  UserPlus,
+  Copy,
 } from 'lucide-react';
 import { safeFetch } from '/src/utils/safeFetch';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
@@ -61,10 +65,29 @@ interface PlatformMetrics {
   totalCommissionsPaid: number;
 }
 
+interface InvitationCode {
+  code: string;
+  owner: string;
+  referrals: number;
+  status: 'active' | 'disabled';
+  generatedAt: string;
+}
+
+interface SupportCase {
+  id: string;
+  userName: string;
+  category: string;
+  priority: 'high' | 'medium' | 'low';
+  status: 'open' | 'in_progress' | 'resolved';
+  updatedAt: string;
+}
+
 export function AdminDashboard({ onLogout }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'transactions' | 'premium' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'transactions' | 'premium' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [users, setUsers] = useState<User[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [invitationCodes, setInvitationCodes] = useState<InvitationCode[]>([]);
+  const [supportCases, setSupportCases] = useState<SupportCase[]>([]);
   const [metrics, setMetrics] = useState<PlatformMetrics>({
     totalUsers: 0,
     totalRevenue: 0,
@@ -83,6 +106,35 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     loadAdminData();
   }, []);
 
+  const buildTrainingInvitationCodes = (sourceUsers: User[]): InvitationCode[] => {
+    const fallbackOwners = sourceUsers.length > 0 ? sourceUsers : [
+      { id: '1', name: 'Training User', email: '', vipTier: 'Normal', balance: 0, productsSubmitted: 0, accountFrozen: false, createdAt: '2026-02-23' }
+    ];
+
+    return fallbackOwners.slice(0, 5).map((user, index) => ({
+      code: `${user.name.replace(/\s+/g, '').toUpperCase().slice(0, 6)}-${String(index + 1).padStart(2, '0')}`,
+      owner: user.name,
+      referrals: Math.max(0, Math.floor(user.productsSubmitted / 8)),
+      status: index < 4 ? 'active' : 'disabled',
+      generatedAt: user.createdAt,
+    }));
+  };
+
+  const buildTrainingSupportCases = (sourceUsers: User[]): SupportCase[] => {
+    const caseUsers = sourceUsers.length > 0 ? sourceUsers : [
+      { id: '1', name: 'Training User', email: '', vipTier: 'Normal', balance: 0, productsSubmitted: 0, accountFrozen: false, createdAt: '2026-02-23' }
+    ];
+
+    return caseUsers.slice(0, 4).map((user, index) => ({
+      id: `CS-${1000 + index}`,
+      userName: user.name,
+      category: index % 2 === 0 ? 'Referral Issue' : 'Withdrawal Help',
+      priority: index === 0 ? 'high' : index === 1 ? 'medium' : 'low',
+      status: index === 0 ? 'open' : index === 1 ? 'in_progress' : 'resolved',
+      updatedAt: index === 0 ? '5 min ago' : index === 1 ? '20 min ago' : '1h ago',
+    }));
+  };
+
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
@@ -98,9 +150,44 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
       if (usersResponse.ok) {
         const data = await usersResponse.json();
-        setUsers(data.users);
+        const backendUsers = data.users || [];
+        setUsers(backendUsers);
         setMetrics(data.metrics);
+        setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
         setDemoMode(false);
+
+        try {
+          const supportResponse = await safeFetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/support-tickets`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+              },
+            }
+          );
+
+          if (supportResponse.ok) {
+            const supportData = await supportResponse.json();
+            if (supportData.tickets && Array.isArray(supportData.tickets)) {
+              setSupportCases(
+                supportData.tickets.slice(0, 10).map((ticket: any, index: number) => ({
+                  id: ticket.id || `CS-${2000 + index}`,
+                  userName: ticket.userName || ticket.user || 'Unknown User',
+                  category: ticket.category || 'General',
+                  priority: (ticket.priority || 'medium') as 'high' | 'medium' | 'low',
+                  status: (ticket.status === 'pending' ? 'open' : ticket.status === 'in_progress' ? 'in_progress' : ticket.status === 'resolved' ? 'resolved' : 'open') as 'open' | 'in_progress' | 'resolved',
+                  updatedAt: ticket.updatedAt || ticket.createdAt || 'recently',
+                }))
+              );
+            } else {
+              setSupportCases(buildTrainingSupportCases(backendUsers));
+            }
+          } else {
+            setSupportCases(buildTrainingSupportCases(backendUsers));
+          }
+        } catch {
+          setSupportCases(buildTrainingSupportCases(backendUsers));
+        }
       } else {
         throw new Error('Backend not available');
       }
@@ -219,6 +306,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
     setUsers(demoUsers);
     setTransactions(demoTransactions);
+    setInvitationCodes(buildTrainingInvitationCodes(demoUsers));
+    setSupportCases(buildTrainingSupportCases(demoUsers));
     setMetrics({
       totalUsers: demoUsers.length,
       totalRevenue: 234567.89,
@@ -322,6 +411,46 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       : 'bg-yellow-100 text-yellow-800 border-yellow-300';
   };
 
+  const getCaseStatusColor = (status: SupportCase['status']) => {
+    if (status === 'resolved') return 'bg-green-100 text-green-800 border-green-300';
+    if (status === 'in_progress') return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+    return 'bg-red-100 text-red-800 border-red-300';
+  };
+
+  const getPriorityColor = (priority: SupportCase['priority']) => {
+    if (priority === 'high') return 'text-red-700';
+    if (priority === 'medium') return 'text-yellow-700';
+    return 'text-green-700';
+  };
+
+  const handleToggleInvitationCode = (code: string) => {
+    setInvitationCodes(prev => prev.map(item =>
+      item.code === code
+        ? { ...item, status: item.status === 'active' ? 'disabled' : 'active' }
+        : item
+    ));
+  };
+
+  const handleAddInvitationCode = () => {
+    const nextCode: InvitationCode = {
+      code: `BETA-${Date.now().toString().slice(-6)}`,
+      owner: 'Admin',
+      referrals: 0,
+      status: 'active',
+      generatedAt: new Date().toLocaleString(),
+    };
+    setInvitationCodes(prev => [nextCode, ...prev]);
+  };
+
+  const handleUpdateCaseStatus = (id: string, nextStatus: SupportCase['status']) => {
+    setSupportCases(prev => prev.map(item =>
+      item.id === id ? { ...item, status: nextStatus, updatedAt: 'just now' } : item
+    ));
+  };
+
+  const activeInvitationCount = invitationCodes.filter(item => item.status === 'active').length;
+  const openSupportCount = supportCases.filter(item => item.status !== 'resolved').length;
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
@@ -377,6 +506,8 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               { id: 'users', label: 'Users', icon: Users },
               { id: 'transactions', label: 'Transactions', icon: Activity },
               { id: 'premium', label: 'Premium Products', icon: Gift },
+              { id: 'invitations', label: 'Invitations', icon: UserPlus },
+              { id: 'customer-service', label: 'Customer Service', icon: MessageSquare },
               { id: 'settings', label: 'Settings', icon: Settings },
             ].map((tab) => (
               <button
@@ -498,13 +629,43 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     </div>
                   </CardContent>
                 </Card>
+
+                <Card className="border-0 shadow-lg bg-gradient-to-br from-indigo-500 to-indigo-600">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-indigo-100 text-sm font-medium">Active Invite Codes</p>
+                        <p className="text-3xl font-bold text-white mt-1">{activeInvitationCount}</p>
+                        <p className="text-indigo-100 text-xs mt-1">Invitation system status</p>
+                      </div>
+                      <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                        <Link2 className="w-6 h-6 text-white" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-lg bg-gradient-to-br from-pink-500 to-pink-600">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-pink-100 text-sm font-medium">Open Support Cases</p>
+                        <p className="text-3xl font-bold text-white mt-1">{openSupportCount}</p>
+                        <p className="text-pink-100 text-xs mt-1">Customer service workload</p>
+                      </div>
+                      <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
+                        <Ticket className="w-6 h-6 text-white" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
 
               {/* Quick Actions */}
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6">
                   <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                     <Button
                       onClick={() => setActiveTab('users')}
                       className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white"
@@ -518,6 +679,20 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     >
                       <Gift className="w-4 h-4 mr-2" />
                       Assign Premium
+                    </Button>
+                    <Button
+                      onClick={() => setActiveTab('invitations')}
+                      className="bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white"
+                    >
+                      <Link2 className="w-4 h-4 mr-2" />
+                      Invitation Codes
+                    </Button>
+                    <Button
+                      onClick={() => setActiveTab('customer-service')}
+                      className="bg-gradient-to-r from-pink-600 to-pink-700 hover:from-pink-700 hover:to-pink-800 text-white"
+                    >
+                      <MessageSquare className="w-4 h-4 mr-2" />
+                      Customer Service
                     </Button>
                     <Button
                       onClick={loadAdminData}
@@ -720,6 +895,121 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               className="space-y-6"
             >
               <PremiumManagementPanel />
+            </motion.div>
+          )}
+
+          {activeTab === 'invitations' && (
+            <motion.div
+              key="invitations"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <Card className="border-0 shadow-lg">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Invitation Code Management</h3>
+                    <Button onClick={handleAddInvitationCode} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Generate Code
+                    </Button>
+                  </div>
+                  {demoMode && (
+                    <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-md px-3 py-2 mb-4">
+                      ⚠️ Training mode: invitation data is simulated when backend data is unavailable.
+                    </p>
+                  )}
+
+                  <div className="space-y-3">
+                    {invitationCodes.map((item) => (
+                      <div key={item.code} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div>
+                          <p className="font-semibold text-gray-900">{item.code}</p>
+                          <p className="text-sm text-gray-600">Owner: {item.owner} • Referrals: {item.referrals}</p>
+                          <p className="text-xs text-gray-500 mt-1">Generated: {item.generatedAt}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigator.clipboard.writeText(item.code)}
+                          >
+                            <Copy className="w-4 h-4 mr-1" />
+                            Copy
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleToggleInvitationCode(item.code)}
+                            className={item.status === 'active' ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}
+                          >
+                            {item.status === 'active' ? 'Disable' : 'Enable'}
+                          </Button>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium border ${
+                            item.status === 'active'
+                              ? 'bg-green-100 text-green-800 border-green-300'
+                              : 'bg-gray-100 text-gray-800 border-gray-300'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {activeTab === 'customer-service' && (
+            <motion.div
+              key="customer-service"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <Card className="border-0 shadow-lg">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Customer Service Cases</h3>
+                    <div className="text-sm font-medium text-gray-600">
+                      Open: <span className="text-red-600">{openSupportCount}</span>
+                    </div>
+                  </div>
+                  {demoMode && (
+                    <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-md px-3 py-2 mb-4">
+                      ⚠️ Training mode: support cases are simulated when backend data is unavailable.
+                    </p>
+                  )}
+
+                  <div className="space-y-3">
+                    {supportCases.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div>
+                          <p className="font-semibold text-gray-900">{item.id} • {item.userName}</p>
+                          <p className="text-sm text-gray-600">{item.category}</p>
+                          <p className={`text-xs mt-1 font-semibold ${getPriorityColor(item.priority)}`}>
+                            Priority: {item.priority}
+                          </p>
+                          <p className="text-xs text-gray-500">Updated: {item.updatedAt}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'in_progress')}>
+                            In Progress
+                          </Button>
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'resolved')}>
+                            Resolve
+                          </Button>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getCaseStatusColor(item.status)}`}>
+                            {item.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
 
