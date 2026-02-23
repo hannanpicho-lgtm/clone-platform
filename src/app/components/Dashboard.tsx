@@ -1817,6 +1817,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showMemberID && (
         <MemberIDPage
           memberId={displayProfile.id.substring(0, 6).toUpperCase()}
+          userName={displayProfile.name}
+          invitationCode={displayProfile.invitationCode}
           onClose={() => setShowMemberID(false)}
         />
       )}

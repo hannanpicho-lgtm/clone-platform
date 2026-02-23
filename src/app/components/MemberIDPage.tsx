@@ -4,16 +4,26 @@ import { useState } from 'react';
 
 interface MemberIDPageProps {
   memberId: string;
+  userName: string;
+  invitationCode?: string;
   onClose: () => void;
 }
 
-export function MemberIDPage({ memberId, onClose }: MemberIDPageProps) {
+export function MemberIDPage({ memberId, userName, invitationCode, onClose }: MemberIDPageProps) {
   const [copied, setCopied] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(memberId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCopyInviteCode = () => {
+    if (!invitationCode) return;
+    navigator.clipboard.writeText(invitationCode);
+    setCopiedInvite(true);
+    setTimeout(() => setCopiedInvite(false), 2000);
   };
 
   return (
@@ -31,6 +41,16 @@ export function MemberIDPage({ memberId, onClose }: MemberIDPageProps) {
 
       {/* Content */}
       <div className="p-4 space-y-6 pb-8">
+        {/* User Info Card */}
+        <Card className="shadow-lg border-2 border-indigo-500">
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <h2 className="text-sm font-semibold text-gray-600">Username</h2>
+              <p className="text-2xl font-bold text-gray-900 break-words mt-1">{userName}</p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Member ID Card */}
         <Card className="shadow-lg border-2 border-teal-500">
           <CardContent className="pt-6">
@@ -58,6 +78,40 @@ export function MemberIDPage({ memberId, onClose }: MemberIDPageProps) {
                   <>
                     <Copy className="h-5 w-5" />
                     <span>Copy Code</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Invitation Code Card */}
+        <Card className="shadow-lg border-2 border-purple-500">
+          <CardContent className="pt-6">
+            <div className="text-center space-y-4">
+              <h2 className="text-lg font-semibold text-gray-700">Your Invitation Code:</h2>
+              <div className="bg-gradient-to-r from-purple-100 to-indigo-100 rounded-lg p-4">
+                <p className="text-3xl font-bold text-purple-700 tracking-wide">{invitationCode || 'Not assigned'}</p>
+              </div>
+
+              <button
+                onClick={handleCopyInviteCode}
+                disabled={!invitationCode}
+                className={`flex items-center justify-center space-x-2 mx-auto px-6 py-3 rounded-lg font-semibold transition-all ${
+                  copiedInvite
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white hover:from-purple-600 hover:to-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed'
+                }`}
+              >
+                {copiedInvite ? (
+                  <>
+                    <Check className="h-5 w-5" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-5 w-5" />
+                    <span>Copy Invitation Code</span>
                   </>
                 )}
               </button>
