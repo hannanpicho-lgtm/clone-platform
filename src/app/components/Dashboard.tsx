@@ -1162,7 +1162,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               className="inline-flex items-center space-x-4 bg-[#1a1d2e]/80 backdrop-blur-sm text-white px-4 py-2 rounded-full whitespace-nowrap"
               initial={{ x: '100%' }}
               animate={{ x: '-100%' }}
-              transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+              transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
             >
               <Bell className="h-4 w-4 text-purple-400 flex-shrink-0" />
               <span className="text-sm font-medium">Welcome to Tanknewmedia for Innovative Software Development · Access Your VIP Data Platform · Manage Products & Earn Commissions · View Your Performance Metrics · Connect with Our Support Team</span>
