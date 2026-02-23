@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import {
   Menu,
   Bell,
+  User,
   Home,
   BarChart3,
   FileText,
@@ -73,6 +74,7 @@ interface UserProfile {
   email: string;
   contactEmail?: string | null;
   invitationCode?: string;
+  avatarUrl?: string | null;
   name: string;
   vipTier: string;
   createdAt: string;
@@ -107,6 +109,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [activeNav, setActiveNav] = useState('home');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
   const [balance, setBalance] = useState(15334); // Initialize with starting balance
   const [productsSubmitted, setProductsSubmitted] = useState(0);
   const [showReviewPage, setShowReviewPage] = useState(false);
@@ -533,6 +536,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     automationCoverage: 78,
   } : metrics!;
 
+  const avatarSrc = displayProfile.avatarUrl || `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(displayProfile.name || 'user')}`;
+  const profileInitial = (displayProfile.name || 'U').trim().charAt(0).toUpperCase();
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Demo Mode Banner */}
@@ -583,10 +589,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* User Avatar and Info */}
               <div className="flex items-start space-x-3 mb-6">
-                <div className="w-12 h-12 bg-blue-300 rounded-full flex items-center justify-center">
-                  <svg className="w-8 h-8 text-blue-900" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                  </svg>
+                <div className="w-12 h-12 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
+                  {!avatarError ? (
+                    <img
+                      src={avatarSrc}
+                      alt="Profile avatar"
+                      className="w-full h-full object-cover"
+                      onError={() => setAvatarError(true)}
+                    />
+                  ) : (
+                    <span className="text-blue-900 font-bold text-lg">{profileInitial}</span>
+                  )}
                 </div>
                 <div className="flex-1">
                   <h3 className="text-white font-bold text-lg leading-tight break-words">{displayProfile.name}</h3>
@@ -1059,6 +1072,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           </button>
           <h1 className="text-2xl font-bold tracking-wider">TANK</h1>
           <div className="flex items-center space-x-3">
+            <button
+              className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+              onClick={() => setShowMenu(true)}
+              aria-label="Open profile"
+            >
+              <div className="relative w-9 h-9 rounded-full border-2 border-white/70 overflow-hidden bg-slate-700 flex items-center justify-center">
+                {!avatarError ? (
+                  <img
+                    src={avatarSrc}
+                    alt="Profile avatar"
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarError(true)}
+                  />
+                ) : (
+                  <User className="h-5 w-5 text-white" />
+                )}
+              </div>
+            </button>
             <button 
               className="p-2 relative hover:bg-white/10 rounded-lg transition-colors" 
               onClick={() => setShowNotifications(!showNotifications)}
