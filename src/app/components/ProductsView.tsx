@@ -2,13 +2,6 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Card, CardContent } from './ui/card';
 
-interface PremiumProduct {
-  id: string;
-  position: number;
-  amount: number;
-  triggered: boolean;
-}
-
 interface ProductsViewProps {
   vipTier: string;
   balance: number;
@@ -17,7 +10,6 @@ interface ProductsViewProps {
   onStartProduct: (product: ProductData) => void;
   todaysProfit: number;
   accountFrozen?: boolean;
-  premiumProducts?: PremiumProduct[];
 }
 
 export interface ProductData {
@@ -29,7 +21,7 @@ export interface ProductData {
   ratingNo: string;
 }
 
-export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProduct, onStartProduct, todaysProfit, accountFrozen, premiumProducts = [] }: ProductsViewProps) {
+export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProduct, onStartProduct, todaysProfit, accountFrozen }: ProductsViewProps) {
   
   // VIP tier settings with correct commission rates and product limits
   const maxProducts = vipTier === 'Diamond' ? 55 : vipTier === 'Platinum' ? 50 : vipTier === 'Gold' ? 45 : vipTier === 'Silver' ? 40 : 35;
@@ -284,39 +276,6 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
                 </span>
               </div>
             </div>
-
-            {/* Premium Product Warning */}
-            {(() => {
-              const nextPremium = premiumProducts.find(
-                p => p.position === productsSubmitted + 1 && !p.triggered
-              );
-              return nextPremium ? (
-                <div className="mb-4 p-4 bg-gradient-to-r from-purple-100 to-pink-100 border-2 border-purple-400 rounded-lg">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <span className="text-2xl">⚠️</span>
-                    <h3 className="font-bold text-purple-800">Next Product is Premium!</h3>
-                  </div>
-                  <p className="text-sm text-purple-700 mb-2">
-                    Your next submission will be a <strong>Premium Merged Product</strong> with a 10x commission boost.
-                  </p>
-                  <div className="bg-white/60 rounded-lg p-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-purple-700 font-semibold">Premium Amount:</span>
-                      <span className="text-lg font-bold text-purple-900">${nextPremium.amount.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between items-center mt-1">
-                      <span className="text-xs text-purple-700 font-semibold">Your Balance:</span>
-                      <span className="text-lg font-bold text-green-600">${balance.toFixed(2)}</span>
-                    </div>
-                    {nextPremium.amount > balance && (
-                      <p className="text-xs text-red-600 mt-2 font-bold">
-                        ⚠️ This will exceed your balance. Account will freeze until top-up.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ) : null;
-            })()}
 
             {/* Upload Progress */}
             <div className="mb-8">

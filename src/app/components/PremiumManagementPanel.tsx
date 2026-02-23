@@ -35,8 +35,15 @@ interface PremiumAnalytics {
   }>;
 }
 
+interface GlobalPremiumConfig {
+  enabled: boolean;
+  position: number;
+  amount: number;
+  updatedAt?: string | null;
+}
+
 const ADMIN_API_KEY = localStorage.getItem('adminApiKey') || '';
-const API_BASE = import.meta.env.VITE_SUPABASE_URL?.replace('https://', 'https://') || 'http://localhost:54321';
+const FUNCTION_BASE = `${(import.meta.env.VITE_SUPABASE_URL || 'https://tpxgfjevorhdtwkesvcb.supabase.co').replace(/\/$/, '')}/functions/v1/make-server-44a642d3`;
 
 export function PremiumManagementPanel() {
   const [assignments, setAssignments] = useState<PremiumAssignment[]>([]);
@@ -44,6 +51,12 @@ export function PremiumManagementPanel() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [globalConfig, setGlobalConfig] = useState<GlobalPremiumConfig>({
+    enabled: true,
+    position: 27,
+    amount: 10000,
+    updatedAt: null,
+  });
 
   // Form states for assigning new premium
   const [formUserId, setFormUserId] = useState('');
@@ -55,7 +68,7 @@ export function PremiumManagementPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/functions/v1/admin/premium/list`, {
+      const res = await fetch(`${FUNCTION_BASE}/admin/premium/list`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${ADMIN_API_KEY}`,
@@ -81,7 +94,7 @@ export function PremiumManagementPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/functions/v1/admin/premium/analytics`, {
+      const res = await fetch(`${FUNCTION_BASE}/admin/premium/analytics`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${ADMIN_API_KEY}`,
@@ -110,7 +123,7 @@ export function PremiumManagementPanel() {
     setMessage('');
 
     try {
-      const res = await fetch(`${API_BASE}/functions/v1/admin/premium`, {
+      const res = await fetch(`${FUNCTION_BASE}/admin/premium`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${ADMIN_API_KEY}`,
@@ -149,7 +162,7 @@ export function PremiumManagementPanel() {
     setMessage('');
 
     try {
-      const res = await fetch(`${API_BASE}/functions/v1/admin/premium/revoke`, {
+      const res = await fetch(`${FUNCTION_BASE}/admin/premium/revoke`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${ADMIN_API_KEY}`,
@@ -175,7 +188,72 @@ export function PremiumManagementPanel() {
   useEffect(() => {
     loadAssignments();
     loadAnalytics();
+    loadGlobalConfig();
   }, []);
+
+  const loadGlobalConfig = async () => {
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/premium/global-config`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json();
+      if (data.success && data.config) {
+        setGlobalConfig({
+          enabled: Boolean(data.config.enabled),
+          position: Number(data.config.position) || 27,
+          amount: Number(data.config.amount) || 10000,
+          updatedAt: data.config.updatedAt || null,
+        });
+      }
+    } catch {
+      // Keep default config if fetch fails
+    }
+  };
+
+  const handleSaveGlobalConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const payload = {
+        enabled: Boolean(globalConfig.enabled),
+        position: Number(globalConfig.position),
+        amount: Number(globalConfig.amount),
+      };
+
+      const res = await fetch(`${FUNCTION_BASE}/admin/premium/global-config`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setGlobalConfig({
+          enabled: Boolean(data.config.enabled),
+          position: Number(data.config.position),
+          amount: Number(data.config.amount),
+          updatedAt: data.config.updatedAt || null,
+        });
+        setMessage('✓ Global premium trigger updated');
+      } else {
+        setError(data.error || 'Failed to update global premium trigger');
+      }
+    } catch (err) {
+      setError(`Error updating global premium trigger: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -220,6 +298,65 @@ export function PremiumManagementPanel() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Global Premium Trigger</CardTitle>
+          <CardDescription>
+            Set one premium encounter rule that applies to every user account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSaveGlobalConfig} className="space-y-4">
+            <div className="flex items-center gap-3">
+              <input
+                id="globalPremiumEnabled"
+                type="checkbox"
+                checked={globalConfig.enabled}
+                onChange={(e) => setGlobalConfig({ ...globalConfig, enabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+              <label htmlFor="globalPremiumEnabled" className="text-sm font-medium">
+                Enable premium encounter trigger
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Encounter Position</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={String(globalConfig.position)}
+                  onChange={(e) => setGlobalConfig({ ...globalConfig, position: Number(e.target.value || 0) })}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Example: 10 means premium on the 10th submission.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Premium Amount ($)</label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={String(globalConfig.amount)}
+                  onChange={(e) => setGlobalConfig({ ...globalConfig, amount: Number(e.target.value || 0) })}
+                  required
+                />
+              </div>
+            </div>
+
+            <Button type="submit" disabled={loading} className="w-full md:w-auto">
+              {loading ? 'Saving...' : 'Save Global Trigger'}
+            </Button>
+
+            {globalConfig.updatedAt && (
+              <p className="text-xs text-gray-500">Last updated: {new Date(globalConfig.updatedAt).toLocaleString()}</p>
+            )}
+          </form>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="assign" className="w-full">
         <TabsList>

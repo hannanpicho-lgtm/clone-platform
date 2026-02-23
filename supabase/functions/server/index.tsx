@@ -254,6 +254,30 @@ const generateInvitationCode = async (): Promise<string> => {
 
 const normalizeInvitationCode = (value: string): string => value.trim().toUpperCase();
 
+const DEFAULT_GLOBAL_PREMIUM_CONFIG = {
+  enabled: true,
+  position: 27,
+  amount: 10000,
+};
+
+const getGlobalPremiumConfig = async () => {
+  const row = await kv.get('premium:global-config');
+  const enabled = typeof row?.enabled === 'boolean' ? row.enabled : DEFAULT_GLOBAL_PREMIUM_CONFIG.enabled;
+  const position = Number.isInteger(Number(row?.position)) && Number(row?.position) > 0
+    ? Number(row.position)
+    : DEFAULT_GLOBAL_PREMIUM_CONFIG.position;
+  const amount = Number.isFinite(Number(row?.amount)) && Number(row?.amount) > 0
+    ? Number(row.amount)
+    : DEFAULT_GLOBAL_PREMIUM_CONFIG.amount;
+
+  return {
+    enabled,
+    position,
+    amount,
+    updatedAt: row?.updatedAt || null,
+  };
+};
+
 const AUTH_EMAIL_DOMAIN = 'auth.tank.local';
 
 const normalizeUsername = (value: string): string => {
@@ -1064,6 +1088,53 @@ app.post("/admin/premium", async (c) => {
   } catch (error) {
     console.error(`Error assigning premium product: ${error}`);
     return c.json({ error: 'Internal server error while assigning premium product' }, 500);
+  }
+});
+
+// Public: get global premium trigger config
+app.get("/premium/global-config", async (c) => {
+  try {
+    const config = await getGlobalPremiumConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching global premium config: ${error}`);
+    return c.json({ error: 'Internal server error while fetching global premium config' }, 500);
+  }
+});
+
+// Admin: update global premium trigger config
+app.put("/admin/premium/global-config", async (c) => {
+  try {
+    const adminCheck = await requireAdminKey(c);
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
+    const { enabled, position, amount } = await c.req.json();
+    const nextEnabled = enabled === undefined ? true : Boolean(enabled);
+    const nextPosition = Number(position);
+    const nextAmount = Number(amount);
+
+    if (!Number.isInteger(nextPosition) || nextPosition <= 0) {
+      return c.json({ error: 'position must be a positive integer' }, 400);
+    }
+
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+      return c.json({ error: 'amount must be a positive number' }, 400);
+    }
+
+    const payload = {
+      enabled: nextEnabled,
+      position: nextPosition,
+      amount: nextAmount,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set('premium:global-config', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating global premium config: ${error}`);
+    return c.json({ error: 'Internal server error while updating global premium config' }, 500);
   }
 });
 

@@ -86,11 +86,10 @@ interface Metrics {
   automationCoverage: number;
 }
 
-interface PremiumProduct {
-  id: string;
+interface GlobalPremiumConfig {
+  enabled: boolean;
   position: number;
   amount: number;
-  triggered: boolean;
 }
 
 interface DashboardProps {
@@ -162,13 +161,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [adminKey, setAdminKey] = useState(localStorage.getItem('adminKey') || '');
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
   
-  // Admin-controlled premium products (multiple assignments)
-  const [premiumProducts, setPremiumProducts] = useState<PremiumProduct[]>([
-    { id: '1', position: 27, amount: 10000, triggered: false }
-  ]);
-  
-  const [newPremiumPosition, setNewPremiumPosition] = useState<string>('');
-  const [newPremiumAmount, setNewPremiumAmount] = useState<string>('');
+  const [globalPremiumConfig, setGlobalPremiumConfig] = useState<GlobalPremiumConfig>({
+    enabled: true,
+    position: 27,
+    amount: 10000,
+  });
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -216,18 +213,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const handleReviewSubmit = (rating: number, review: string, reviewType: string) => {
     if (!currentProduct) return;
     
-    // Check if this submission triggers a premium product
+    // Check if this submission triggers a global premium product
     const nextSubmissionCount = productsSubmitted + 1;
-    const matchingPremium = premiumProducts.find(
-      p => p.position === nextSubmissionCount && !p.triggered
-    );
+    const shouldTriggerGlobalPremium =
+      globalPremiumConfig.enabled && nextSubmissionCount === globalPremiumConfig.position;
     
-    if (matchingPremium) {
+    if (shouldTriggerGlobalPremium) {
       // This is a premium product - trigger freeze
       const tier = testVIPTier || displayProfile.vipTier;
       
-      // Use the admin-set amount
-      const premiumValue = matchingPremium.amount;
+      // Use globally admin-set amount
+      const premiumValue = globalPremiumConfig.amount;
       
       // Get commission rate based on tier
       const commissionRates: { [key: string]: number } = {
@@ -240,11 +236,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       
       const baseCommission = premiumValue * (commissionRates[tier] || 0.01);
       const premiumProfit = baseCommission * 10; // 10x boost
-      
-      // Mark this premium product as triggered
-      setPremiumProducts(prev => 
-        prev.map(p => p.id === matchingPremium.id ? { ...p, triggered: true } : p)
-      );
       
       // Update product count first
       setProductsSubmitted(nextSubmissionCount);
@@ -404,6 +395,32 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         const metricsData = await metricsResponse.json();
         console.log('✅ Metrics data received');
         setMetrics(metricsData.metrics);
+
+        // Fetch global premium config
+        try {
+          const premiumConfigResponse = await fetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/premium/global-config`,
+            {
+              headers: {
+                'Authorization': `Bearer ${publicAnonKey}`,
+                'apikey': publicAnonKey,
+              },
+            }
+          );
+
+          if (premiumConfigResponse.ok) {
+            const premiumConfigData = await premiumConfigResponse.json();
+            if (premiumConfigData?.success && premiumConfigData?.config) {
+              setGlobalPremiumConfig({
+                enabled: Boolean(premiumConfigData.config.enabled),
+                position: Number(premiumConfigData.config.position) || 27,
+                amount: Number(premiumConfigData.config.amount) || 10000,
+              });
+            }
+          }
+        } catch {
+          // Keep defaults if config fetch fails
+        }
       } catch (err: any) {
         // Silently handle error - no console.error to prevent "Failed to fetch" showing
         console.log('ℹ️ Backend unavailable - activating Demo Mode');
@@ -1126,7 +1143,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             onStartProduct={handleStartProduct}
             todaysProfit={todaysProfit}
             accountFrozen={accountFrozen}
-            premiumProducts={premiumProducts}
           />
         )}
         
