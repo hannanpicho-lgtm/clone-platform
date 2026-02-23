@@ -71,6 +71,7 @@ import { AccountFreezeModal } from './AccountFreezeModal';
 interface UserProfile {
   id: string;
   email: string;
+  contactEmail?: string | null;
   name: string;
   vipTier: string;
   createdAt: string;
@@ -177,6 +178,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [editingSettings, setEditingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
     username: 'Demo User',
+    contactEmail: '',
     loginPassword: '',
     confirmLoginPassword: '',
     withdrawalPassword: '',
@@ -1339,8 +1341,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <p className="font-semibold text-gray-900">{displayProfile.name}</p>
                   </div>
                   <div className="p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600">Email</p>
-                    <p className="font-semibold text-gray-900">{displayProfile.email}</p>
+                    <p className="text-sm text-gray-600">Contact Email</p>
+                    <p className="font-semibold text-gray-900">{displayProfile.contactEmail || 'Not set'}</p>
                   </div>
 
                   {/* Account Credentials Section */}
@@ -1349,7 +1351,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     
                     {!editingSettings ? (
                       <button
-                        onClick={() => setEditingSettings(true)}
+                        onClick={() => {
+                          setSettingsForm((prev) => ({
+                            ...prev,
+                            username: displayProfile.name || prev.username,
+                            contactEmail: displayProfile.contactEmail || '',
+                          }));
+                          setEditingSettings(true);
+                        }}
                         className="w-full px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
                       >
                         Edit Account Settings
@@ -1364,6 +1373,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                             onChange={(e) => setSettingsForm({...settingsForm, username: e.target.value})}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="Enter new username"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Contact Email (Optional)</label>
+                          <input
+                            type="email"
+                            value={settingsForm.contactEmail}
+                            onChange={(e) => setSettingsForm({...settingsForm, contactEmail: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Enter email for notifications"
                           />
                         </div>
                         
@@ -1413,7 +1433,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         
                         <div className="flex space-x-2 pt-2">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (settingsForm.loginPassword !== settingsForm.confirmLoginPassword) {
                                 alert('❌ Login passwords do not match');
                                 return;
@@ -1422,6 +1442,46 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                 alert('❌ Withdrawal passwords do not match');
                                 return;
                               }
+
+                              const normalizedContactEmail = settingsForm.contactEmail.trim().toLowerCase();
+                              if (normalizedContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedContactEmail)) {
+                                alert('❌ Invalid contact email format');
+                                return;
+                              }
+
+                              if (!demoMode) {
+                                try {
+                                  const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
+                                  const saveResponse = await fetch(
+                                    `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile/contact-email`,
+                                    {
+                                      method: 'PUT',
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${accessToken}`,
+                                        'apikey': publicAnonKey,
+                                      },
+                                      body: JSON.stringify({
+                                        contactEmail: normalizedContactEmail || null,
+                                      }),
+                                    }
+                                  );
+
+                                  const saveData = await saveResponse.json().catch(() => ({}));
+                                  if (!saveResponse.ok) {
+                                    throw new Error(saveData?.error || 'Failed to update contact email');
+                                  }
+
+                                  setProfile((prev) => prev ? {
+                                    ...prev,
+                                    contactEmail: normalizedContactEmail || null,
+                                  } : prev);
+                                } catch (saveErr: any) {
+                                  alert(`❌ ${saveErr?.message || 'Failed to save contact email'}`);
+                                  return;
+                                }
+                              }
+
                               alert('✅ Account settings updated successfully');
                               setEditingSettings(false);
                             }}

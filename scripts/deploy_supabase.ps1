@@ -6,7 +6,9 @@ if (-not $env:SUPABASE_PROJECT_REF) {
 }
 
 if (-not $env:SUPABASE_ACCESS_TOKEN) {
-  Write-Error "Please set SUPABASE_ACCESS_TOKEN environment variable (Supabase CLI token)"
+  Write-Output "SUPABASE_ACCESS_TOKEN not set - using existing Supabase CLI login session."
+} elseif ($env:SUPABASE_ACCESS_TOKEN -like "PASTE_*" -or $env:SUPABASE_ACCESS_TOKEN -notlike "sbp_*") {
+  Write-Error "SUPABASE_ACCESS_TOKEN must be a real Supabase CLI token starting with sbp_ (not a placeholder)."
   exit 1
 }
 

@@ -9,6 +9,24 @@ interface AuthPageProps {
   onAuthSuccess: (accessToken: string) => void;
 }
 
+const AUTH_EMAIL_DOMAIN = 'auth.tank.local';
+
+const normalizeUsername = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/\.+/g, '.')
+    .replace(/^\.|\.$/g, '');
+};
+
+const buildAuthEmailFromUsername = (username: string): string => {
+  const normalized = normalizeUsername(username);
+  return `${normalized}@${AUTH_EMAIL_DOMAIN}`;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -23,7 +41,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [signupInviteCode, setSignupInviteCode] = useState('');
 
   // Sign in state
-  const [signinEmail, setSigninEmail] = useState('');
+  const [signinUsername, setSigninUsername] = useState('');
   const [signinPassword, setSigninPassword] = useState('');
 
   const supabase = getSupabaseClient();
@@ -46,11 +64,17 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       return;
     }
 
+    const normalizedUsername = normalizeUsername(signupUsername);
+    if (!normalizedUsername || normalizedUsername.length < 3) {
+      setError('Username must contain at least 3 letters or numbers');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const { projectId, publicAnonKey } = await import('/utils/supabase/info');
-      
-      // Use username as email for registration
-      const email = `${signupUsername}@tank.local`;
+
+      const authEmail = buildAuthEmailFromUsername(signupUsername);
 
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/signup`, {
         method: 'POST',
@@ -59,9 +83,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           'Authorization': `Bearer ${publicAnonKey}`,
         },
         body: JSON.stringify({
-          email: email,
           password: signupPassword,
           name: signupUsername,
+          username: signupUsername,
           withdrawalPassword: signupWithdrawalPassword,
           gender: signupGender,
           invitationCode: signupInviteCode || undefined,
@@ -76,7 +100,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       if (!response.ok) {
         if (data.error && data.error.includes('already been registered')) {
           setIsSignup(false);
-          setSigninEmail(email);
+          setSigninUsername(signupUsername);
           setError('');
           setIsLoading(false);
           alert('✅ Account already exists. Please sign in instead.');
@@ -85,25 +109,38 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         throw new Error(data.error || 'Signup failed');
       }
 
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: signupPassword,
-      });
+      let autoSigninToken = '';
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: authEmail,
+          password: signupPassword,
+        });
 
-      if (signInError) {
-        throw new Error(signInError.message);
+        if (!signInError && signInData.session?.access_token) {
+          autoSigninToken = signInData.session.access_token;
+          break;
+        }
+
+        if (attempt < 3) {
+          await sleep(700);
+        }
       }
 
-      if (signInData.session?.access_token) {
-        // Reset form
+      if (autoSigninToken) {
         setSignupUsername('');
         setSignupWithdrawalPassword('');
         setSignupPassword('');
         setSignupConfirmPassword('');
         setSignupGender('male');
         setSignupInviteCode('');
-        onAuthSuccess(signInData.session.access_token);
+        onAuthSuccess(autoSigninToken);
+        return;
       }
+
+      setIsSignup(false);
+      setSigninUsername(signupUsername);
+      setSigninPassword('');
+      setError('Account created successfully. Please sign in now.');
     } catch (err: any) {
       console.error('Signup error:', err);
       setError(err.message || 'An error occurred during signup');
@@ -117,15 +154,42 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     setIsLoading(true);
     setError('');
 
+    const normalizedUsername = normalizeUsername(signinUsername);
+    if (!normalizedUsername) {
+      setError('Please enter your username');
+      setIsLoading(false);
+      return;
+    }
+
     try {
+      const authEmail = buildAuthEmailFromUsername(signinUsername);
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: signinEmail,
+        email: authEmail,
         password: signinPassword,
       });
 
       if (signInError) {
+        const { projectId, publicAnonKey } = await import('/utils/supabase/info');
+        const backendSigninResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/signin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            username: signinUsername,
+            password: signinPassword,
+          }),
+        });
+
+        const backendSigninData = await backendSigninResponse.json().catch(() => ({}));
+        if (backendSigninResponse.ok && backendSigninData?.session?.access_token) {
+          onAuthSuccess(backendSigninData.session.access_token);
+          return;
+        }
+
         if (signInError.message.includes('Invalid login credentials')) {
-          throw new Error('Invalid email or password');
+          throw new Error('Invalid username or password');
         }
         throw new Error(signInError.message);
       }
@@ -291,10 +355,10 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               <div>
                 <label className="block text-sm text-gray-300 mb-2">Username</label>
                 <Input
-                  type="email"
+                  type="text"
                   placeholder="Username"
-                  value={signinEmail}
-                  onChange={(e) => setSigninEmail(e.target.value)}
+                  value={signinUsername}
+                  onChange={(e) => setSigninUsername(e.target.value)}
                   required
                   className="w-full bg-slate-800 border-slate-700 text-white placeholder:text-gray-500 focus:border-amber-400"
                 />

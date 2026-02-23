@@ -254,6 +254,30 @@ const generateInvitationCode = async (): Promise<string> => {
 
 const normalizeInvitationCode = (value: string): string => value.trim().toUpperCase();
 
+const AUTH_EMAIL_DOMAIN = 'auth.tank.local';
+
+const normalizeUsername = (value: string): string => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/\.+/g, '.')
+    .replace(/^\.|\.$/g, '');
+};
+
+const buildAuthEmailFromUsername = (username: string): string => {
+  const normalized = normalizeUsername(username);
+  return `${normalized}@${AUTH_EMAIL_DOMAIN}`;
+};
+
+const isValidEmail = (value: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+};
+
+const isRoutableEmail = (value: string): boolean => {
+  return isValidEmail(value) && !value.endsWith(`@${AUTH_EMAIL_DOMAIN}`);
+};
+
 // Email service for sending notifications
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const SENDER_EMAIL = 'notifications@platform.com';
@@ -406,10 +430,23 @@ const emailTemplates = {
 // Sign up endpoint
 app.post("/signup", async (c) => {
   try {
-    const { email, password, name, withdrawalPassword, gender, invitationCode } = await c.req.json();
+    const { email, password, name, username, withdrawalPassword, gender, invitationCode } = await c.req.json();
 
-    if (!email || !password || !name) {
-      return c.json({ error: "Email, password, and name are required" }, 400);
+    const requestedUsername = String(username || name || '').trim();
+    const displayName = String(name || username || '').trim();
+    if (!requestedUsername || !displayName || !password) {
+      return c.json({ error: "Username, password, and name are required" }, 400);
+    }
+
+    const normalizedUsername = normalizeUsername(requestedUsername);
+    if (!normalizedUsername || normalizedUsername.length < 3) {
+      return c.json({ error: "Username must contain at least 3 letters or numbers" }, 400);
+    }
+
+    const authEmail = buildAuthEmailFromUsername(requestedUsername);
+    const contactEmail = email ? String(email).trim() : null;
+    if (contactEmail && !isValidEmail(contactEmail)) {
+      return c.json({ error: "Invalid email format" }, 400);
     }
 
     const normalizedInvitationCode = invitationCode ? normalizeInvitationCode(String(invitationCode)) : '';
@@ -429,9 +466,9 @@ app.post("/signup", async (c) => {
 
     // Create user with Supabase Auth
     const { data, error } = await supabase.auth.admin.createUser({
-      email,
+      email: authEmail,
       password,
-      user_metadata: { name },
+      user_metadata: { name: displayName, username: normalizedUsername },
       // Automatically confirm the user's email since an email server hasn't been configured.
       email_confirm: true
     });
@@ -439,8 +476,8 @@ app.post("/signup", async (c) => {
     if (error) {
       // Check if user already exists - this is a common scenario, not an error
       if (error.message.includes('already been registered')) {
-        console.log(`Info: User with email ${email} already exists - directing to sign in`);
-        return c.json({ error: 'A user with this email address has already been registered' }, 400);
+        console.log(`Info: Username ${requestedUsername} already exists - directing to sign in`);
+        return c.json({ error: 'A user with this username has already been registered' }, 400);
       }
       
       console.error(`Error during user signup: ${error.message}`);
@@ -458,8 +495,10 @@ app.post("/signup", async (c) => {
     // Create user profile in KV store
     const userProfile = {
       id: userId,
-      email,
-      name,
+      email: authEmail,
+      contactEmail,
+      name: displayName,
+      username: normalizedUsername,
       vipTier: 'Normal',
       gender: gender || 'male',
       withdrawalPassword: withdrawalPassword || '',
@@ -476,8 +515,8 @@ app.post("/signup", async (c) => {
     // Store invitation code mapping
     await kv.set(`invitecode:${userInvitationCode}`, {
       userId,
-      email,
-      name,
+      email: contactEmail || authEmail,
+      name: displayName,
       createdAt: new Date().toISOString(),
       status: 'active',
     });
@@ -510,30 +549,34 @@ app.post("/signup", async (c) => {
       await kv.set(`referral:${parentUserId}:${userId}`, {
         parentId: parentUserId,
         childId: userId,
-        childEmail: email,
-        childName: name,
+        childEmail: contactEmail || authEmail,
+        childName: displayName,
         createdAt: new Date().toISOString(),
         totalSharedProfit: 0,
       });
 
       // Send email to parent about new referral
       const parentProfileForEmail = await kv.get(`user:${parentUserId}`);
-      if (parentProfileForEmail?.email && parentProfileForEmail?.emailNotifications !== false) {
-        const template = emailTemplates.newReferral(parentProfileForEmail.name, name, email);
-        await sendEmail(parentProfileForEmail.email, template.subject, template.html);
+      const parentNotificationEmail = parentProfileForEmail?.contactEmail || parentProfileForEmail?.email;
+      if (parentNotificationEmail && isRoutableEmail(parentNotificationEmail) && parentProfileForEmail?.emailNotifications !== false) {
+        const template = emailTemplates.newReferral(parentProfileForEmail.name, displayName, contactEmail || authEmail);
+        await sendEmail(parentNotificationEmail, template.subject, template.html);
       }
     }
 
     // Send welcome email to new user
-    const template = emailTemplates.welcomeNewUser(name, userInvitationCode);
-    await sendEmail(email, template.subject, template.html);
+    if (contactEmail && isRoutableEmail(contactEmail)) {
+      const template = emailTemplates.welcomeNewUser(displayName, userInvitationCode);
+      await sendEmail(contactEmail, template.subject, template.html);
+    }
 
     return c.json({ 
       success: true, 
       user: { 
         id: userId, 
-        email, 
-        name,
+        email: contactEmail || authEmail,
+        name: displayName,
+        username: normalizedUsername,
         invitationCode: userInvitationCode,
         vipTier: 'Normal' 
       } 
@@ -665,15 +708,20 @@ app.put("/admin/invitation-codes/status", async (c) => {
 // Sign in endpoint (handled by Supabase client, but we can add a custom route if needed)
 app.post("/signin", async (c) => {
   try {
-    const { email, password } = await c.req.json();
+    const { email, username, password } = await c.req.json();
 
-    if (!email || !password) {
-      return c.json({ error: "Email and password are required" }, 400);
+    if (!password || (!email && !username)) {
+      return c.json({ error: "Username/email and password are required" }, 400);
     }
+
+    const loginIdentifier = String(email || username || '').trim();
+    const loginEmail = loginIdentifier.includes('@')
+      ? loginIdentifier.toLowerCase()
+      : buildAuthEmailFromUsername(loginIdentifier);
 
     const supabase = getAnonClient();
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: loginEmail,
       password,
     });
 
@@ -721,11 +769,20 @@ app.get("/profile", async (c) => {
     const profile = await kv.get(`user:${userId}`);
     
     if (!profile) {
-      // If profile doesn't exist in KV, create it from user metadata
+      const supabase = getServiceClient();
+      const { data: authUserData } = await supabase.auth.getUser(accessToken);
+      const authUser = authUserData?.user;
+      const authEmail = authUser?.email || '';
+      const metadataName = String(authUser?.user_metadata?.name || '').trim();
+      const metadataUsername = String(authUser?.user_metadata?.username || '').trim();
+
+      // If profile doesn't exist in KV, create it from auth metadata
       const newProfile = {
         id: userId,
-        email: accessToken, // Use token as email placeholder
-        name: 'User', // Default name
+        email: authEmail,
+        contactEmail: null,
+        name: metadataName || metadataUsername || 'User',
+        username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
         vipTier: 'Normal',
         createdAt: new Date().toISOString(),
       };
@@ -739,6 +796,46 @@ app.get("/profile", async (c) => {
   } catch (error) {
     console.error(`Error fetching profile: ${error}`);
     return c.json({ error: "Internal server error while fetching profile" }, 500);
+  }
+});
+
+app.put("/profile/contact-email", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: "Unauthorized - No token provided" }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: "Unauthorized - Invalid token" }, 401);
+    }
+
+    const { contactEmail } = await c.req.json();
+    const normalizedContactEmail = String(contactEmail || '').trim().toLowerCase();
+    if (normalizedContactEmail && !isValidEmail(normalizedContactEmail)) {
+      return c.json({ error: "Invalid email format" }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const existingProfile = await kv.get(profileKey);
+    if (!existingProfile) {
+      return c.json({ error: "User profile not found" }, 404);
+    }
+
+    const updatedProfile = {
+      ...existingProfile,
+      contactEmail: normalizedContactEmail || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    return c.json({ success: true, profile: updatedProfile });
+  } catch (error) {
+    console.error(`Error updating contact email: ${error}`);
+    return c.json({ error: "Internal server error while updating contact email" }, 500);
   }
 });
 
