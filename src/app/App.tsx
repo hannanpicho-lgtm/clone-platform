@@ -3,7 +3,6 @@ import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 import { AdminLogin } from './components/AdminLogin';
 import { AdminDashboard } from './components/AdminDashboard';
-import { AdminControlPanel } from './components/AdminControlPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getSupabaseClient } from '/utils/supabase/client';
 
@@ -127,7 +126,7 @@ export default function App() {
       <div className="min-h-screen">
         {isAdminMode ? (
           isAdminAuthenticated ? (
-            <AdminControlPanel onLogout={handleAdminLogout} />
+            <AdminDashboard onLogout={handleAdminLogout} />
           ) : (
             <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
           )
