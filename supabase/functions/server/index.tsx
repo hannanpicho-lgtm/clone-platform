@@ -227,11 +227,21 @@ app.get("/health", (c) => {
 
 // Generate a unique invitation code
 const generateInvitationCode = async (): Promise<string> => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const digits = '0123456789';
+
+  const pieces: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    pieces.push(letters.charAt(Math.floor(Math.random() * letters.length)));
   }
+  pieces.push(digits.charAt(Math.floor(Math.random() * digits.length)));
+
+  for (let i = pieces.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
+  }
+
+  const code = pieces.join('');
   
   // Check if code already exists
   const existing = await kv.get(`invitecode:${code}`);
@@ -241,6 +251,8 @@ const generateInvitationCode = async (): Promise<string> => {
   
   return code;
 };
+
+const normalizeInvitationCode = (value: string): string => value.trim().toUpperCase();
 
 // Email service for sending notifications
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
@@ -400,6 +412,19 @@ app.post("/signup", async (c) => {
       return c.json({ error: "Email, password, and name are required" }, 400);
     }
 
+    const normalizedInvitationCode = invitationCode ? normalizeInvitationCode(String(invitationCode)) : '';
+    let parentInviteInfo: any = null;
+
+    if (normalizedInvitationCode) {
+      parentInviteInfo = await kv.get(`invitecode:${normalizedInvitationCode}`);
+      if (!parentInviteInfo) {
+        return c.json({ error: "Invalid invitation code" }, 400);
+      }
+      if (parentInviteInfo?.status === 'disabled') {
+        return c.json({ error: "Invitation code is disabled" }, 400);
+      }
+    }
+
     const supabase = getServiceClient();
 
     // Create user with Supabase Auth
@@ -427,14 +452,8 @@ app.post("/signup", async (c) => {
     // Generate invitation code for this user
     const userInvitationCode = await generateInvitationCode();
     
-    // Validate parent invitation code if provided
-    let parentUserId: string | null = null;
-    if (invitationCode) {
-      const parentInfo = await kv.get(`invitecode:${invitationCode}`);
-      if (parentInfo && parentInfo.userId) {
-        parentUserId = parentInfo.userId;
-      }
-    }
+    // Resolve parent user from validated invitation code
+    const parentUserId: string | null = parentInviteInfo?.userId || null;
 
     // Create user profile in KV store
     const userProfile = {
@@ -460,6 +479,7 @@ app.post("/signup", async (c) => {
       email,
       name,
       createdAt: new Date().toISOString(),
+      status: 'active',
     });
 
     // Initialize default metrics for the user
@@ -521,6 +541,124 @@ app.post("/signup", async (c) => {
   } catch (error) {
     console.error(`Signup error: ${error}`);
     return c.json({ error: "Internal server error during signup" }, 500);
+  }
+});
+
+// Admin: list invitation codes
+app.get("/admin/invitation-codes", async (c) => {
+  try {
+    const adminCheck = await requireAdminKey(c);
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
+    const codeRows = await kv.getByPrefix('invitecode:');
+    const invitationCodes = await Promise.all((codeRows ?? []).map(async (row: any) => {
+      const code = String(row?.key || '').replace('invitecode:', '');
+      const ownerUserId = row?.userId || null;
+      const referrals = ownerUserId ? (await kv.getByPrefix(`referral:${ownerUserId}:`))?.length || 0 : 0;
+      return {
+        code,
+        ownerUserId,
+        ownerName: row?.name || 'Platform Invite',
+        ownerEmail: row?.email || null,
+        signups: referrals,
+        status: row?.status || 'active',
+        createdAt: row?.createdAt || new Date().toISOString(),
+      };
+    }));
+
+    return c.json({ success: true, invitationCodes });
+  } catch (error) {
+    console.error(`Error fetching invitation codes: ${error}`);
+    return c.json({ error: 'Internal server error while fetching invitation codes' }, 500);
+  }
+});
+
+// Admin: generate invitation code (optionally bound to an owner user)
+app.post("/admin/invitation-codes/generate", async (c) => {
+  try {
+    const adminCheck = await requireAdminKey(c);
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const ownerUserId = body?.ownerUserId || null;
+    let ownerProfile: any = null;
+
+    if (ownerUserId) {
+      ownerProfile = await kv.get(`user:${ownerUserId}`);
+      if (!ownerProfile) {
+        return c.json({ error: 'Owner user not found' }, 404);
+      }
+    }
+
+    const code = await generateInvitationCode();
+    const payload = {
+      userId: ownerUserId,
+      email: ownerProfile?.email || null,
+      name: ownerProfile?.name || 'Platform Invite',
+      createdAt: new Date().toISOString(),
+      status: 'active',
+      generatedBy: 'admin',
+    };
+
+    await kv.set(`invitecode:${code}`, payload);
+
+    return c.json({
+      success: true,
+      invitationCode: {
+        code,
+        ownerUserId,
+        ownerName: payload.name,
+        ownerEmail: payload.email,
+        signups: 0,
+        status: 'active',
+        createdAt: payload.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error(`Error generating invitation code: ${error}`);
+    return c.json({ error: 'Internal server error while generating invitation code' }, 500);
+  }
+});
+
+// Admin: enable/disable invitation code
+app.put("/admin/invitation-codes/status", async (c) => {
+  try {
+    const adminCheck = await requireAdminKey(c);
+    if (!adminCheck.ok) {
+      return adminCheck.response;
+    }
+
+    const { code, status } = await c.req.json();
+    const normalizedCode = normalizeInvitationCode(String(code || ''));
+
+    if (!normalizedCode) {
+      return c.json({ error: 'code is required' }, 400);
+    }
+    if (status !== 'active' && status !== 'disabled') {
+      return c.json({ error: 'status must be active or disabled' }, 400);
+    }
+
+    const key = `invitecode:${normalizedCode}`;
+    const existing = await kv.get(key);
+    if (!existing) {
+      return c.json({ error: 'Invitation code not found' }, 404);
+    }
+
+    const updated = {
+      ...existing,
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(key, updated);
+    return c.json({ success: true, code: normalizedCode, status });
+  } catch (error) {
+    console.error(`Error updating invitation code status: ${error}`);
+    return c.json({ error: 'Internal server error while updating invitation code status' }, 500);
   }
 });
 

@@ -71,6 +71,7 @@ interface InvitationCode {
   referrals: number;
   status: 'active' | 'disabled';
   generatedAt: string;
+  ownerUserId?: string | null;
 }
 
 interface SupportCase {
@@ -106,17 +107,36 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     loadAdminData();
   }, []);
 
+  const generateFiveCharInvitationCode = () => {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const digits = '0123456789';
+    const parts: string[] = [];
+
+    for (let i = 0; i < 4; i++) {
+      parts.push(letters[Math.floor(Math.random() * letters.length)]);
+    }
+    parts.push(digits[Math.floor(Math.random() * digits.length)]);
+
+    for (let i = parts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [parts[i], parts[j]] = [parts[j], parts[i]];
+    }
+
+    return parts.join('');
+  };
+
   const buildTrainingInvitationCodes = (sourceUsers: User[]): InvitationCode[] => {
     const fallbackOwners = sourceUsers.length > 0 ? sourceUsers : [
       { id: '1', name: 'Training User', email: '', vipTier: 'Normal', balance: 0, productsSubmitted: 0, accountFrozen: false, createdAt: '2026-02-23' }
     ];
 
     return fallbackOwners.slice(0, 5).map((user, index) => ({
-      code: `${user.name.replace(/\s+/g, '').toUpperCase().slice(0, 6)}-${String(index + 1).padStart(2, '0')}`,
+      code: generateFiveCharInvitationCode(),
       owner: user.name,
       referrals: Math.max(0, Math.floor(user.productsSubmitted / 8)),
       status: index < 4 ? 'active' : 'disabled',
       generatedAt: user.createdAt,
+      ownerUserId: user.id,
     }));
   };
 
@@ -153,7 +173,36 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         const backendUsers = data.users || [];
         setUsers(backendUsers);
         setMetrics(data.metrics);
-        setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
+
+        try {
+          const invitationResponse = await safeFetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes`,
+            {
+              headers: {
+                Authorization: `Bearer ${publicAnonKey}`,
+              },
+            }
+          );
+
+          if (invitationResponse.ok) {
+            const invitationData = await invitationResponse.json();
+            const mappedCodes = (invitationData?.invitationCodes || []).map((item: any) => ({
+              code: item.code,
+              owner: item.ownerName || item.ownerEmail || 'Platform Invite',
+              referrals: Number(item.signups || 0),
+              status: item.status === 'disabled' ? 'disabled' : 'active',
+              generatedAt: item.createdAt || new Date().toISOString(),
+              ownerUserId: item.ownerUserId || null,
+            })) as InvitationCode[];
+
+            setInvitationCodes(mappedCodes.length > 0 ? mappedCodes : buildTrainingInvitationCodes(backendUsers));
+          } else {
+            setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
+          }
+        } catch {
+          setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
+        }
+
         setDemoMode(false);
 
         try {
@@ -424,22 +473,92 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const handleToggleInvitationCode = (code: string) => {
-    setInvitationCodes(prev => prev.map(item =>
-      item.code === code
-        ? { ...item, status: item.status === 'active' ? 'disabled' : 'active' }
-        : item
-    ));
+    if (demoMode) {
+      setInvitationCodes(prev => prev.map(item =>
+        item.code === code
+          ? { ...item, status: item.status === 'active' ? 'disabled' : 'active' }
+          : item
+      ));
+      return;
+    }
+
+    const target = invitationCodes.find(item => item.code === code);
+    if (!target) return;
+
+    const nextStatus = target.status === 'active' ? 'disabled' : 'active';
+    safeFetch(
+      `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes/status`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code, status: nextStatus }),
+      }
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          alert(`❌ Failed to update invitation code status${errorData?.error ? `: ${errorData.error}` : ''}`);
+          return;
+        }
+        setInvitationCodes(prev => prev.map(item =>
+          item.code === code ? { ...item, status: nextStatus } : item
+        ));
+      })
+      .catch(() => {
+        alert('❌ Failed to update invitation code status');
+      });
   };
 
   const handleAddInvitationCode = () => {
-    const nextCode: InvitationCode = {
-      code: `BETA-${Date.now().toString().slice(-6)}`,
-      owner: 'Admin',
-      referrals: 0,
-      status: 'active',
-      generatedAt: new Date().toLocaleString(),
-    };
-    setInvitationCodes(prev => [nextCode, ...prev]);
+    if (demoMode) {
+      const nextCode: InvitationCode = {
+        code: generateFiveCharInvitationCode(),
+        owner: 'Training Admin',
+        referrals: 0,
+        status: 'active',
+        generatedAt: new Date().toLocaleString(),
+      };
+      setInvitationCodes(prev => [nextCode, ...prev]);
+      return;
+    }
+
+    const ownerUserId = users[0]?.id || null;
+    safeFetch(
+      `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes/generate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${publicAnonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ownerUserId }),
+      }
+    )
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.invitationCode) {
+          alert(`❌ Failed to generate invitation code${data?.error ? `: ${data.error}` : ''}`);
+          return;
+        }
+
+        const code = data.invitationCode;
+        const nextCode: InvitationCode = {
+          code: code.code,
+          owner: code.ownerName || code.ownerEmail || 'Platform Invite',
+          referrals: Number(code.signups || 0),
+          status: code.status === 'disabled' ? 'disabled' : 'active',
+          generatedAt: code.createdAt,
+          ownerUserId: code.ownerUserId || null,
+        };
+
+        setInvitationCodes(prev => [nextCode, ...prev]);
+      })
+      .catch(() => {
+        alert('❌ Failed to generate invitation code');
+      });
   };
 
   const handleUpdateCaseStatus = (id: string, nextStatus: SupportCase['status']) => {
