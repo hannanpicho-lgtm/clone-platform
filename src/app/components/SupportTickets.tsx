@@ -35,6 +35,7 @@ interface SupportTicketsProps {
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -88,9 +89,12 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
     try {
       setLoading(true);
       setError('');
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/support-tickets`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/support-tickets`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!response.ok) {
+        throw new Error('Support tickets are temporarily unavailable');
+      }
       const data = await response.json();
       if (data.tickets) {
         setTickets(data.tickets);
@@ -98,7 +102,7 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
       }
     } catch (err) {
       console.error('Error fetching tickets:', err);
-      setError('Failed to load support tickets');
+      setError('Support tickets are temporarily unavailable');
     } finally {
       setLoading(false);
     }
@@ -118,7 +122,7 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
 
     try {
       setSubmitting(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/support-tickets`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/support-tickets`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -142,11 +146,11 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
         fetchTickets();
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setError(data.error || 'Failed to create ticket');
+        setError(data.error || 'Unable to create support ticket right now');
       }
     } catch (err) {
       console.error('Error creating ticket:', err);
-      setError('Failed to create support ticket');
+      setError('Unable to create support ticket right now');
     } finally {
       setSubmitting(false);
     }
@@ -157,7 +161,7 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
 
     try {
       setReplying(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/support-tickets/${selectedTicket.id}/reply`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/support-tickets/${selectedTicket.id}/reply`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -171,11 +175,11 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
         setSelectedTicket(data.ticket);
         fetchTickets();
       } else {
-        setError(data.error || 'Failed to add reply');
+        setError(data.error || 'Unable to send reply right now');
       }
     } catch (err) {
       console.error('Error adding reply:', err);
-      setError('Failed to add reply');
+      setError('Unable to send reply right now');
     } finally {
       setReplying(false);
     }
@@ -204,9 +208,9 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
         </div>
 
         {error && (
-          <Alert className="border-red-300 bg-red-50">
-            <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-700">{error}</AlertDescription>
+          <Alert className="border-gray-300 bg-gray-50">
+            <AlertCircle className="h-4 w-4 text-gray-600" />
+            <AlertDescription className="text-gray-700">{error}</AlertDescription>
           </Alert>
         )}
 
@@ -313,9 +317,9 @@ export function SupportTickets({ accessToken }: SupportTicketsProps) {
         </div>
 
         {error && (
-          <Alert className="border-red-300 bg-red-50">
-            <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-700">{error}</AlertDescription>
+          <Alert className="border-gray-300 bg-gray-50">
+            <AlertCircle className="h-4 w-4 text-gray-600" />
+            <AlertDescription className="text-gray-700">{error}</AlertDescription>
           </Alert>
         )}
 

@@ -13,6 +13,7 @@ const PUBLIC_HEADERS = {
 
 async function test() {
   console.log("🧪 Testing new backend endpoints...\n");
+  const runId = Date.now();
 
   try {
     // Test 1: Health check
@@ -33,7 +34,8 @@ async function test() {
       method: "POST",
       headers: PUBLIC_HEADERS,
       body: JSON.stringify({
-        email: `user_${Date.now()}@tank.local`,
+        email: `user_${runId}@tank.local`,
+        username: `user_${runId}`,
         password: "Password123",
         name: "Test User",
         withdrawalPassword: "WithdrawPass123",
@@ -47,7 +49,7 @@ async function test() {
     if (data.user) {
       const userId = data.user.id;
       const inviteCode = data.user.invitationCode;
-      const userEmail = data.user.email;
+      const username = data.user.username;
       console.log(`✓ New user created with ID: ${userId}`);
       console.log(`✓ Generated invitation code: ${inviteCode}\n`);
 
@@ -57,7 +59,7 @@ async function test() {
         method: "POST",
         headers: PUBLIC_HEADERS,
         body: JSON.stringify({
-          email: userEmail,
+          username,
           password: "Password123",
         }),
       });
@@ -133,7 +135,8 @@ async function test() {
           method: "POST",
           headers: PUBLIC_HEADERS,
           body: JSON.stringify({
-            email: `child_${Date.now()}@tank.local`,
+            email: `child_${runId}@tank.local`,
+            username: `child_${runId}`,
             password: "ChildPass123",
             name: "Child User",
             withdrawalPassword: "ChildWithdraw123",

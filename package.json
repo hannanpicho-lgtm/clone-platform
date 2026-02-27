@@ -11,12 +11,12 @@
     "test:customer-service": "node test-customer-service-endpoints.js",
     "test:premium": "node test-premium-endpoints.js",
     "test:smoke": "npm run test:endpoints && npm run test:customer-service && npm run test:premium",
-    "deploy": "pwsh deploy.ps1",
-    "deploy:dry-run": "pwsh deploy.ps1 -DryRun",
-    "deploy:skip-tests": "pwsh deploy.ps1 -SkipTests",
-    "rollback": "pwsh rollback.ps1",
-    "validate": "pwsh validate-deployment.ps1",
-    "validate:strict": "pwsh validate-deployment.ps1 -Strict"
+    "deploy": "powershell -ExecutionPolicy Bypass -File deploy.ps1",
+    "deploy:dry-run": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -DryRun",
+    "deploy:skip-tests": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -SkipTests -Force",
+    "rollback": "powershell -ExecutionPolicy Bypass -File rollback.ps1",
+    "validate": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1",
+    "validate:strict": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1 -Strict"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -61,10 +61,10 @@
     "motion": "12.23.24",
     "next-themes": "0.4.6",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
     "react-dnd-html5-backend": "16.0.1",
+    "react-dom": "18.3.1",
     "react-hook-form": "7.55.0",
     "react-popper": "2.3.0",
     "react-resizable-panels": "2.1.7",
@@ -78,7 +78,10 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "4.7.0",
+    "netlify-cli": "^23.15.1",
     "tailwindcss": "4.1.12",
     "vite": "^6.4.1"
   },

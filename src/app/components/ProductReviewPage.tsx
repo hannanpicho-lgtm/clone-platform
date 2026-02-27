@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from './ui/button';
-import { Menu, Bell, ShoppingCart, Star } from 'lucide-react';
+import { Menu, Bell, Star } from 'lucide-react';
 
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
@@ -37,12 +37,6 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           <div className="flex items-center space-x-3">
             <button className="p-2 relative hover:bg-white/10 rounded-lg transition-colors">
               <Bell className="h-6 w-6" />
-              <span className="absolute top-1 right-1 bg-white text-[#1a1d2e] text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                0
-              </span>
-            </button>
-            <button className="p-2 relative hover:bg-white/10 rounded-lg transition-colors">
-              <ShoppingCart className="h-5 w-5" />
               <span className="absolute top-1 right-1 bg-white text-[#1a1d2e] text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
                 0
               </span>

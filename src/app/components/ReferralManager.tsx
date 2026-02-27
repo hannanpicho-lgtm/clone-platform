@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
 import { AlertCircle, Loader2, Users, DollarSign, Calendar } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 
@@ -22,7 +23,8 @@ export function ReferralManager({ accessToken }: { accessToken: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const BASE_URL = 'https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3';
+  const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+  const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
   useEffect(() => {
     fetchReferrals();
@@ -32,17 +34,17 @@ export function ReferralManager({ accessToken }: { accessToken: string }) {
 
   const fetchReferrals = async () => {
     try {
-      const response = await fetch(`${BASE_URL}/referrals`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/referrals`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
-      if (!response.ok) throw new Error('Failed to fetch referrals');
+      if (!response.ok) throw new Error('Referrals are temporarily unavailable');
 
       const data = await response.json() as ReferralResponse;
       setReferrals(data.referrals);
       setError('');
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || 'Referrals are temporarily unavailable');
     } finally {
       setLoading(false);
     }
@@ -96,10 +98,12 @@ export function ReferralManager({ accessToken }: { accessToken: string }) {
 
   if (error) {
     return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+      <Card className="p-6 bg-gray-50 border-gray-200">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-gray-700">{error}</p>
+          <Button onClick={fetchReferrals} variant="outline" size="sm">Retry</Button>
+        </div>
+      </Card>
     );
   }
 

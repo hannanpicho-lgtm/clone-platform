@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from './ui/card';
+import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, Search, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -16,6 +17,7 @@ interface FAQProps {
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 export function FAQ({ accessToken }: FAQProps) {
   const [faqs, setFaqs] = useState<FAQ[]>([]);
@@ -30,9 +32,13 @@ export function FAQ({ accessToken }: FAQProps) {
   const fetchFAQs = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/faq`, {
+      setError('');
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/faq`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!response.ok) {
+        throw new Error('FAQs are temporarily unavailable');
+      }
       const data = await response.json();
       if (data.faqs) {
         setFaqs(data.faqs);
@@ -44,7 +50,7 @@ export function FAQ({ accessToken }: FAQProps) {
       }
     } catch (err) {
       console.error('Error fetching FAQs:', err);
-      setError('Failed to load FAQs');
+      setError('FAQs are temporarily unavailable');
     } finally {
       setLoading(false);
     }
@@ -88,10 +94,12 @@ export function FAQ({ accessToken }: FAQProps) {
 
   if (error) {
     return (
-      <Alert className="border-red-300 bg-red-50">
-        <AlertCircle className="h-4 w-4 text-red-600" />
-        <AlertDescription className="text-red-700">{error}</AlertDescription>
-      </Alert>
+      <Card className="p-6 bg-gray-50 border-gray-200">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-gray-700">{error}</p>
+          <Button onClick={fetchFAQs} variant="outline" size="sm">Retry</Button>
+        </div>
+      </Card>
     );
   }
 

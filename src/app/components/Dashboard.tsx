@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -19,10 +19,7 @@ import { VIPTiersCarousel } from './VIPTiersCarousel';
 import { FAQPage } from './FAQPage';
 import { EarningsDashboard } from './EarningsDashboard';
 import { ReferralManager } from './ReferralManager';
-import { ProductSubmissionForm } from './ProductSubmissionForm';
 import { WithdrawalForm } from './WithdrawalForm';
-import { AdminWithdrawalDashboard } from './AdminWithdrawalDashboard';
-import { MultiLevelEarnings } from './MultiLevelEarnings';
 import { EmailPreferences } from './EmailPreferences';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { ReferrersLeaderboard } from './ReferrersLeaderboard';
@@ -79,7 +76,37 @@ interface UserProfile {
   vipTier: string;
   createdAt: string;
   balance?: number;
+  accountFrozen?: boolean;
+  freezeAmount?: number;
   productsSubmitted?: number;
+  dailyTaskSetLimit?: number;
+  extraTaskSets?: number;
+  taskSetsCompletedToday?: number;
+  currentSetTasksCompleted?: number;
+  premiumAssignment?: {
+    orderId?: string;
+    amount?: number;
+    enteredAmount?: number;
+    position?: number;
+    vipRate?: number;
+    multiplier?: number;
+    potentialProfit?: number;
+    bundleProductCount?: number;
+    bundleItems?: Array<{
+      name: string;
+      type: 'premium' | 'individual';
+      amount: number;
+    }>;
+    previousBalance?: number;
+    balanceAfterAssignment?: number;
+    topUpRequired?: number;
+    assignedAt?: string;
+    encounteredAt?: string | null;
+    encounteredTaskNumber?: number | null;
+  } | null;
+  lastLoginAt?: string | null;
+  lastLoginCountry?: string | null;
+  lastLoginIp?: string | null;
 }
 
 interface Metrics {
@@ -89,11 +116,109 @@ interface Metrics {
   automationCoverage: number;
 }
 
-interface GlobalPremiumConfig {
-  enabled: boolean;
-  position: number;
-  amount: number;
+interface DepositConfig {
+  bank: {
+    accountName: string;
+    accountNumber: string;
+    bankName: string;
+    routingNumber: string;
+    instructions: string;
+  };
+  crypto: {
+    defaultAsset?: string;
+    network: string;
+    walletAddress: string;
+    instructions: string;
+    assets?: Array<{
+      asset: string;
+      network: string;
+      networks?: string[];
+      walletAddress: string;
+      instructions?: string;
+    }>;
+  };
+  minimumAmount: number;
 }
+
+const DEFAULT_DEPOSIT_CRYPTO_ASSETS: Array<{
+  asset: string;
+  network: string;
+  networks: string[];
+  walletAddress: string;
+  instructions: string;
+}> = [
+  {
+    asset: 'BTC',
+    network: 'Bitcoin',
+    networks: ['Bitcoin'],
+    walletAddress: '',
+    instructions: 'Send BTC on Bitcoin network only.',
+  },
+  {
+    asset: 'ETH',
+    network: 'ERC20',
+    networks: ['ERC20'],
+    walletAddress: '',
+    instructions: 'Send ETH on ERC20 network only.',
+  },
+  {
+    asset: 'USDC',
+    network: 'ERC20',
+    networks: ['ERC20', 'TRC20', 'BEP20'],
+    walletAddress: '',
+    instructions: 'Select the intended USDC network before sending.',
+  },
+  {
+    asset: 'USDT',
+    network: 'TRC20',
+    networks: ['TRC20', 'ERC20', 'BEP20'],
+    walletAddress: '',
+    instructions: 'Select the intended USDT network before sending.',
+  },
+];
+
+const getDepositCryptoAssets = (config: DepositConfig | null) => {
+  const configuredAssets = Array.isArray(config?.crypto?.assets) ? config!.crypto.assets : [];
+  const mergedByAsset = new Map<string, {
+    asset: string;
+    network: string;
+    networks: string[];
+    walletAddress: string;
+    instructions?: string;
+  }>();
+
+  DEFAULT_DEPOSIT_CRYPTO_ASSETS.forEach((item) => {
+    mergedByAsset.set(item.asset.toUpperCase(), {
+      asset: item.asset,
+      network: item.network,
+      networks: item.networks,
+      walletAddress: item.walletAddress,
+      instructions: item.instructions,
+    });
+  });
+
+  configuredAssets.forEach((item) => {
+    const key = String(item?.asset || '').toUpperCase();
+    if (!key) {
+      return;
+    }
+    const fallback = mergedByAsset.get(key);
+    const networkFromItem = String(item?.network || fallback?.network || config?.crypto?.network || '').trim();
+    const networks = Array.isArray(item?.networks) && item.networks.length > 0
+      ? item.networks
+      : (fallback?.networks && fallback.networks.length > 0 ? fallback.networks : (networkFromItem ? [networkFromItem] : []));
+
+    mergedByAsset.set(key, {
+      asset: key,
+      network: networkFromItem || (networks[0] || ''),
+      networks,
+      walletAddress: String(item?.walletAddress || fallback?.walletAddress || config?.crypto?.walletAddress || '').trim(),
+      instructions: item?.instructions || fallback?.instructions || config?.crypto?.instructions || undefined,
+    });
+  });
+
+  return Array.from(mergedByAsset.values());
+};
 
 interface DashboardProps {
   accessToken: string;
@@ -103,6 +228,7 @@ interface DashboardProps {
 export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const menuScrollRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
@@ -110,7 +236,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
-  const [balance, setBalance] = useState(15334); // Initialize with starting balance
+  const [balance, setBalance] = useState(0);
   const [productsSubmitted, setProductsSubmitted] = useState(0);
   const [showReviewPage, setShowReviewPage] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<ProductData | null>(null);
@@ -122,7 +248,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showCertificate, setShowCertificate] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
+  // All product records for records page (merged assigned + backend)
   const [productRecords, setProductRecords] = useState<RecordItem[]>([]);
+  // Assigned products for current set (simulate/generate for now)
+  const [assignedProducts, setAssignedProducts] = useState<ProductData[]>([]);
   const [showSubmissionLoader, setShowSubmissionLoader] = useState(false);
   const [submissionData, setSubmissionData] = useState<{
     productName: string;
@@ -145,6 +274,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [freezePremiumAmount, setFreezePremiumAmount] = useState(0);
   const [originalBalanceBeforeFreeze, setOriginalBalanceBeforeFreeze] = useState(0);
   const [premiumProfitBeforeFreeze, setPremiumProfitBeforeFreeze] = useState(0);
+  const [activePremiumAssignment, setActivePremiumAssignment] = useState<UserProfile['premiumAssignment'] | null>(null);
   
   // Chat state
   const [showChat, setShowChat] = useState(false);
@@ -152,28 +282,19 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   // New profit sharing features
   const [showEarnings, setShowEarnings] = useState(false);
   const [showReferrals, setShowReferrals] = useState(false);
-  const [showProductSubmission, setShowProductSubmission] = useState(false);
   const [showWithdrawal, setShowWithdrawal] = useState(false);
-  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
-  const [showMultiLevelEarnings, setShowMultiLevelEarnings] = useState(false);
   const [showEmailPreferences, setShowEmailPreferences] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showBonusPayouts, setShowBonusPayouts] = useState(false);
   const [showSupportTickets, setShowSupportTickets] = useState(false);
   const [showLiveChat, setShowLiveChat] = useState(false);
-  const [adminKey, setAdminKey] = useState(localStorage.getItem('adminKey') || '');
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
-  
-  const [globalPremiumConfig, setGlobalPremiumConfig] = useState<GlobalPremiumConfig>({
-    enabled: true,
-    position: 27,
-    amount: 10000,
-  });
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
+  const [uiNotice, setUiNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
@@ -202,56 +323,141 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   
   const [showBankingForm, setShowBankingForm] = useState(false);
   const [showCryptoForm, setShowCryptoForm] = useState(false);
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [depositMethod, setDepositMethod] = useState<'bank' | 'crypto'>('bank');
+  const [depositAmount, setDepositAmount] = useState('');
+  const [depositReference, setDepositReference] = useState('');
+  const [depositTxHash, setDepositTxHash] = useState('');
+  const [depositSourceWalletAddress, setDepositSourceWalletAddress] = useState('');
+  const [depositCryptoAsset, setDepositCryptoAsset] = useState('BTC');
+  const [depositCryptoNetwork, setDepositCryptoNetwork] = useState('Bitcoin');
+  const [depositNote, setDepositNote] = useState('');
+  const [isSubmittingDeposit, setIsSubmittingDeposit] = useState(false);
+  const [depositConfig, setDepositConfig] = useState<DepositConfig | null>(null);
+  const [taskActionNotice, setTaskActionNotice] = useState<string | null>(null);
+
+  const isTaskSubmissionLimitMessage = (message: string) => {
+    const normalized = String(message || '').toLowerCase();
+    return (
+      normalized.includes('daily task set limit reached')
+      || normalized.includes('current task set is complete')
+      || normalized.includes('reset task set')
+      || normalized.includes('additional sets')
+    );
+  };
 
   const handleSubmitProduct = (productId: string, commission: number) => {
     setBalance(prev => prev + commission);
     setProductsSubmitted(prev => prev + 1);
     setTodaysProfit(prev => prev + commission);
   };
-
-  const handleStartProduct = (product: ProductData) => {
-    setCurrentProduct(product);
-    setShowReviewPage(true);
-  };
-
-  const handleReviewSubmit = (rating: number, review: string, reviewType: string) => {
-    if (!currentProduct) return;
-    
-    // Check if this submission triggers a global premium product
-    const nextSubmissionCount = productsSubmitted + 1;
-    const shouldTriggerGlobalPremium =
-      globalPremiumConfig.enabled && nextSubmissionCount === globalPremiumConfig.position;
-    
-    if (shouldTriggerGlobalPremium) {
-      // This is a premium product - trigger freeze
-      const tier = testVIPTier || displayProfile.vipTier;
-      
-      // Use globally admin-set amount
-      const premiumValue = globalPremiumConfig.amount;
-      
-      // Get commission rate based on tier
-      const commissionRates: { [key: string]: number } = {
-        'Normal': 0.005,
-        'Silver': 0.0075,
-        'Gold': 0.01,
-        'Platinum': 0.0125,
-        'Diamond': 0.015,
-      };
-      
-      const baseCommission = premiumValue * (commissionRates[tier] || 0.01);
-      const premiumProfit = baseCommission * 10; // 10x boost
-      
-      // Update product count first
-      setProductsSubmitted(nextSubmissionCount);
-      
-      // Trigger premium product freeze
-      handlePremiumSubmit(premiumValue, premiumProfit);
-      
-      // Close review page
-      setShowReviewPage(false);
+  useEffect(() => {
+    if (!showMenu) {
+      document.body.style.overflow = '';
       return;
     }
-    
+
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => {
+      if (menuScrollRef.current) {
+        menuScrollRef.current.scrollTop = 0;
+      }
+    });
+
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [showMenu]);
+
+  const handleStartProduct = async (fallbackProduct: ProductData) => {
+    try {
+      const { projectId } = await import('~/utils/supabase/info');
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/tasks/next-product`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.product) {
+        if (response.status === 400 || response.status === 409 || response.status === 403) {
+          const message = String(data?.error || 'Unable to start task right now.');
+          setTaskActionNotice(message);
+          return;
+        }
+        setCurrentProduct(fallbackProduct);
+        setShowReviewPage(true);
+        return;
+      }
+
+      setTaskActionNotice(null);
+
+      const serverProduct = data.product;
+      setCurrentProduct({
+        name: String(serverProduct?.name || fallbackProduct.name),
+        image: String(serverProduct?.image || fallbackProduct.image),
+        totalAmount: Number(serverProduct?.totalAmount || fallbackProduct.totalAmount || 0),
+        profit: Number(serverProduct?.profit || fallbackProduct.profit || 0),
+        creationTime: String(serverProduct?.creationTime || fallbackProduct.creationTime),
+        ratingNo: String(serverProduct?.ratingNo || fallbackProduct.ratingNo),
+      });
+      setShowReviewPage(true);
+    } catch {
+      setCurrentProduct(fallbackProduct);
+      setShowReviewPage(true);
+    }
+  };
+
+  const handleReviewSubmit = async (rating: number, review: string, reviewType: string) => {
+    if (!currentProduct) return;
+
+    const { projectId } = await import('~/utils/supabase/info');
+    const completionResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/tasks/complete-product`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        productName: currentProduct.name,
+        productValue: currentProduct.totalAmount,
+        profit: currentProduct.profit,
+      }),
+    });
+
+    const completionData = await completionResponse.json().catch(() => ({}));
+    if (!completionResponse.ok) {
+      const message = String(completionData?.error || 'Unable to submit task right now. Please try again.');
+      if (isTaskSubmissionLimitMessage(message)) {
+        setTaskActionNotice(message);
+      } else {
+        setUiNotice({ type: 'error', text: message });
+      }
+      return;
+    }
+
+    setTaskActionNotice(null);
+
+    const updatedUser = completionData?.user || {};
+    const appliedProfit = Number(completionData?.result?.profit ?? currentProduct.profit ?? 0);
+    setBalance(Number(updatedUser?.balance ?? balance + appliedProfit));
+    setProductsSubmitted(Number(updatedUser?.productsSubmitted ?? productsSubmitted + 1));
+    setTodaysProfit(prev => prev + appliedProfit);
+    setProfile((prev) => prev ? {
+      ...prev,
+      balance: Number(updatedUser?.balance ?? prev.balance ?? 0),
+      productsSubmitted: Number(updatedUser?.productsSubmitted ?? prev.productsSubmitted ?? 0),
+      dailyTaskSetLimit: Number(updatedUser?.dailyTaskSetLimit ?? prev.dailyTaskSetLimit ?? 1),
+      extraTaskSets: Number(updatedUser?.extraTaskSets ?? prev.extraTaskSets ?? 0),
+      taskSetsCompletedToday: Number(updatedUser?.taskSetsCompletedToday ?? prev.taskSetsCompletedToday ?? 0),
+      currentSetTasksCompleted: Number(updatedUser?.currentSetTasksCompleted ?? prev.currentSetTasksCompleted ?? 0),
+      currentSetDate: updatedUser?.currentSetDate ?? prev.currentSetDate ?? null,
+      accountFrozen: Boolean(updatedUser?.accountFrozen ?? prev.accountFrozen ?? false),
+      freezeAmount: Number(updatedUser?.freezeAmount ?? prev.freezeAmount ?? 0),
+    } : prev);
+
     // Regular product submission
     // Create timestamp
     const now = new Date();
@@ -270,15 +476,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     
     setProductRecords(prev => [newRecord, ...prev]); // Add to beginning
     
-    // Add profit
-    handleSubmitProduct(`product-${Date.now()}`, currentProduct.profit);
-    
     // Set submission data and show loader instead of alert
     setSubmissionData({
       productName: currentProduct.name,
-      profit: currentProduct.profit,
+      profit: appliedProfit,
       rating: rating,
-      todaysTotal: todaysProfit + currentProduct.profit,
+      todaysTotal: todaysProfit + appliedProfit,
     });
     setShowSubmissionLoader(true);
     
@@ -292,7 +495,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     setCurrentProduct(null);
   };
 
-  const handlePremiumSubmit = (mergedValue: number, profit: number) => {
+  const handlePremiumSubmit = (mergedValue: number, profit: number, bundleCount: number) => {
     // FREEZE LOGIC:
     // Example: Premium = $10,000, Current Balance = $3,000
     // Deficit = $10,000 - $3,000 = $7,000
@@ -305,7 +508,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     
     // Store original balance and profit before freezing
     setOriginalBalanceBeforeFreeze(originalBalance);
-    setPremiumProfitBeforeFreeze(profit); // Store premium profit for later (10x commission)
+    setPremiumProfitBeforeFreeze(profit); // Store potential premium profit for display
     
     // Set balance to negative (showing the deficit)
     setBalance(-deficit);
@@ -323,7 +526,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     const newRecord: RecordItem = {
       id: `record-${Date.now()}`,
       timestamp: timestamp,
-      productName: `🌟 Premium Merged Product (FROZEN)`,
+      productName: `🌟 Premium Bundle (${bundleCount} Products) (FROZEN)`,
       productImage: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400',
       totalAmount: mergedValue,
       profit: 0, // No profit until unfrozen
@@ -340,122 +543,145 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
   useEffect(() => {
     const fetchData = async () => {
-      // Check if using demo token
-      if (accessToken === 'demo-token-12345') {
-        console.log('Demo mode detected - skipping API calls');
-        setDemoMode(true);
-        setIsLoading(false);
-        return;
+      // ...existing code...
+      // (same as before, up to and including setProductRecords(normalizedRecords);)
+      // After setting productRecords, also generate assigned products for the current set
+      // and merge them for the records page
+
+      // ...existing code for fetching profile, metrics, deposit config, and records...
+
+      // --- Merge assigned products with backend records for records page ---
+      // Generate assigned products for the current set (simulate for now)
+      const assigned: ProductData[] = [];
+      const setSize = 3; // Use maxProducts from ProductsView logic
+      for (let i = 0; i < setSize; i++) {
+        // Use ProductsView's generateProduct logic (copy here for now)
+        const productNames = [
+          'stainless steel black sink waterfall faucet',
+          'wireless bluetooth noise cancelling headphones',
+          'smart home security camera system',
+          'portable solar power bank charger',
+          'ergonomic mesh office chair',
+          'led desk lamp with wireless charging',
+          'stainless steel cookware set',
+          'digital air fryer with touch screen',
+          'robot vacuum cleaner with mapping',
+          'electric standing desk converter',
+          'waterproof fitness tracker watch',
+          'ceramic non-stick frying pan',
+          'bamboo kitchen utensil set',
+          'glass meal prep containers',
+          'electric milk frother and steamer',
+        ];
+        const productImages = [
+          'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
+          'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
+          'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
+          'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
+          'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
+          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+          'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
+          'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
+          'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+          'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
+          'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
+          'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+          'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
+          'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
+          'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
+        ];
+        const commissionRate = profile?.vipTier === 'Diamond' ? 0.015 : profile?.vipTier === 'Platinum' ? 0.0125 : profile?.vipTier === 'Gold' ? 0.01 : profile?.vipTier === 'Silver' ? 0.0075 : 0.005;
+        const productRange = profile?.vipTier === 'Diamond' ? { min: 9999, max: 19998 } : profile?.vipTier === 'Platinum' ? { min: 1999, max: 9998 } : profile?.vipTier === 'Gold' ? { min: 599, max: 1998 } : profile?.vipTier === 'Silver' ? { min: 399, max: 598 } : { min: 99, max: 398 };
+        const randomIndex = Math.floor(Math.random() * productNames.length);
+        const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
+        const profit = parseFloat((totalAmount * commissionRate).toFixed(2));
+        const now = new Date();
+        const creationDate = new Date(now);
+        creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
+        creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
+        const year = creationDate.getFullYear();
+        const month = String(creationDate.getMonth() + 1).padStart(2, '0');
+        const day = String(creationDate.getDate()).padStart(2, '0');
+        const hours = String(creationDate.getHours()).padStart(2, '0');
+        const minutes = String(creationDate.getMinutes()).padStart(2, '0');
+        const seconds = String(creationDate.getSeconds()).padStart(2, '0');
+        const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        const ratingNo = Math.random().toString(36).substring(2, 15);
+        assigned.push({
+          name: productNames[randomIndex],
+          image: productImages[randomIndex],
+          totalAmount,
+          profit,
+          creationTime,
+          ratingNo,
+        });
       }
-      
-      try {
-        console.log('Attempting to connect to backend...');
-        
-        const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
+      setAssignedProducts(assigned);
 
+      // Merge logic: for each assigned product, if it exists in backend records, use backend status; else mark as pending
+      const backendRecords = Array.isArray(recordsData?.records)
+        ? recordsData.records.map((record: any) => ({
+            id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+            timestamp: String(record?.timestamp || ''),
+            productName: String(record?.productName || 'Product Task'),
+            productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
+            totalAmount: Number(record?.totalAmount || 0),
+            profit: Number(record?.profit || 0),
+            status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
+              ? String(record?.status || '').toLowerCase()
+              : 'approved') as 'approved' | 'pending' | 'frozen',
+          }))
+        : [];
 
-
-        // Fetch profile with timeout to fail fast
-        const controller1 = new AbortController();
-        const timeout1 = setTimeout(() => controller1.abort(), 5000);
-        
-        const profileResponse = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile`,
-          {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-            },
-            signal: controller1.signal,
-          }
-        ).finally(() => clearTimeout(timeout1));
-
-        if (!profileResponse.ok) {
-          console.log('Backend returned error status:', profileResponse.status);
-          throw new Error('Backend not responding');
-        }
-
-        const profileData = await profileResponse.json();
-        console.log('✅ Backend connected - Profile data received');
-        setProfile(profileData.profile);
-
-        // Fetch metrics with timeout
-        const controller2 = new AbortController();
-        const timeout2 = setTimeout(() => controller2.abort(), 5000);
-        
-        const metricsResponse = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/metrics`,
-          {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-            },
-            signal: controller2.signal,
-          }
-        ).finally(() => clearTimeout(timeout2));
-
-        if (!metricsResponse.ok) {
-          throw new Error('Backend not responding');
-        }
-
-        const metricsData = await metricsResponse.json();
-        console.log('✅ Metrics data received');
-        setMetrics(metricsData.metrics);
-
-        // Fetch global premium config
-        try {
-          const premiumConfigResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/premium/global-config`,
-            {
-              headers: {
-                'Authorization': `Bearer ${publicAnonKey}`,
-                'apikey': publicAnonKey,
-              },
-            }
-          );
-
-          if (premiumConfigResponse.ok) {
-            const premiumConfigData = await premiumConfigResponse.json();
-            if (premiumConfigData?.success && premiumConfigData?.config) {
-              setGlobalPremiumConfig({
-                enabled: Boolean(premiumConfigData.config.enabled),
-                position: Number(premiumConfigData.config.position) || 27,
-                amount: Number(premiumConfigData.config.amount) || 10000,
-              });
-            }
-          }
-        } catch {
-          // Keep defaults if config fetch fails
-        }
-      } catch (err: any) {
-        // Silently handle error - no console.error to prevent "Failed to fetch" showing
-        console.log('ℹ️ Backend unavailable - activating Demo Mode');
-        setError('');
-        setDemoMode(true);
-        
-        // Set demo data immediately
-        const demoProfile: UserProfile = {
-          id: 'demo-123',
-          email: 'demo@tanknewmedia.com',
-          invitationCode: 'DEMO1',
-          name: 'Demo User',
-          vipTier: 'Silver',
-          createdAt: new Date().toISOString(),
+      // For each assigned product, find if it exists in backendRecords (by name and totalAmount)
+      const mergedRecords: RecordItem[] = assigned.map((ap, idx) => {
+        const found = backendRecords.find(
+          (br) => br.productName === ap.name && br.totalAmount === ap.totalAmount
+        );
+        if (found) return found;
+        return {
+          id: `assigned-${idx}`,
+          timestamp: ap.creationTime,
+          productName: ap.name,
+          productImage: ap.image,
+          totalAmount: ap.totalAmount,
+          profit: ap.profit,
+          status: 'pending',
         };
-        const demoMetrics: Metrics = {
-          alertCompressionRatio: 85,
-          ticketReductionRate: 62,
-          mttrImprovement: 45,
-          automationCoverage: 78,
-        };
-        
-        setProfile(demoProfile);
-        setMetrics(demoMetrics);
-      } finally {
-        setIsLoading(false);
-      }
+      });
+      // Add any backend records that are not in assigned (e.g., frozen/approved from previous sets)
+      backendRecords.forEach((br) => {
+        if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
+          mergedRecords.push(br);
+        }
+      });
+      setProductRecords(mergedRecords);
     };
-
     fetchData();
   }, [accessToken]);
+
+  useEffect(() => {
+    if (depositMethod !== 'crypto') {
+      return;
+    }
+
+    const assets = getDepositCryptoAssets(depositConfig);
+    const selectedAsset = assets.find((item) => String(item?.asset || '').toUpperCase() === String(depositCryptoAsset || '').toUpperCase())
+      || assets[0]
+      || null;
+
+    if (!selectedAsset) {
+      return;
+    }
+
+    const networks = Array.isArray(selectedAsset.networks) && selectedAsset.networks.length > 0
+      ? selectedAsset.networks
+      : [selectedAsset.network].filter(Boolean) as string[];
+
+    if (networks.length > 0 && !networks.includes(depositCryptoNetwork)) {
+      setDepositCryptoNetwork(networks[0]);
+    }
+  }, [depositMethod, depositConfig, depositCryptoAsset, depositCryptoNetwork]);
 
   if (isLoading) {
     return (
@@ -498,16 +724,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 space-y-4">
-            <h2 className="text-xl font-bold text-red-600">Connection Error</h2>
-            <p className="text-gray-600">{error || 'Failed to load data'}</p>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <p className="text-sm text-yellow-800">
-                <strong>JWT Validation Issue:</strong> The backend is having trouble validating your session token.
-              </p>
-            </div>
+            <h2 className="text-xl font-bold text-gray-900">Data is temporarily unavailable</h2>
+            <p className="text-gray-600">{error || 'Please try again in a moment.'}</p>
             <div className="flex flex-col space-y-2">
               <Button onClick={() => setDemoMode(true)} variant="default" className="w-full">
-                View Demo Dashboard
+                Continue
               </Button>
               <Button onClick={onLogout} variant="outline" className="w-full">
                 Back to Login
@@ -536,47 +757,132 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     automationCoverage: 78,
   } : metrics!;
 
+  const submitDepositRequest = async () => {
+    const amount = Number(depositAmount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setUiNotice({ type: 'error', text: 'Please enter a valid deposit amount.' });
+      return;
+    }
+
+    if (depositConfig && amount < Number(depositConfig.minimumAmount || 0)) {
+      setUiNotice({ type: 'error', text: `Minimum deposit amount is $${Number(depositConfig.minimumAmount).toFixed(2)}.` });
+      return;
+    }
+
+    const cryptoAssets = getDepositCryptoAssets(depositConfig);
+    const selectedCryptoAssetConfig = cryptoAssets.find((item) => String(item?.asset || '').toUpperCase() === String(depositCryptoAsset || '').toUpperCase())
+      || cryptoAssets[0]
+      || null;
+    const selectedCryptoNetworks = Array.isArray(selectedCryptoAssetConfig?.networks) && selectedCryptoAssetConfig.networks.length > 0
+      ? selectedCryptoAssetConfig.networks
+      : [selectedCryptoAssetConfig?.network].filter(Boolean) as string[];
+    const cryptoNetworkToSubmit = selectedCryptoNetworks.includes(depositCryptoNetwork)
+      ? depositCryptoNetwork
+      : (selectedCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || null);
+
+    if (depositMethod === 'crypto') {
+      if (!depositTxHash.trim()) {
+        setUiNotice({ type: 'error', text: 'Please enter transaction hash for crypto deposit.' });
+        return;
+      }
+
+      if (!(selectedCryptoAssetConfig?.walletAddress || depositConfig?.crypto?.walletAddress)) {
+        setUiNotice({ type: 'error', text: 'Crypto destination wallet is not configured. Please contact support.' });
+        return;
+      }
+    }
+
+    try {
+      setIsSubmittingDeposit(true);
+      const { projectId } = await import('~/utils/supabase/info');
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/deposits/request`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          method: depositMethod,
+          amount,
+          reference: depositMethod === 'crypto' ? depositTxHash : depositReference,
+          transactionHash: depositMethod === 'crypto' ? depositTxHash : null,
+          sourceWalletAddress: depositMethod === 'crypto'
+            ? (depositSourceWalletAddress || cryptoWallet.walletAddress || null)
+            : null,
+          destinationWalletAddress: depositMethod === 'crypto'
+            ? (selectedCryptoAssetConfig?.walletAddress || depositConfig?.crypto?.walletAddress || null)
+            : null,
+          cryptoAsset: depositMethod === 'crypto'
+            ? (selectedCryptoAssetConfig?.asset || depositCryptoAsset || null)
+            : null,
+          cryptoNetwork: depositMethod === 'crypto'
+            ? cryptoNetworkToSubmit
+            : null,
+          note: depositNote,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setUiNotice({ type: 'error', text: `${data?.error || 'Unable to submit deposit request.'}` });
+        return;
+      }
+
+      setUiNotice({ type: 'success', text: 'Deposit request submitted. Customer Service/Admin will review it shortly.' });
+      setDepositAmount('');
+      setDepositReference('');
+      setDepositTxHash('');
+      setDepositSourceWalletAddress('');
+      setDepositNote('');
+      setShowDepositModal(false);
+    } catch {
+      setUiNotice({ type: 'error', text: 'Unable to submit deposit request right now.' });
+    } finally {
+      setIsSubmittingDeposit(false);
+    }
+  };
+
   const avatarSrc = displayProfile.avatarUrl || `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(displayProfile.name || 'user')}`;
   const profileInitial = (displayProfile.name || 'U').trim().charAt(0).toUpperCase();
+  const availableCryptoAssets = getDepositCryptoAssets(depositConfig);
+  const selectedCryptoAssetConfig = availableCryptoAssets.find((item) => String(item?.asset || '').toUpperCase() === String(depositCryptoAsset || '').toUpperCase())
+    || availableCryptoAssets[0]
+    || null;
+  const availableCryptoNetworks = Array.isArray(selectedCryptoAssetConfig?.networks) && selectedCryptoAssetConfig.networks.length > 0
+    ? selectedCryptoAssetConfig.networks
+    : [selectedCryptoAssetConfig?.network].filter(Boolean) as string[];
+  const displayCryptoNetwork = availableCryptoNetworks.includes(depositCryptoNetwork)
+    ? depositCryptoNetwork
+    : (availableCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || cryptoWallet.walletType);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Demo Mode Banner */}
-      {demoMode && (
-        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white px-4 py-3 shadow-lg">
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div>
-                <div className="font-semibold">Demo Mode Active</div>
-                <div className="text-sm text-white/90">Backend unavailable - Using sample data for exploration</div>
-              </div>
+      {uiNotice && (
+        <div className="fixed top-4 right-4 z-[80] max-w-md w-[calc(100%-2rem)]">
+          <div className={`rounded-lg border px-4 py-3 shadow-lg ${uiNotice.type === 'success' ? 'bg-green-50 border-green-300 text-green-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm font-medium">{uiNotice.text}</p>
+              <button
+                type="button"
+                className="text-xs opacity-70 hover:opacity-100"
+                onClick={() => setUiNotice(null)}
+              >
+                ✕
+              </button>
             </div>
-            <Button 
-              onClick={onLogout}
-              variant="outline" 
-              size="sm"
-              className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
-            >
-              Exit Demo
-            </Button>
           </div>
         </div>
       )}
-      
+
       {/* Side Menu Overlay */}
       {showMenu && (
         <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowMenu(false)}>
           <div 
-            className="absolute left-0 top-0 bottom-0 w-72 bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-xl overflow-y-auto"
+            className="absolute left-0 top-0 bottom-0 w-[88vw] max-w-[360px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with User Info */}
-            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 p-6 pb-8">
+            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-4 pt-5 pb-4" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
               {/* Close Button */}
               <button 
                 onClick={() => setShowMenu(false)} 
@@ -588,7 +894,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </button>
 
               {/* User Avatar and Info */}
-              <div className="flex items-start space-x-3 mb-6">
+              <div className="flex items-start space-x-3 mb-4 pr-11">
                 <div className="w-12 h-12 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
                   {!avatarError ? (
                     <img
@@ -602,7 +908,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   )}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-bold text-lg leading-tight break-words">{displayProfile.name}</h3>
+                  <h3 className="text-white font-bold text-base leading-tight break-words">{displayProfile.name}</h3>
                   <div className="mt-2 bg-white/10 rounded-lg p-2 space-y-1">
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Member ID:</span>{' '}
@@ -617,21 +923,21 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </div>
 
               {/* Stats and Credit Score */}
-              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4">
+              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
                 <div className="flex justify-between items-start">
                   {/* Left side - Stats */}
-                  <div className="space-y-3 flex-1">
+                  <div className="space-y-2 flex-1">
                     <div>
                       <p className="text-blue-200 text-xs">Today's Profit</p>
-                      <p className="text-white font-bold text-xl">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-white font-bold text-lg">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-blue-200 text-xs">Total Asset</p>
-                      <p className="text-white font-bold text-xl">${balance.toFixed(2)}</p>
+                      <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-blue-200 text-xs">Assets</p>
-                      <p className="text-white font-bold text-xl">$0</p>
+                      <p className="text-white font-bold text-lg">$0</p>
                     </div>
                   </div>
 
@@ -670,15 +976,39 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             </div>
 
             {/* Menu Items - Light Background */}
-            <div className="bg-gray-50 px-4 py-6 space-y-6">
+            <div ref={menuScrollRef} className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-5">
+              {/* Sticky Quick Actions */}
+              <div className="sticky top-0 z-10 bg-gray-50 pb-3 border-b border-gray-200">
+                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Quick Actions</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  <button 
+                    onClick={() => {
+                      setShowMenu(false);
+                      setActiveNav('analytics');
+                    }}
+                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                  >
+                    <span className="text-lg">📤</span>
+                    <span className="text-gray-900 font-semibold text-sm">Upload</span>
+                  </button>
+                  <button 
+                    onClick={() => setShowWithdrawalModal(true)}
+                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                  >
+                    <span className="text-lg">💵</span>
+                    <span className="text-gray-900 font-semibold text-sm">Cash Out</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Quick Access Grid */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2">
                 <button 
                   onClick={() => {
                     setShowMenu(false);
                     setShowMemberID(true);
                   }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🆔</span>
@@ -690,7 +1020,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowActivity(true);
                   }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🎟️</span>
@@ -702,7 +1032,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowAboutUs(true);
                   }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">ℹ️</span>
@@ -714,76 +1044,18 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowCertificate(true);
                   }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">📜</span>
                     <span className="text-gray-900 font-medium text-sm">Cert</span>
                   </div>
                 </button>
-                <button 
-                  onClick={() => {
-                    setShowMenu(false);
-                    setShowFAQ(true);
-                  }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="text-2xl">❓</span>
-                    <span className="text-gray-900 font-medium text-sm">Faq</span>
-                  </div>
-                </button>
-                <button 
-                  onClick={() => {
-                    setShowMenu(false);
-                    setShowVIPCarousel(true);
-                  }}
-                  className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow text-left"
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="text-2xl">👑</span>
-                    <span className="text-gray-900 font-medium text-sm">Membership</span>
-                  </div>
-                </button>
-              </div>
-
-              {/* Transactions Section */}
-              <div>
-                <h4 className="text-gray-700 font-bold mb-3">Transactions</h4>
-                <div className="space-y-2">
-                  <button 
-                    onClick={() => {
-                      setShowMenu(false);
-                      setActiveNav('analytics');
-                    }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-2 border-red-500 font-medium"
-                  >
-                    <span className="text-xl">📤</span>
-                    <span className="text-gray-900 font-medium">Upload</span>
-                  </button>
-                  <button 
-                    onClick={() => setShowWithdrawalModal(true)}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-2 border-red-500 font-medium"
-                  >
-                    <span className="text-xl">💵</span>
-                    <span className="text-gray-900 font-medium">Cash Out</span>
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setShowMenu(false);
-                      setActiveNav('reports');
-                    }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
-                  >
-                    <span className="text-xl">📜</span>
-                    <span className="text-gray-900 font-medium">History</span>
-                  </button>
-                </div>
               </div>
 
               {/* Profit Sharing Section */}
               <div>
-                <h4 className="text-gray-700 font-bold mb-3">💰 Profit Sharing</h4>
+                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">💰 Profit Sharing</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
@@ -810,17 +1082,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowProductSubmission(true);
-                    }}
-                    className="w-full bg-gradient-to-r from-orange-50 to-orange-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-orange-500"
-                  >
-                    <span className="text-xl">📦</span>
-                    <span className="text-gray-900 font-medium">Submit Product</span>
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      setShowMenu(false);
                       setShowWithdrawal(true);
                     }}
                     className="w-full bg-gradient-to-r from-red-50 to-red-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-red-500"
@@ -829,22 +1090,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <span className="text-gray-900 font-medium">Request Withdrawal</span>
                   </button>
 
-                  <button 
-                    onClick={() => {
-                      setShowMenu(false);
-                      setShowMultiLevelEarnings(true);
-                    }}
-                    className="w-full bg-gradient-to-r from-cyan-50 to-cyan-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-cyan-500"
-                  >
-                    <span className="text-xl">📈</span>
-                    <span className="text-gray-900 font-medium">Multi-Level Insights</span>
-                  </button>
                 </div>
               </div>
 
               {/* Profile Section */}
               <div>
-                <h4 className="text-gray-700 font-bold mb-3">Profile</h4>
+                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Profile</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
@@ -856,75 +1107,22 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <span className="text-xl">✏️</span>
                     <span className="text-gray-900 font-medium">Edit Profile</span>
                   </button>
-                  <button className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3">
+                  <button
+                    onClick={() => {
+                      setShowMenu(false);
+                      setActiveNav('settings');
+                    }}
+                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                  >
                     <span className="text-xl">💳</span>
                     <span className="text-gray-900 font-medium">Financial Information</span>
                   </button>
                 </div>
               </div>
 
-              {/* Admin Tools Section */}
-              <div>
-                <h4 className="text-gray-700 font-bold mb-3">🔐 Admin Tools</h4>
-                {adminKey ? (
-                  <div className="space-y-2">
-                    <button 
-                      onClick={() => {
-                        setShowMenu(false);
-                        setShowAdminDashboard(true);
-                      }}
-                      className="w-full bg-gradient-to-r from-indigo-50 to-indigo-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-indigo-500"
-                    >
-                      <span className="text-xl">📊</span>
-                      <span className="text-gray-900 font-medium">Withdrawal Dashboard</span>
-                    </button>
-                    <button 
-                      onClick={() => {
-                        localStorage.removeItem('adminKey');
-                        setAdminKey('');
-                      }}
-                      className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
-                    >
-                      <span className="text-xl">🔓</span>
-                      <span className="text-gray-900 font-medium">Logout (Admin)</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <input
-                      type="password"
-                      placeholder="Enter admin key"
-                      value={adminKey}
-                      onChange={(e) => setAdminKey(e.target.value)}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter' && adminKey.trim()) {
-                          localStorage.setItem('adminKey', adminKey);
-                          setShowMenu(false);
-                          setShowAdminDashboard(true);
-                        }
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                    />
-                    <button 
-                      onClick={() => {
-                        if (adminKey.trim()) {
-                          localStorage.setItem('adminKey', adminKey);
-                          setShowMenu(false);
-                          setShowAdminDashboard(true);
-                        }
-                      }}
-                      disabled={!adminKey.trim()}
-                      className="w-full bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg p-3 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                    >
-                      Login as Admin
-                    </button>
-                  </div>
-                )}
-              </div>
-
               {/* Others Section */}
               <div>
-                <h4 className="text-gray-700 font-bold mb-3">Others</h4>
+                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Others</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
@@ -939,7 +1137,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowLiveChat(true);
+                      setShowChat(true);
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
@@ -956,7 +1154,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <span className="text-xl">🎫</span>
                     <span className="text-gray-900 font-medium">Support Tickets</span>
                   </button>
-                  <button className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3">
+                  <button
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowChat(true);
+                    }}
+                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                  >
                     <span className="text-xl">📞</span>
                     <span className="text-gray-900 font-medium">Contact Us</span>
                   </button>
@@ -1103,30 +1307,32 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       
       {/* Account Frozen Banner */}
       {accountFrozen && (
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-6 sticky top-[60px] z-40 shadow-lg">
+        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-3 py-1.5 sticky top-[60px] z-40 shadow-lg">
           <div className="max-w-2xl mx-auto">
-            <div className="flex items-center space-x-3 mb-3">
-              <svg className="w-8 h-8 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
               </svg>
               <div className="flex-1">
-                <h3 className="text-lg font-bold">🔒 ACCOUNT FROZEN</h3>
-                <p className="text-sm opacity-90 mt-1">
-                  Congratulations! You have encountered a Premium product please contact Customer Service for more info.
+                <h3 className="text-xs font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
+                <p className="text-[10px] opacity-90 leading-tight">
+                  Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount)).toFixed(2)}
                 </p>
+                {activePremiumAssignment?.orderId && (
+                  <p className="text-[10px] opacity-90 leading-tight mt-0.5">
+                    Order: {activePremiumAssignment.orderId}
+                    {activePremiumAssignment?.encounteredAt
+                      ? ` · ${new Date(activePremiumAssignment.encounteredAt).toLocaleString()}`
+                      : (activePremiumAssignment?.assignedAt ? ` · ${new Date(activePremiumAssignment.assignedAt).toLocaleString()}` : '')}
+                  </p>
+                )}
+                {activePremiumAssignment?.encounteredTaskNumber && (
+                  <p className="text-[10px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
+                )}
               </div>
-            </div>
-            <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold">Top-Up Required:</span>
-                <span className="text-2xl font-bold">${freezeAmount.toFixed(2)}</span>
-              </div>
-              <p className="text-xs opacity-90 mb-3">
-                Please contact Customer Service to top up your account and unfreeze
-              </p>
               <Button
                 onClick={() => setShowChat(true)}
-                className="w-full bg-white text-purple-600 hover:bg-gray-100 font-bold"
+                className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[10px] px-2 py-1 h-auto"
               >
                 📞 Contact Customer Service
               </Button>
@@ -1159,7 +1365,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-gray-50"></div>
           <div className="absolute top-4 left-0 right-0 overflow-hidden">
             <motion.div 
-              className="inline-flex items-center space-x-4 bg-[#1a1d2e]/80 backdrop-blur-sm text-white px-4 py-2 rounded-full whitespace-nowrap"
+              className="hidden sm:inline-flex items-center space-x-4 bg-[#1a1d2e]/80 backdrop-blur-sm text-white px-4 py-2 rounded-full whitespace-nowrap"
               initial={{ x: '100%' }}
               animate={{ x: '-100%' }}
               transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
@@ -1180,10 +1386,16 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             vipTier={testVIPTier || displayProfile.vipTier}
             balance={balance}
             productsSubmitted={productsSubmitted}
+            currentSetTasksCompleted={Number(displayProfile.currentSetTasksCompleted ?? 0)}
+            taskSetsCompletedToday={Number(displayProfile.taskSetsCompletedToday ?? 0)}
+            dailyTaskSetLimit={Number(displayProfile.dailyTaskSetLimit ?? 1)}
+            extraTaskSets={Number(displayProfile.extraTaskSets ?? 0)}
             onSubmitProduct={handleSubmitProduct}
             onStartProduct={handleStartProduct}
             todaysProfit={todaysProfit}
             accountFrozen={accountFrozen}
+            actionNotice={taskActionNotice}
+            onClearActionNotice={() => setTaskActionNotice(null)}
           />
         )}
         
@@ -1217,6 +1429,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   className="w-full mt-4 bg-white text-green-600 hover:bg-gray-100"
                 >
                   Submit Products & Earn
+                </Button>
+                <Button
+                  onClick={() => {
+                    setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
+                    const modalAssets = getDepositCryptoAssets(depositConfig);
+                    const modalDefaultAssetCode = String(
+                      depositConfig?.crypto?.defaultAsset
+                      || modalAssets?.[0]?.asset
+                      || 'BTC'
+                    ).toUpperCase();
+                    const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
+                    setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
+                    setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                    setShowDepositModal(true);
+                  }}
+                  className="w-full mt-3 bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Deposit Funds (Bank/Crypto)
                 </Button>
               </CardContent>
             </Card>
@@ -1405,6 +1635,16 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <p className="text-sm text-gray-600">Invitation Code</p>
                     <p className="font-semibold text-gray-900 font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</p>
                   </div>
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600">Last Login Country</p>
+                    <p className="font-semibold text-gray-900">{displayProfile.lastLoginCountry || 'Unknown'}</p>
+                  </div>
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600">Last Login Time</p>
+                    <p className="font-semibold text-gray-900">
+                      {displayProfile.lastLoginAt ? new Date(displayProfile.lastLoginAt).toLocaleString() : 'Not available'}
+                    </p>
+                  </div>
 
                   {/* Account Credentials Section */}
                   <div className="mt-6 pt-6 border-t-2 border-gray-200">
@@ -1496,17 +1736,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                           <button
                             onClick={async () => {
                               if (settingsForm.loginPassword !== settingsForm.confirmLoginPassword) {
-                                alert('❌ Login passwords do not match');
+                                setUiNotice({ type: 'error', text: 'Login passwords do not match' });
                                 return;
                               }
                               if (settingsForm.withdrawalPassword !== settingsForm.confirmWithdrawalPassword) {
-                                alert('❌ Withdrawal passwords do not match');
+                                setUiNotice({ type: 'error', text: 'Withdrawal passwords do not match' });
                                 return;
                               }
 
                               const normalizedContactEmail = settingsForm.contactEmail.trim().toLowerCase();
                               if (normalizedContactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedContactEmail)) {
-                                alert('❌ Invalid contact email format');
+                                setUiNotice({ type: 'error', text: 'Invalid contact email format' });
                                 return;
                               }
 
@@ -1538,12 +1778,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                     contactEmail: normalizedContactEmail || null,
                                   } : prev);
                                 } catch (saveErr: any) {
-                                  alert(`❌ ${saveErr?.message || 'Failed to save contact email'}`);
+                                  setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save contact email'}` });
                                   return;
                                 }
                               }
 
-                              alert('✅ Account settings updated successfully');
+                              setUiNotice({ type: 'success', text: 'Account settings updated successfully' });
                               setEditingSettings(false);
                             }}
                             className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
@@ -1636,10 +1876,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                           <button
                             onClick={() => {
                               if (!bankingDetails.bankName || !bankingDetails.accountName || !bankingDetails.accountNumber || !bankingDetails.routingNumber) {
-                                alert('❌ Please fill in all banking details');
+                                setUiNotice({ type: 'error', text: 'Please fill in all banking details' });
                                 return;
                               }
-                              alert('✅ Banking details saved securely');
+                              setUiNotice({ type: 'success', text: 'Banking details saved securely' });
                               setShowBankingForm(false);
                             }}
                             className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
@@ -1718,10 +1958,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                           <button
                             onClick={() => {
                               if (!cryptoWallet.walletAddress || cryptoWallet.walletAddress.length < 20) {
-                                alert('❌ Please enter a valid wallet address');
+                                setUiNotice({ type: 'error', text: 'Please enter a valid wallet address' });
                                 return;
                               }
-                              alert('✅ Crypto wallet saved securely');
+                              setUiNotice({ type: 'success', text: 'Crypto wallet saved securely' });
                               setShowCryptoForm(false);
                             }}
                             className="flex-1 px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700"
@@ -1891,6 +2131,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showChat && (
         <CustomerServiceChat
           onClose={() => setShowChat(false)}
+          accessToken={accessToken}
           userName={displayProfile.name}
           accountFrozen={accountFrozen}
           freezeAmount={freezeAmount}
@@ -1913,7 +2154,149 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         }}
         premiumAmount={freezePremiumAmount}
         currentBalance={balance}
+        potentialProfit={premiumProfitBeforeFreeze}
       />
+
+      {/* Withdrawal Password Modal */}
+      {showDepositModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="bg-gradient-to-r from-blue-600 to-cyan-500 px-6 py-5 text-white">
+              <h2 className="text-xl font-bold">Deposit Funds</h2>
+              <p className="text-sm text-white/90">Choose Bank or Crypto and submit your deposit request</p>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant={depositMethod === 'bank' ? 'default' : 'outline'} onClick={() => setDepositMethod('bank')}>
+                  Bank Transfer
+                </Button>
+                <Button variant={depositMethod === 'crypto' ? 'default' : 'outline'} onClick={() => setDepositMethod('crypto')}>
+                  Crypto
+                </Button>
+              </div>
+
+              {depositMethod === 'bank' ? (
+                <div className="rounded-lg border border-gray-200 p-3 text-sm text-gray-700 space-y-1">
+                  <p><strong>Bank:</strong> {depositConfig?.bank?.bankName || bankingDetails.bankName || 'N/A'}</p>
+                  <p><strong>Account Name:</strong> {depositConfig?.bank?.accountName || bankingDetails.accountName || 'N/A'}</p>
+                  <p><strong>Account Number:</strong> {depositConfig?.bank?.accountNumber || bankingDetails.accountNumber || 'N/A'}</p>
+                  <p><strong>Routing Number:</strong> {depositConfig?.bank?.routingNumber || bankingDetails.routingNumber || 'N/A'}</p>
+                  <p className="text-xs text-gray-500 mt-2">{depositConfig?.bank?.instructions || 'Complete transfer and provide your reference.'}</p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-200 p-3 text-sm text-gray-700 space-y-1">
+                  {availableCryptoAssets.length > 0 && (
+                    <div className="space-y-1 mb-2">
+                      <label className="text-sm font-medium text-gray-700">Crypto Asset</label>
+                      <select
+                        value={depositCryptoAsset}
+                        onChange={(e) => {
+                          const nextAsset = String(e.target.value || '').toUpperCase();
+                          setDepositCryptoAsset(nextAsset);
+                          const nextAssetConfig = availableCryptoAssets.find((item) => String(item?.asset || '').toUpperCase() === nextAsset) || null;
+                          const nextNetworks = Array.isArray(nextAssetConfig?.networks) && nextAssetConfig.networks.length > 0
+                            ? nextAssetConfig.networks
+                            : [nextAssetConfig?.network].filter(Boolean) as string[];
+                          if (nextNetworks.length > 0 && !nextNetworks.includes(depositCryptoNetwork)) {
+                            setDepositCryptoNetwork(nextNetworks[0]);
+                          }
+                        }}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                      >
+                        {availableCryptoAssets.map((item) => (
+                          <option key={item.asset} value={String(item.asset || '').toUpperCase()}>
+                            {item.asset}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {availableCryptoNetworks.length > 0 && (
+                    <div className="space-y-1 mb-2">
+                      <label className="text-sm font-medium text-gray-700">Network</label>
+                      <select
+                        value={displayCryptoNetwork}
+                        onChange={(e) => setDepositCryptoNetwork(String(e.target.value || ''))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-white"
+                      >
+                        {availableCryptoNetworks.map((network) => (
+                          <option key={network} value={network}>
+                            {network}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <p><strong>Network:</strong> {displayCryptoNetwork}</p>
+                  <p><strong>Wallet Address:</strong> {selectedCryptoAssetConfig?.walletAddress || depositConfig?.crypto?.walletAddress || cryptoWallet.walletAddress || 'N/A'}</p>
+                  <p className="text-xs text-gray-500 mt-2">{selectedCryptoAssetConfig?.instructions || depositConfig?.crypto?.instructions || 'Send funds to the address above and provide tx hash.'}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Amount</label>
+                <input
+                  type="number"
+                  min={depositConfig?.minimumAmount || 1}
+                  step="0.01"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Enter amount"
+                />
+                {depositMethod === 'crypto' ? (
+                  <>
+                    <label className="text-sm font-medium text-gray-700">Your Wallet Address (optional)</label>
+                    <input
+                      type="text"
+                      value={depositSourceWalletAddress}
+                      onChange={(e) => setDepositSourceWalletAddress(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      placeholder="Sender wallet address"
+                    />
+                    <label className="text-sm font-medium text-gray-700">Transaction Hash</label>
+                    <input
+                      type="text"
+                      value={depositTxHash}
+                      onChange={(e) => setDepositTxHash(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      placeholder="Blockchain transaction hash"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label className="text-sm font-medium text-gray-700">Reference</label>
+                    <input
+                      type="text"
+                      value={depositReference}
+                      onChange={(e) => setDepositReference(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                      placeholder="Bank payment reference"
+                    />
+                  </>
+                )}
+                <label className="text-sm font-medium text-gray-700">Note (optional)</label>
+                <textarea
+                  value={depositNote}
+                  onChange={(e) => setDepositNote(e.target.value)}
+                  rows={2}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                  placeholder="Add any extra details"
+                />
+              </div>
+            </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
+                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
+                  Cancel
+                </Button>
+                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
+                  {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
+                </Button>
+              </div>
+          </div>
+        </div>
+      )}
 
       {/* Withdrawal Password Modal */}
       {showWithdrawalModal && (
@@ -1955,11 +2338,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     onClick={() => {
                       if (withdrawalPassword.trim()) {
                         // TODO: Integrate with backend to process withdrawal
-                        alert(`✅ Withdrawal initiated with password. Amount: $${balance.toFixed(2)}`);
+                        setUiNotice({ type: 'success', text: `Withdrawal initiated with password. Amount: $${balance.toFixed(2)}` });
                         setShowWithdrawalModal(false);
                         setWithdrawalPassword('');
                       } else {
-                        alert('❌ Please enter your withdrawal password');
+                        setUiNotice({ type: 'error', text: 'Please enter your withdrawal password' });
                       }
                     }}
                     className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
@@ -2032,39 +2415,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       )}
 
-      {/* Product Submission Modal */}
-      {showProductSubmission && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-orange-500 to-red-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">Submit Product & Earn</h2>
-                  <button
-                    onClick={() => setShowProductSubmission(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <ProductSubmissionForm
-                  accessToken={accessToken}
-                  onSuccess={() => {
-                    setRefreshCounter(refreshCounter + 1);
-                    // Could trigger refresh of earnings/referrals here
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Withdrawal Modal */}
       {showWithdrawal && (
         <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
@@ -2093,60 +2443,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     // Could trigger refresh of earnings here
                   }}
                 />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Admin Withdrawal Dashboard Modal */}
-      {showAdminDashboard && adminKey && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-5xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-indigo-500 to-indigo-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">💰 Admin Withdrawal Dashboard</h2>
-                  <button
-                    onClick={() => setShowAdminDashboard(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <AdminWithdrawalDashboard adminKey={adminKey} />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Multi-Level Earnings Modal */}
-      {showMultiLevelEarnings && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">📈 Multi-Level Commission Breakdown</h2>
-                  <button
-                    onClick={() => setShowMultiLevelEarnings(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <MultiLevelEarnings accessToken={accessToken} />
               </div>
             </div>
           </div>

@@ -6,10 +6,16 @@ interface ProductsViewProps {
   vipTier: string;
   balance: number;
   productsSubmitted: number;
+  currentSetTasksCompleted?: number;
+  taskSetsCompletedToday?: number;
+  dailyTaskSetLimit?: number;
+  extraTaskSets?: number;
   onSubmitProduct: (productId: string, commission: number) => void;
   onStartProduct: (product: ProductData) => void;
   todaysProfit: number;
   accountFrozen?: boolean;
+  actionNotice?: string | null;
+  onClearActionNotice?: () => void;
 }
 
 export interface ProductData {
@@ -21,10 +27,25 @@ export interface ProductData {
   ratingNo: string;
 }
 
-export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProduct, onStartProduct, todaysProfit, accountFrozen }: ProductsViewProps) {
+export function ProductsView({
+  vipTier,
+  balance,
+  productsSubmitted,
+  currentSetTasksCompleted = 0,
+  taskSetsCompletedToday = 0,
+  dailyTaskSetLimit = 1,
+  extraTaskSets = 0,
+  onSubmitProduct,
+  onStartProduct,
+  todaysProfit,
+  accountFrozen,
+  actionNotice,
+  onClearActionNotice,
+}: ProductsViewProps) {
+  const [uiMessage, setUiMessage] = useState('');
   
-  // VIP tier settings with correct commission rates and product limits
-  const maxProducts = vipTier === 'Diamond' ? 55 : vipTier === 'Platinum' ? 50 : vipTier === 'Gold' ? 45 : vipTier === 'Silver' ? 40 : 35;
+  // Standard task set size for all VIP tiers
+  const maxProducts = 3;
   const commissionRate = vipTier === 'Diamond' ? 0.015 : vipTier === 'Platinum' ? 0.0125 : vipTier === 'Gold' ? 0.01 : vipTier === 'Silver' ? 0.0075 : 0.005;
   
   // Minimum balance required to start tasks based on VIP tier price
@@ -45,6 +66,9 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
   
   const minimumBalance = getMinimumBalance();
   const hasMinimumBalance = balance >= minimumBalance;
+  const completedTasksInCurrentSet = Math.max(0, Math.min(maxProducts, Number(currentSetTasksCompleted || 0)));
+  const hasSubmissionHistory = Number(productsSubmitted || 0) > 0 || Number(taskSetsCompletedToday || 0) > 0;
+  const canStartBasedOnBalance = hasMinimumBalance || hasSubmissionHistory;
   
   // VIP tier product amount ranges based on tier pricing
   const getProductAmountRange = () => {
@@ -146,20 +170,23 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
 
   // Handle Start button click
   const handleStart = () => {
-    if (productsSubmitted >= maxProducts) {
-      alert(`You've reached your limit of ${maxProducts} products. Upgrade your VIP tier to submit more!`);
+    if (completedTasksInCurrentSet >= maxProducts) {
+      setUiMessage(`You've reached your set limit of ${maxProducts} tasks. Please contact Customer Service for Reset.`);
       return;
     }
 
-    if (!hasMinimumBalance) {
-      alert(`You need at least $${minimumBalance} in your balance to start a new product. Please top up your balance.`);
+    if (!canStartBasedOnBalance) {
+      setUiMessage(`You need at least $${minimumBalance} in your balance to start a new product. Please top up your balance.`);
       return;
     }
 
     if (accountFrozen) {
-      alert(`Your account is currently frozen. Please contact support for assistance.`);
+      setUiMessage('Your account is currently frozen. Please contact support for assistance.');
       return;
     }
+
+    setUiMessage('');
+    onClearActionNotice?.();
 
     // Generate a new product and pass it to parent
     const product = generateProduct();
@@ -167,7 +194,7 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
   };
 
   // Calculate progress percentage
-  const progressPercentage = (productsSubmitted / maxProducts) * 100;
+  const progressPercentage = (completedTasksInCurrentSet / maxProducts) * 100;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-400 via-teal-300 to-cyan-400 -mx-4 -mt-4 pb-24 pt-4">
@@ -281,7 +308,7 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
             <div className="mb-8">
               <div className="flex items-baseline mb-3">
                 <span className="text-xl font-semibold text-gray-900">Upload</span>
-                <span className="text-xl font-bold text-pink-600">({productsSubmitted}/{maxProducts})</span>
+                <span className="text-xl font-bold text-pink-600">({completedTasksInCurrentSet}/{maxProducts})</span>
               </div>
               <div className="relative">
                 <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -299,7 +326,7 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
             </div>
 
             {/* Minimum Balance Warning */}
-            {!hasMinimumBalance && (
+            {!canStartBasedOnBalance && (
               <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded">
                 <div className="flex items-start">
                   <div className="flex-shrink-0">
@@ -323,18 +350,76 @@ export function ProductsView({ vipTier, balance, productsSubmitted, onSubmitProd
             <div className="flex justify-center mb-8">
               <button
                 onClick={handleStart}
-                disabled={productsSubmitted >= maxProducts || !hasMinimumBalance || accountFrozen}
+                disabled={completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen}
                 className={`
                   w-32 h-32 rounded-full shadow-2xl
                   flex items-center justify-center
                   text-white text-xl font-bold
                   transition-all duration-300
-                  ${productsSubmitted >= maxProducts || !hasMinimumBalance || accountFrozen ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600 hover:scale-105 active:scale-95'}
+                  ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600 hover:scale-105 active:scale-95'}
                 `}
               >
-                {productsSubmitted >= maxProducts ? 'Complete' : 'Start'}
+                {completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start'}
               </button>
             </div>
+
+            {(uiMessage || actionNotice) && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+                className="mb-8 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold">
+                      !
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">Task Submission Notice</p>
+                      <p className="mt-1 text-sm text-amber-800">{actionNotice || uiMessage}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-amber-700 hover:text-amber-900 text-xs font-semibold"
+                    onClick={() => {
+                      setUiMessage('');
+                      onClearActionNotice?.();
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {completedTasksInCurrentSet >= maxProducts && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+                className="mb-8 rounded-2xl border border-emerald-300 bg-emerald-50 p-5 text-center"
+              >
+                <motion.div
+                  className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white text-2xl"
+                  animate={{ scale: [1, 1.08, 1] }}
+                  transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  ✅
+                </motion.div>
+                <p className="text-lg font-bold text-emerald-700">
+                  You have completed your tasks successfully.
+                </p>
+                <motion.p
+                  className="mt-2 text-sm font-semibold text-emerald-900"
+                  animate={{ opacity: [0.65, 1, 0.65] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  Please contact Customer Service for Reset.
+                </motion.p>
+              </motion.div>
+            )}
 
             {/* Balance Display */}
             <div className="grid grid-cols-2 border-t-4 border-black">

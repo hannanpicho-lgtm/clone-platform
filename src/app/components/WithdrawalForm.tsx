@@ -24,6 +24,7 @@ interface WithdrawalRequest {
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: WithdrawalFormProps) {
   const [amount, setAmount] = useState('');
@@ -38,7 +39,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
   const fetchWithdrawalHistory = async () => {
     try {
       setHistoryLoading(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/withdrawal-history`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/withdrawal-history`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const data = await response.json();
@@ -85,7 +86,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
 
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/request-withdrawal`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/request-withdrawal`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -100,7 +101,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || 'Failed to submit withdrawal request');
+        setError(data.error || 'Unable to submit withdrawal request right now');
         return;
       }
 
@@ -115,7 +116,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
         onSuccess();
       }
     } catch (err) {
-      setError('Failed to submit withdrawal request. Please try again.');
+      setError('Unable to submit withdrawal request right now');
       console.error('Withdrawal error:', err);
     } finally {
       setLoading(false);
@@ -178,9 +179,9 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
         <h3 className="text-lg font-semibold mb-4 text-orange-600">Request Withdrawal</h3>
 
         {error && (
-          <Alert className="mb-4 border-red-300 bg-red-50">
-            <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-700">{error}</AlertDescription>
+          <Alert className="mb-4 border-gray-300 bg-gray-50">
+            <AlertCircle className="h-4 w-4 text-gray-600" />
+            <AlertDescription className="text-gray-700">{error}</AlertDescription>
           </Alert>
         )}
 

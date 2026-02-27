@@ -11,7 +11,7 @@
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://tpxgfjevorhdtwkesvcb.supabase.co';
 const FUNCTION_NAME = process.env.FUNCTION_NAME || 'make-server-44a642d3';
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`;
-const ADMIN_API_KEY = process.env.SUPABASE_ADMIN_API_KEY || '';
+const ADMIN_API_KEY = process.env.SUPABASE_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
 
 const colors = {
   reset: '\x1b[0m',
@@ -82,6 +82,7 @@ async function runTests() {
       },
       body: JSON.stringify({
         email: `premium-test-${timestamp}@test.local`,
+        username: `premium_test_${timestamp}`,
         password: 'TestPassword123!',
         name: 'Premium Test User',
         withdrawalPassword: 'WithdrawPass123!',
@@ -222,9 +223,9 @@ async function runTests() {
 
 // Check for admin API key
 if (!ADMIN_API_KEY) {
-  log('ERROR: SUPABASE_ADMIN_API_KEY environment variable not set', 'red');
-  log('Set it via: export SUPABASE_ADMIN_API_KEY=your-key-here', 'yellow');
-  process.exit(1);
+  log('SKIP: No admin API key set (SUPABASE_ADMIN_API_KEY or ADMIN_API_KEY)', 'yellow');
+  log('Premium admin tests are skipped in non-privileged environments.', 'yellow');
+  process.exit(0);
 }
 
 runTests().catch(err => {

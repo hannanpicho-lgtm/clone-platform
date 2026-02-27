@@ -3,33 +3,87 @@ import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Shield, Lock, AlertCircle } from 'lucide-react';
+import { safeFetch } from '/src/utils/safeFetch';
+import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 interface AdminLoginProps {
-  onLoginSuccess: () => void;
+  onLoginSuccess: (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => void;
 }
 
 export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Admin password (in production, this should be handled by backend)
-  const ADMIN_PASSWORD = 'admin123';
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    // Simulate authentication delay
-    setTimeout(() => {
-      if (password === ADMIN_PASSWORD) {
-        onLoginSuccess();
-      } else {
-        setError('Invalid admin password');
-        setIsLoading(false);
+    try {
+      const normalizedUsername = username.trim();
+      const normalizedSecret = password.trim();
+
+      if (normalizedUsername) {
+        const response = await safeFetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/signin`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${publicAnonKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username: normalizedUsername, password }),
+          }
+        );
+
+        if (!response || !response.ok) {
+          const errorData = response ? await response.json().catch(() => ({})) : {};
+          const backendMessage = errorData?.error || 'Invalid admin credentials';
+          setError(`${backendMessage}. If you are using the super admin key, clear the username field and enter only the key in the password box.`);
+          setIsLoading(false);
+          return;
+        }
+
+        const loginData = await response.json().catch(() => ({}));
+
+        onLoginSuccess({
+          accessToken: loginData?.session?.access_token || undefined,
+          isSuperAdmin: false,
+          permissions: Array.isArray(loginData?.admin?.permissions) ? loginData.admin.permissions : [],
+        });
+        return;
       }
-    }, 800);
+
+      const superAdminResponse = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/validate-super-key`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${normalizedSecret}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!superAdminResponse || !superAdminResponse.ok) {
+        const errorData = superAdminResponse ? await superAdminResponse.json().catch(() => ({})) : {};
+        setError(errorData?.error || 'Invalid super admin key');
+        setIsLoading(false);
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('superAdminKey', normalizedSecret);
+      }
+
+      onLoginSuccess({ accessToken: normalizedSecret, isSuperAdmin: true, permissions: ['*'] });
+    } catch {
+      setError('Unable to authenticate admin login');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -70,7 +124,23 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-purple-200 mb-2">
-                Admin Password
+                Admin Username
+              </label>
+              <div className="relative">
+                <Input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter limited-admin username (optional)"
+                  className="bg-white/5 border-white/20 text-white placeholder:text-purple-300/50 focus:border-purple-400 focus:ring-purple-400"
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-purple-200 mb-2">
+                {username.trim() ? 'Admin Password' : 'Super Admin Key'}
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-purple-300" />
@@ -78,7 +148,7 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter admin password"
+                  placeholder={username.trim() ? 'Enter admin password' : 'Enter super admin key'}
                   className="pl-10 bg-white/5 border-white/20 text-white placeholder:text-purple-300/50 focus:border-purple-400 focus:ring-purple-400"
                   disabled={isLoading}
                 />
@@ -112,23 +182,14 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
             </Button>
           </form>
 
-          {/* Demo hint */}
+          {/* Login hint */}
           <div className="mt-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
             <p className="text-xs text-yellow-200 text-center">
-              💡 <strong>Demo Mode:</strong> Password is <code className="bg-black/30 px-2 py-1 rounded">admin123</code>
+              💡 <strong>Live Mode:</strong> enter username + password for limited admin, or leave username blank and provide the super admin key.
             </p>
           </div>
         </motion.div>
 
-        {/* Footer */}
-        <div className="mt-6 text-center">
-          <a
-            href="/"
-            className="text-sm text-purple-300 hover:text-purple-100 transition-colors inline-flex items-center gap-1"
-          >
-            ← Back to User Dashboard
-          </a>
-        </div>
       </motion.div>
     </div>
   );

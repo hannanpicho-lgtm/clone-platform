@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X, Send } from 'lucide-react';
 import { Button } from './ui/button';
+import { projectId } from '/utils/supabase/info';
 
 interface Message {
   id: string;
@@ -11,47 +12,176 @@ interface Message {
 
 interface CustomerServiceChatProps {
   onClose: () => void;
+  accessToken: string;
   userName: string;
   accountFrozen?: boolean;
   freezeAmount?: number;
 }
 
-export function CustomerServiceChat({ onClose, userName, accountFrozen, freezeAmount }: CustomerServiceChatProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: accountFrozen 
-        ? `Hello ${userName}, I see your account is frozen with a balance of -$${Math.abs(freezeAmount || 0).toFixed(2)}. How can I assist you with unfreezing your account?`
-        : `Hello ${userName}! Welcome to Tanknewmedia Customer Service. How can I help you today?`,
-      sender: 'admin',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+export function CustomerServiceChat({ onClose, accessToken, userName, accountFrozen, freezeAmount }: CustomerServiceChatProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
+  const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string }>({
+    whatsapp: 'https://wa.me/1234567890',
+    telegram: 'https://t.me/tanknewmedia_support',
+  });
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
+  const baseUrl = useMemo(() => `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`, []);
 
-    // Add user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputMessage,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
+  const mapTicketToMessages = (ticket: any): Message[] => {
+    const mapped: Message[] = [];
+    if (ticket?.message) {
+      mapped.push({
+        id: `${ticket.id}-initial`,
+        text: String(ticket.message),
+        sender: 'user',
+        timestamp: new Date(ticket.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      });
+    }
 
-    // Simulate admin response
-    setTimeout(() => {
-      const adminMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: 'Thank you for your message. An admin will review your case and respond shortly. Please wait while we process your request.',
+    const replies = Array.isArray(ticket?.replies) ? ticket.replies : [];
+    replies.forEach((reply: any, index: number) => {
+      mapped.push({
+        id: String(reply?.id || `${ticket.id}-reply-${index}`),
+        text: String(reply?.message || ''),
+        sender: reply?.role === 'admin' ? 'admin' : 'user',
+        timestamp: new Date(reply?.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      });
+    });
+
+    if (mapped.length === 0) {
+      mapped.push({
+        id: 'welcome-message',
+        text: accountFrozen
+          ? `Hello ${userName}, I can see your account is frozen. Send your top-up receipt and we will assist with reset/unfreeze.`
+          : `Hello ${userName}! Welcome to Tanknewmedia Customer Service. How can I help you today?`,
         sender: 'admin',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setMessages(prev => [...prev, adminMessage]);
-    }, 1500);
+      });
+    }
+
+    return mapped;
+  };
+
+  const loadTicketState = async () => {
+    try {
+      setIsLoading(true);
+      const resolvedBase = baseUrl;
+
+      const linksResponse = await fetch(`${resolvedBase}/contact-links`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (linksResponse.ok) {
+        const linksData = await linksResponse.json().catch(() => ({}));
+        if (linksData?.config) {
+          setContactLinks({
+            whatsapp: String(linksData.config.whatsapp || 'https://wa.me/1234567890'),
+            telegram: String(linksData.config.telegram || 'https://t.me/tanknewmedia_support'),
+          });
+        }
+      }
+
+      const ticketsResponse = await fetch(`${resolvedBase}/support-tickets`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!ticketsResponse.ok) {
+        throw new Error('Support service unavailable');
+      }
+
+      const ticketsData = await ticketsResponse.json().catch(() => ({}));
+      const tickets = Array.isArray(ticketsData?.tickets) ? ticketsData.tickets : [];
+      const activeTicket = tickets.find((ticket: any) => ticket?.status !== 'resolved') || tickets[0] || null;
+
+      if (activeTicket?.id) {
+        setActiveTicketId(String(activeTicket.id));
+        setMessages(mapTicketToMessages(activeTicket));
+      } else {
+        setActiveTicketId(null);
+        setMessages(mapTicketToMessages(null));
+      }
+    } catch {
+      setMessages(mapTicketToMessages(null));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTicketState();
+    const interval = setInterval(loadTicketState, 7000);
+    return () => clearInterval(interval);
+  }, [accessToken]);
+
+  const handleSendMessage = () => {
+    if (!inputMessage.trim() || isSending) return;
+
+    const send = async () => {
+      try {
+        setIsSending(true);
+        const resolvedBase = baseUrl;
+        const draft = inputMessage.trim();
+
+        if (!activeTicketId) {
+          const createResponse = await fetch(`${resolvedBase}/support-tickets`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              subject: accountFrozen ? 'Account reset/unfreeze request' : 'Customer service request',
+              category: accountFrozen ? 'withdrawal' : 'general',
+              priority: accountFrozen ? 'high' : 'normal',
+              message: draft,
+            }),
+          });
+
+          const createData = await createResponse.json().catch(() => ({}));
+          if (!createResponse.ok || !createData?.ticket?.id) {
+            throw new Error(createData?.error || 'Unable to create support ticket');
+          }
+
+          setActiveTicketId(String(createData.ticket.id));
+          setMessages(mapTicketToMessages(createData.ticket));
+        } else {
+          const replyResponse = await fetch(`${resolvedBase}/support-tickets/${activeTicketId}/reply`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message: draft }),
+          });
+
+          const replyData = await replyResponse.json().catch(() => ({}));
+          if (!replyResponse.ok || !replyData?.ticket) {
+            throw new Error(replyData?.error || 'Unable to send message');
+          }
+
+          setMessages(mapTicketToMessages(replyData.ticket));
+        }
+
+        setInputMessage('');
+      } catch {
+        setMessages((prev) => ([
+          ...prev,
+          {
+            id: `local-${Date.now()}`,
+            text: 'Message failed to send. Please try again in a moment.',
+            sender: 'admin',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]));
+      } finally {
+        setIsSending(false);
+      }
+    };
+
+    send();
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -106,6 +236,10 @@ export function CustomerServiceChat({ onClose, userName, accountFrozen, freezeAm
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+          {isLoading && (
+            <div className="text-xs text-gray-500">Loading customer service thread...</div>
+          )}
+
           {messages.map((message) => (
             <div
               key={message.id}
@@ -135,6 +269,24 @@ export function CustomerServiceChat({ onClose, userName, accountFrozen, freezeAm
             <p className="text-xs text-blue-800">
               <strong>Note:</strong> All chats are monitored by admin. Messages sent here will be reviewed and responded to by our support team.
             </p>
+            <div className="mt-2 flex gap-2">
+              <a
+                href={contactLinks.whatsapp}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+              >
+                WhatsApp
+              </a>
+              <a
+                href={contactLinks.telegram}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
+              >
+                Telegram
+              </a>
+            </div>
           </div>
         </div>
 
@@ -153,7 +305,7 @@ export function CustomerServiceChat({ onClose, userName, accountFrozen, freezeAm
             </div>
             <Button
               onClick={handleSendMessage}
-              disabled={!inputMessage.trim()}
+              disabled={!inputMessage.trim() || isSending}
               className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-3 h-12 w-12 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Send className="h-5 w-5" />

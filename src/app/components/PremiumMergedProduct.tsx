@@ -13,6 +13,7 @@ export function PremiumMergedProduct({ vipTier, balance, onSubmit }: PremiumMerg
   const [product1Price, setProduct1Price] = useState('');
   const [product2Price, setProduct2Price] = useState('');
   const [showResult, setShowResult] = useState(false);
+  const [uiMessage, setUiMessage] = useState('');
 
   // VIP Rate mapping
   const vipRates: { [key: string]: number } = {
@@ -37,14 +38,16 @@ export function PremiumMergedProduct({ vipTier, balance, onSubmit }: PremiumMerg
     const profit = parseFloat((mergedValue * (mergedRate / 100)).toFixed(2));
 
     if (balance < mergedValue) {
-      alert(`Insufficient balance! You need $${mergedValue.toFixed(2)} but only have $${balance.toFixed(2)}`);
+      setUiMessage(`Insufficient balance! You need $${mergedValue.toFixed(2)} but only have $${balance.toFixed(2)}`);
       return;
     }
 
     if (mergedValue <= 0) {
-      alert('Please enter valid product prices!');
+      setUiMessage('Please enter valid product prices!');
       return;
     }
+
+    setUiMessage('');
 
     onSubmit(mergedValue, profit);
     
@@ -63,6 +66,11 @@ export function PremiumMergedProduct({ vipTier, balance, onSubmit }: PremiumMerg
 
   return (
     <div className="px-4 pb-20">
+      {uiMessage && (
+        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {uiMessage}
+        </div>
+      )}
       <Card className="shadow-xl bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200">
         <CardContent className="pt-6">
           {/* Header */}

@@ -23,6 +23,7 @@ param(
     [string]$Environment = "production",
     [switch]$SkipTests,
     [switch]$DryRun,
+    [switch]$Force,
     [switch]$RollbackLatest
 )
 
@@ -42,11 +43,11 @@ function Write-Status {
     param([string]$Message, [string]$Type = "INFO")
     $timestamp = (Get-Date -Format "HH:mm:ss")
     $icon = @{
-        "INFO" = "ℹ️ "
-        "SUCCESS" = "✅"
-        "WARNING" = "⚠️ "
-        "ERROR" = "❌"
-        "STEP" = "📍"
+        "INFO" = "[INFO]"
+        "SUCCESS" = "[OK]"
+        "WARNING" = "[WARN]"
+        "ERROR" = "[ERROR]"
+        "STEP" = "[STEP]"
     }[$Type]
     
     $color = @{
@@ -76,7 +77,10 @@ function Invoke-Command {
     param([string]$Description, [scriptblock]$Command)
     Write-Status $Description "STEP"
     try {
-        & $Command
+        $result = & $Command
+        if ($result -is [bool] -and -not $result) {
+            throw "Command returned false"
+        }
         Write-Status "$Description - Complete" "SUCCESS"
         return $true
     } catch {
@@ -90,9 +94,9 @@ function Invoke-Command {
 # ============================================================================
 
 Write-Host ""
-Write-Host "$Blue════════════════════════════════════════════════════════════$Reset"
+Write-Host "$Blue============================================================$Reset"
 Write-Host "$Blue  CLONE PLATFORM - PRODUCTION DEPLOYMENT (ID: $script:DeploymentId)$Reset"
-Write-Host "$Blue════════════════════════════════════════════════════════════$Reset"
+Write-Host "$Blue============================================================$Reset"
 Write-Host ""
 
 Write-Status "Phase 1: Pre-Deployment Validation Starting..." "STEP"
@@ -117,10 +121,15 @@ try {
     if ($gitStatus -and -not $DryRun) {
         Write-Status "Uncommitted changes detected. Commit or stash changes before deploying." "WARNING"
         Write-Host $gitStatus
-        $continue = Read-Host "Continue anyway? (yes/no)"
-        if ($continue -ne "yes") {
-            Write-Status "Deployment cancelled" "WARNING"
-            exit 0
+        $isCi = [bool]$env:CI
+        if ($Force -or $isCi) {
+            Write-Status "Proceeding without prompt due to --Force/CI mode" "WARNING"
+        } else {
+            $continue = Read-Host "Continue anyway? (yes/no)"
+            if ($continue -ne "yes") {
+                Write-Status "Deployment cancelled" "WARNING"
+                exit 0
+            }
         }
     }
 } catch {
@@ -147,12 +156,9 @@ if ($SkipTests) {
     Write-Status "Tests skipped (--SkipTests)" "WARNING"
 } else {
     $testPassed = Invoke-Command "Running smoke tests (27 tests)" {
-        & npm run test:smoke 2>&1 | ForEach-Object {
-            if ($_ -match "passed|failed") {
-                Write-Host $_
-            }
-        }
-        $LASTEXITCODE -eq 0
+        & npm run test:smoke
+        if ($LASTEXITCODE -ne 0) { throw "Smoke tests failed with exit code $LASTEXITCODE" }
+        return $true
     }
     
     if (-not $testPassed) {
@@ -169,12 +175,10 @@ Write-Host ""
 Write-Status "Phase 3: Building Project..." "STEP"
 
 $buildPassed = Invoke-Command "Building frontend (TypeScript/Vite)" {
-    & npm run build 2>&1 | ForEach-Object {
-        if ($_ -match "error|warning|built") {
-            Write-Host "  $_"
-        }
-    }
-    (Test-Path "dist") -and $LASTEXITCODE -eq 0
+    & npm run build
+    if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
+    if (-not (Test-Path "dist")) { throw "Build succeeded but dist directory was not created" }
+    return $true
 }
 
 if (-not $buildPassed) {
@@ -194,9 +198,9 @@ Write-Status "Phase 4: Deploying to Production..." "STEP"
 if ($DryRun) {
     Write-Status "DRY RUN enabled - showing deployment steps only" "WARNING"
     Write-Host ""
-    Write-Host "$Yellow📋 Deployment would proceed with:$Reset"
+    Write-Host "$Yellow[PLAN] Deployment would proceed with:$Reset"
     Write-Host "  1. Deploy Edge Function: npx supabase functions deploy make-server-44a642d3 --no-verify-jwt"
-    Write-Host "  2. Deploy Frontend: dist/ → Supabase/Vercel/Netlify"
+    Write-Host "  2. Deploy Frontend: dist/ -> Supabase/Vercel/Netlify"
     Write-Host "  3. Run post-deployment tests"
     Write-Host "  4. Health check verification"
     Write-Host ""
@@ -207,12 +211,9 @@ if ($DryRun) {
 # Deploy Supabase function
 $functionPassed = Invoke-Command "Deploying Supabase Edge Function" {
     Write-Host "  Command: npx supabase functions deploy make-server-44a642d3 --no-verify-jwt"
-    & npx supabase functions deploy make-server-44a642d3 --no-verify-jwt 2>&1 | ForEach-Object {
-        if ($_ -match "deployed|error|failed") {
-            Write-Host "  $_"
-        }
-    }
-    $LASTEXITCODE -eq 0
+    & npx supabase functions deploy make-server-44a642d3 --no-verify-jwt
+    if ($LASTEXITCODE -ne 0) { throw "Function deployment failed with exit code $LASTEXITCODE" }
+    return $true
 }
 
 if (-not $functionPassed) {
@@ -242,7 +243,7 @@ Write-Status "Function URL: $functionUrl" "INFO"
 # Health check
 Write-Status "Running health check..." "INFO"
 try {
-    $response = Invoke-WebRequest -Uri "$functionUrl/health" -Method GET -TimeoutSec 10 -ErrorAction Stop
+    $response = Invoke-WebRequest -Uri "$functionUrl/health" -Method GET -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
     if ($response.StatusCode -eq 200) {
         Write-Status "Health check PASSED (200)" "SUCCESS"
         $healthData = $response.Content | ConvertFrom-Json
@@ -259,12 +260,9 @@ Write-Status "Running post-deployment smoke tests..." "INFO"
 $postTestPassed = Invoke-Command "Post-deployment smoke tests" {
     # Set environment variable for test
     $env:FUNCTION_URL = $functionUrl
-    & npm run test:smoke 2>&1 | ForEach-Object {
-        if ($_ -match "passed|failed|error") {
-            Write-Host "  $_"
-        }
-    }
-    $LASTEXITCODE -eq 0
+    & npm run test:smoke
+    if ($LASTEXITCODE -ne 0) { throw "Post-deployment smoke tests failed with exit code $LASTEXITCODE" }
+    return $true
 }
 
 if (-not $postTestPassed) {
@@ -282,19 +280,19 @@ $duration = (Get-Date) - $script:StartTime
 Write-Status "Deployment Complete! (Duration: $($duration.TotalMinutes.ToString('F1')) minutes)" "SUCCESS"
 
 Write-Host ""
-Write-Host "$Green════════════════════════════════════════════════════════════$Reset"
-Write-Host "$Green  ✅ PRODUCTION DEPLOYMENT SUCCESSFUL$Reset"
-Write-Host "$Green════════════════════════════════════════════════════════════$Reset"
+Write-Host "$Green============================================================$Reset"
+Write-Host "$Green  PRODUCTION DEPLOYMENT SUCCESSFUL$Reset"
+Write-Host "$Green============================================================$Reset"
 Write-Host ""
 
-Write-Host "$Blue📊 Deployment Summary:$Reset"
+Write-Host "$Blue[SUMMARY] Deployment Summary:$Reset"
 Write-Host "  Deployment ID:    $script:DeploymentId"
 Write-Host "  Environment:      $Environment"
 Write-Host "  Timestamp:        $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))"
 Write-Host "  Duration:         $($duration.TotalMinutes.ToString('F1')) minutes"
 Write-Host ""
 
-Write-Host "$Blue📍 Next Steps:$Reset"
+Write-Host "$Blue[NEXT] Next Steps:$Reset"
 Write-Host "  1. Monitor function logs:"
 Write-Host "     supabase functions logs make-server-44a642d3 -n 50"
 Write-Host ""
@@ -308,14 +306,14 @@ Write-Host "  4. Deploy frontend (if needed):"
 Write-Host "     Upload 'dist/' to Vercel/Netlify/Supabase Hosting"
 Write-Host ""
 
-Write-Host "$Blue📚 Documentation:$Reset"
+Write-Host "$Blue[DOCS] Documentation:$Reset"
 Write-Host "  - API Reference:      API_REFERENCE.md"
 Write-Host "  - Operations Guide:   OPERATIONS_RUNBOOK.md"
 Write-Host "  - Integration Guide:  INTEGRATION_GUIDE.md"
 Write-Host "  - Quick Reference:    QUICK_REFERENCE.md"
 Write-Host ""
 
-Write-Host "$Blue🔗 Useful Links:$Reset"
+Write-Host "$Blue[LINKS] Useful Links:$Reset"
 Write-Host "  - Health Check:       curl $functionUrl/health"
 Write-Host "  - Test Collection:    postman_collection.json"
 Write-Host "  - Documentation Hub:  DOCUMENTATION_INDEX.md"
@@ -332,9 +330,14 @@ $deploymentRecord = @{
     functionUrl = $functionUrl
 } | ConvertTo-Json | Out-String
 
+$deploymentRecordDir = "deployment-records"
+if (-not (Test-Path $deploymentRecordDir)) {
+    New-Item -ItemType Directory -Path $deploymentRecordDir -Force | Out-Null
+}
+
 $deploymentRecord | Out-File -FilePath "deployment-records/$script:DeploymentId.json" -Force
 Write-Status "Deployment record saved: deployment-records/$script:DeploymentId.json" "INFO"
 
 Write-Host ""
-Write-Host "$Green🚀 Platform is LIVE and READY!$Reset"
+Write-Host "$GreenPlatform is LIVE and READY!$Reset"
 Write-Host ""

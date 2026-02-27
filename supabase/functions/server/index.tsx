@@ -43,42 +43,26 @@ const getAnonClient = () => {
   return anonClient;
 };
 
-const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? '';
+const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
+
+const getKvRowsByPrefix = async (prefix: string): Promise<Array<{ key: string; value: any }>> => {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from('kv_store_44a642d3')
+    .select('key,value')
+    .like('key', `${prefix}%`);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? []).map((row: any) => ({ key: row.key, value: row.value }));
+};
 
 const getProjectRefFromUrl = (): string | null => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const match = supabaseUrl.match(/https?:\/\/([^.]+)\.supabase\.co/i);
   return match?.[1] ?? null;
-};
-
-const isValidAnonProjectToken = async (token: string): Promise<boolean> => {
-  if (!token) {
-    return false;
-  }
-
-  const projectRef = getProjectRefFromUrl();
-
-  const jwtSecret = Deno.env.get('SUPABASE_JWT_SECRET');
-  if (jwtSecret) {
-    try {
-      const secret = new TextEncoder().encode(jwtSecret);
-      const { payload } = await jose.jwtVerify(token, secret);
-      const payloadRole = payload?.role;
-      const payloadRef = payload?.ref;
-      return payloadRole === 'anon' && (!projectRef || payloadRef === projectRef);
-    } catch {
-      // Fall through to decoded payload check below
-    }
-  }
-
-  try {
-    const payload = jose.decodeJwt(token);
-    const payloadRole = payload?.role;
-    const payloadRef = payload?.ref;
-    return payloadRole === 'anon' && (!projectRef || payloadRef === projectRef);
-  } catch {
-    return false;
-  }
 };
 
 const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; response: any }> => {
@@ -91,10 +75,6 @@ const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; resp
   const expectedKey = getAdminApiKey();
 
   if (expectedKey && token === expectedKey) {
-    return { ok: true };
-  }
-
-  if (await isValidAnonProjectToken(token)) {
     return { ok: true };
   }
 
@@ -170,38 +150,6 @@ async function verifyJWT(token: string): Promise<{ userId: string | null; error:
     console.error('Manual JWT verification failed:', error.message);
   }
 
-  // Optional final fallback: decode JWT payload and validate strict claims.
-  // Disabled by default because decoded JWT payload is not cryptographically verified.
-  try {
-    const allowUnverifiedFallback = (Deno.env.get('ALLOW_UNVERIFIED_JWT_FALLBACK') || '').toLowerCase() === 'true';
-    if (!allowUnverifiedFallback) {
-      return { userId: null, error: 'Invalid or expired token' };
-    }
-
-    const payload = jose.decodeJwt(token);
-    const now = Math.floor(Date.now() / 1000);
-    const projectRef = getProjectRefFromUrl();
-
-    const subject = payload?.sub;
-    const expiry = payload?.exp;
-    const issuer = payload?.iss;
-    const audience = payload?.aud;
-    const role = payload?.role;
-    const tokenRef = payload?.ref;
-
-    const isExpired = typeof expiry === 'number' ? expiry <= now : true;
-    const isExpectedAudience = audience === 'authenticated';
-    const isExpectedRole = role === 'authenticated';
-    const isExpectedIssuer = typeof issuer === 'string' && issuer.startsWith(`${supabaseUrl}/auth/v1`);
-    const isExpectedRef = !projectRef || tokenRef === projectRef;
-
-    if (subject && !isExpired && isExpectedAudience && isExpectedRole && isExpectedIssuer && isExpectedRef) {
-      return { userId: subject, error: null };
-    }
-  } catch (error) {
-    console.error('Decoded JWT fallback failed:', error.message);
-  }
-
   return { userId: null, error: 'Invalid or expired token' };
 }
 
@@ -254,27 +202,904 @@ const generateInvitationCode = async (): Promise<string> => {
 
 const normalizeInvitationCode = (value: string): string => value.trim().toUpperCase();
 
-const DEFAULT_GLOBAL_PREMIUM_CONFIG = {
-  enabled: true,
-  position: 27,
-  amount: 10000,
+const WITHDRAWAL_PASSWORD_HASH_PREFIX = 'sha256:';
+
+const hashWithdrawalPassword = async (value: string): Promise<string> => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+  const hashHex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+
+  return `${WITHDRAWAL_PASSWORD_HASH_PREFIX}${hashHex}`;
 };
 
-const getGlobalPremiumConfig = async () => {
-  const row = await kv.get('premium:global-config');
-  const enabled = typeof row?.enabled === 'boolean' ? row.enabled : DEFAULT_GLOBAL_PREMIUM_CONFIG.enabled;
-  const position = Number.isInteger(Number(row?.position)) && Number(row?.position) > 0
-    ? Number(row.position)
-    : DEFAULT_GLOBAL_PREMIUM_CONFIG.position;
-  const amount = Number.isFinite(Number(row?.amount)) && Number(row?.amount) > 0
-    ? Number(row.amount)
-    : DEFAULT_GLOBAL_PREMIUM_CONFIG.amount;
+const verifyWithdrawalPassword = async (
+  providedPassword: string,
+  storedPassword: string,
+): Promise<{ valid: boolean; upgradedHash?: string }> => {
+  const normalizedProvided = String(providedPassword || '').trim();
+  const normalizedStored = String(storedPassword || '').trim();
+
+  if (!normalizedProvided || !normalizedStored) {
+    return { valid: false };
+  }
+
+  if (normalizedStored.startsWith(WITHDRAWAL_PASSWORD_HASH_PREFIX)) {
+    const providedHash = await hashWithdrawalPassword(normalizedProvided);
+    return { valid: providedHash === normalizedStored };
+  }
+
+  if (normalizedProvided !== normalizedStored) {
+    return { valid: false };
+  }
 
   return {
-    enabled,
-    position,
-    amount,
+    valid: true,
+    upgradedHash: await hashWithdrawalPassword(normalizedProvided),
+  };
+};
+
+const DEFAULT_CONTACT_LINKS = {
+  whatsapp: 'https://wa.me/1234567890',
+  telegram: 'https://t.me/tanknewmedia_support',
+};
+
+const getContactLinksConfig = async () => {
+  const row = await kv.get('support:contact-links') || {};
+  const whatsapp = String(row?.whatsapp || DEFAULT_CONTACT_LINKS.whatsapp).trim();
+  const telegram = String(row?.telegram || DEFAULT_CONTACT_LINKS.telegram).trim();
+  return {
+    whatsapp,
+    telegram,
     updatedAt: row?.updatedAt || null,
+    updatedBy: row?.updatedBy || null,
+  };
+};
+
+const DEFAULT_DEPOSIT_CONFIG = {
+  bank: {
+    accountName: 'Tanknewmedia Operations',
+    accountNumber: '0000000000',
+    bankName: 'Demo Bank',
+    routingNumber: '000000000',
+    instructions: 'Use your username as payment reference and upload receipt to Customer Service.',
+  },
+  crypto: {
+    network: 'Bitcoin',
+    walletAddress: 'bc1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    instructions: 'Select asset/network carefully. Submit transaction hash and source wallet address in your deposit request.',
+    defaultAsset: 'BTC',
+    assets: [
+      {
+        asset: 'BTC',
+        network: 'Bitcoin',
+        walletAddress: 'bc1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        instructions: 'Send BTC on Bitcoin network only.',
+      },
+      {
+        asset: 'ETH',
+        network: 'ERC20',
+        walletAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        instructions: 'Send ETH on Ethereum (ERC20) only.',
+      },
+      {
+        asset: 'USDC',
+        network: 'ERC20',
+        walletAddress: '0xuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu',
+        instructions: 'Send USDC on Ethereum (ERC20) only.',
+      },
+    ],
+  },
+  minimumAmount: 50,
+};
+
+const getDepositConfig = async () => {
+  const row = await kv.get('payments:deposit-config') || {};
+  const rawCryptoAssets = Array.isArray(row?.crypto?.assets) && row.crypto.assets.length > 0
+    ? row.crypto.assets
+    : DEFAULT_DEPOSIT_CONFIG.crypto.assets;
+  const normalizedCryptoAssets = rawCryptoAssets
+    .map((item: any) => ({
+      asset: String(item?.asset || '').toUpperCase(),
+      network: String(item?.network || ''),
+      walletAddress: String(item?.walletAddress || ''),
+      instructions: String(item?.instructions || ''),
+    }))
+    .filter((item: any) => item.asset && item.network && item.walletAddress);
+  const fallbackPrimaryAsset = normalizedCryptoAssets[0] || DEFAULT_DEPOSIT_CONFIG.crypto.assets[0];
+  const defaultAsset = String(row?.crypto?.defaultAsset || fallbackPrimaryAsset?.asset || DEFAULT_DEPOSIT_CONFIG.crypto.defaultAsset).toUpperCase();
+  const defaultAssetConfig = normalizedCryptoAssets.find((item: any) => item.asset === defaultAsset) || fallbackPrimaryAsset;
+
+  return {
+    bank: {
+      accountName: String(row?.bank?.accountName || DEFAULT_DEPOSIT_CONFIG.bank.accountName),
+      accountNumber: String(row?.bank?.accountNumber || DEFAULT_DEPOSIT_CONFIG.bank.accountNumber),
+      bankName: String(row?.bank?.bankName || DEFAULT_DEPOSIT_CONFIG.bank.bankName),
+      routingNumber: String(row?.bank?.routingNumber || DEFAULT_DEPOSIT_CONFIG.bank.routingNumber),
+      instructions: String(row?.bank?.instructions || DEFAULT_DEPOSIT_CONFIG.bank.instructions),
+    },
+    crypto: {
+      network: String(row?.crypto?.network || defaultAssetConfig?.network || DEFAULT_DEPOSIT_CONFIG.crypto.network),
+      walletAddress: String(row?.crypto?.walletAddress || defaultAssetConfig?.walletAddress || DEFAULT_DEPOSIT_CONFIG.crypto.walletAddress),
+      instructions: String(row?.crypto?.instructions || defaultAssetConfig?.instructions || DEFAULT_DEPOSIT_CONFIG.crypto.instructions),
+      defaultAsset,
+      assets: normalizedCryptoAssets,
+    },
+    minimumAmount: Number.isFinite(Number(row?.minimumAmount)) && Number(row.minimumAmount) > 0
+      ? Number(row.minimumAmount)
+      : DEFAULT_DEPOSIT_CONFIG.minimumAmount,
+    updatedAt: row?.updatedAt || null,
+    updatedBy: row?.updatedBy || null,
+  };
+};
+
+const getVipTaskCommissionRate = (vipTier: string): number => {
+  const tier = String(vipTier || 'Normal');
+  if (tier === 'Silver') return 0.0075;
+  if (tier === 'Gold') return 0.01;
+  if (tier === 'Platinum') return 0.0125;
+  if (tier === 'Diamond') return 0.015;
+  return 0.005;
+};
+
+const VIP_TIER_ORDER = ['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const;
+
+const VIP_AUTO_UPGRADE_SET_REQUIREMENTS: Record<string, number> = {
+  Normal: 3,
+  Silver: 4,
+  Gold: 5,
+  Platinum: 6,
+  Diamond: Number.POSITIVE_INFINITY,
+};
+
+const normalizeVipTier = (value: unknown): string => {
+  const tier = String(value || 'Normal');
+  return VIP_TIER_ORDER.includes(tier as any) ? tier : 'Normal';
+};
+
+const getNextVipTier = (vipTier: string): string | null => {
+  const normalizedTier = normalizeVipTier(vipTier);
+  const currentIndex = VIP_TIER_ORDER.indexOf(normalizedTier as any);
+  if (currentIndex < 0 || currentIndex >= VIP_TIER_ORDER.length - 1) {
+    return null;
+  }
+  return VIP_TIER_ORDER[currentIndex + 1];
+};
+
+const getRequiredSetsForTierUpgrade = (vipTier: string): number => {
+  const normalizedTier = normalizeVipTier(vipTier);
+  return Number(VIP_AUTO_UPGRADE_SET_REQUIREMENTS[normalizedTier] ?? Number.POSITIVE_INFINITY);
+};
+
+const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
+  const increment = Number.isInteger(Number(completedSetIncrement)) && Number(completedSetIncrement) > 0
+    ? Number(completedSetIncrement)
+    : 0;
+
+  const currentTier = normalizeVipTier(user?.vipTier || 'Normal');
+  const currentTierSetProgress = Number.isInteger(Number(user?.tierSetProgress)) && Number(user?.tierSetProgress) >= 0
+    ? Number(user.tierSetProgress)
+    : 0;
+  const currentTotalTaskSetsCompleted = Number.isInteger(Number(user?.totalTaskSetsCompleted)) && Number(user?.totalTaskSetsCompleted) >= 0
+    ? Number(user.totalTaskSetsCompleted)
+    : 0;
+
+  let nextTier = currentTier;
+  let nextTierSetProgress = currentTierSetProgress + increment;
+  const nextTotalTaskSetsCompleted = currentTotalTaskSetsCompleted + increment;
+
+  const upgrades: Array<{ from: string; to: string; requiredSets: number }> = [];
+
+  while (true) {
+    const requiredSets = getRequiredSetsForTierUpgrade(nextTier);
+    const candidateNextTier = getNextVipTier(nextTier);
+    if (!candidateNextTier || !Number.isFinite(requiredSets) || nextTierSetProgress < requiredSets) {
+      break;
+    }
+
+    upgrades.push({
+      from: nextTier,
+      to: candidateNextTier,
+      requiredSets,
+    });
+    nextTierSetProgress -= requiredSets;
+    nextTier = candidateNextTier;
+  }
+
+  const requiredSetsForNextUpgrade = getRequiredSetsForTierUpgrade(nextTier);
+
+  return {
+    vipTier: nextTier,
+    tierSetProgress: nextTierSetProgress,
+    totalTaskSetsCompleted: nextTotalTaskSetsCompleted,
+    upgraded: upgrades.length > 0,
+    upgrades,
+    requiredSetsForNextUpgrade: Number.isFinite(requiredSetsForNextUpgrade) ? requiredSetsForNextUpgrade : null,
+    remainingSetsForNextUpgrade: Number.isFinite(requiredSetsForNextUpgrade)
+      ? Math.max(0, requiredSetsForNextUpgrade - nextTierSetProgress)
+      : null,
+  };
+};
+
+const DEFAULT_DAILY_TASK_SET_LIMIT = 3;
+
+const getTasksPerSetByTier = (vipTier: string): number => {
+  return 3;
+};
+
+const PREMIUM_BUNDLE_PRODUCT_NAMES = [
+  'Data Optimization Pack',
+  'Conversion Booster Kit',
+  'Automation Starter Bundle',
+  'Audience Growth Add-on',
+  'Campaign Performance Add-on',
+  'Engagement Booster Add-on',
+];
+
+const roundCurrency = (value: number): number => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+const TASK_PRODUCT_CATALOG_KEY = 'task-products:catalog';
+
+const TASK_PRODUCT_IMAGE_POOL = [
+  'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
+  'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
+  'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
+  'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
+  'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+  'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
+  'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
+  'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+  'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
+  'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
+  'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+];
+
+const TASK_PRODUCT_AI_PREFIXES = [
+  'Smart', 'Adaptive', 'Dynamic', 'Optimized', 'Secure', 'Cloud', 'Digital', 'Hybrid', 'Premium', 'AI-Ready',
+];
+
+const TASK_PRODUCT_AI_OBJECTS = [
+  'Analytics Pack', 'Automation Suite', 'Conversion Module', 'Engagement Bundle', 'Workflow Engine', 'Growth Toolkit',
+  'Ops Dashboard', 'Commerce Widget', 'Audience Booster', 'Insights Builder',
+];
+
+const getTaskAmountRangeByTier = (vipTier: string): { min: number; max: number } => {
+  const tier = String(vipTier || 'Normal');
+  if (tier === 'Diamond') return { min: 9999, max: 19998 };
+  if (tier === 'Platinum') return { min: 1999, max: 9998 };
+  if (tier === 'Gold') return { min: 599, max: 1998 };
+  if (tier === 'Silver') return { min: 399, max: 598 };
+  return { min: 99, max: 398 };
+};
+
+const formatTaskTimestamp = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  const seconds = String(value.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+};
+
+const buildDefaultTaskProductCatalog = () => {
+  const defaultNames = [
+    'stainless steel black sink waterfall faucet',
+    'wireless bluetooth noise cancelling headphones',
+    'smart home security camera system',
+    'portable solar power bank charger',
+    'ergonomic mesh office chair',
+    'led desk lamp with wireless charging',
+    'stainless steel cookware set',
+    'digital air fryer with touch screen',
+    'robot vacuum cleaner with mapping',
+    'electric standing desk converter',
+    'waterproof fitness tracker watch',
+    'ceramic non-stick frying pan',
+  ];
+
+  return defaultNames.map((name, index) => ({
+    id: `task_default_${index + 1}`,
+    name,
+    image: TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length],
+    isActive: true,
+    isPremiumTemplate: index < 3,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }));
+};
+
+const normalizeTaskProduct = (input: any, index: number) => {
+  const normalizedName = String(input?.name || '').trim();
+  const fallbackName = `task product ${index + 1}`;
+  const fallbackImage = TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length];
+
+  return {
+    id: String(input?.id || `task_${Date.now()}_${index}`).trim(),
+    name: normalizedName || fallbackName,
+    image: String(input?.image || fallbackImage).trim() || fallbackImage,
+    isActive: input?.isActive === undefined ? true : Boolean(input?.isActive),
+    isArchived: Boolean(input?.isArchived),
+    isPremiumTemplate: Boolean(input?.isPremiumTemplate),
+    createdAt: input?.createdAt || new Date().toISOString(),
+    updatedAt: input?.updatedAt || new Date().toISOString(),
+  };
+};
+
+const getTaskProductCatalog = async () => {
+  const row = await kv.get(TASK_PRODUCT_CATALOG_KEY);
+  const rawProducts = Array.isArray(row?.products) ? row.products : [];
+
+  if (rawProducts.length === 0) {
+    const defaults = buildDefaultTaskProductCatalog();
+    await kv.set(TASK_PRODUCT_CATALOG_KEY, {
+      products: defaults,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'system',
+    });
+    return defaults;
+  }
+
+  return rawProducts.map((item: any, index: number) => normalizeTaskProduct(item, index));
+};
+
+const saveTaskProductCatalog = async (products: any[], updatedBy: string) => {
+  await kv.set(TASK_PRODUCT_CATALOG_KEY, {
+    products,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  });
+};
+
+const generateAiTaskProducts = (count: number) => {
+  const safeCount = Math.max(1, Math.min(50, Math.floor(Number(count) || 1)));
+  const now = new Date().toISOString();
+
+  const generated = [];
+  for (let index = 0; index < safeCount; index++) {
+    const prefix = TASK_PRODUCT_AI_PREFIXES[(Math.floor(Math.random() * TASK_PRODUCT_AI_PREFIXES.length) + index) % TASK_PRODUCT_AI_PREFIXES.length];
+    const obj = TASK_PRODUCT_AI_OBJECTS[(Math.floor(Math.random() * TASK_PRODUCT_AI_OBJECTS.length) + index) % TASK_PRODUCT_AI_OBJECTS.length];
+    generated.push({
+      id: `task_ai_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 7)}`,
+      name: `${prefix} ${obj}`,
+      image: TASK_PRODUCT_IMAGE_POOL[(Math.floor(Math.random() * TASK_PRODUCT_IMAGE_POOL.length) + index) % TASK_PRODUCT_IMAGE_POOL.length],
+      isActive: true,
+      isArchived: false,
+      isPremiumTemplate: Math.random() < 0.2,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return generated;
+};
+
+const getRandomTaskProduct = (products: any[], options?: { premiumOnly?: boolean }) => {
+  const premiumOnly = Boolean(options?.premiumOnly);
+  const filtered = products.filter((item: any) => {
+    if (item?.isArchived) return false;
+    if (!item?.isActive) return false;
+    if (premiumOnly && !item?.isPremiumTemplate) return false;
+    return true;
+  });
+  if (filtered.length === 0) return null;
+  const index = Math.floor(Math.random() * filtered.length);
+  return filtered[index];
+};
+
+const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) => {
+  const vipTier = String(userProfile?.vipTier || 'Normal');
+  const rate = getVipTaskCommissionRate(vipTier);
+  const amountRange = getTaskAmountRangeByTier(vipTier);
+  const catalog = await getTaskProductCatalog();
+
+  const assignment = userProfile?.premiumAssignment || null;
+  const premiumPosition = Number(assignment?.position ?? 0);
+  const shouldUsePremiumProduct = Boolean(
+    assignment
+    && !assignment?.encounteredAt
+    && Number.isInteger(premiumPosition)
+    && premiumPosition > 0
+    && nextTaskNumber === premiumPosition
+  );
+
+  if (shouldUsePremiumProduct) {
+    const assignedCatalogProduct = assignment?.productId
+      ? catalog.find((item: any) => String(item?.id || '') === String(assignment.productId))
+      : null;
+    const fallbackPremiumProduct = getRandomTaskProduct(catalog, { premiumOnly: true }) || getRandomTaskProduct(catalog) || null;
+    const premiumProduct = assignedCatalogProduct || fallbackPremiumProduct;
+    const premiumAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
+    const resolvedAmount = premiumAmount > 0
+      ? premiumAmount
+      : roundCurrency((amountRange.min + amountRange.max) / 2);
+    const createdAt = formatTaskTimestamp(new Date());
+
+    return {
+      name: String(assignment?.productName || premiumProduct?.name || 'Premium Assigned Product'),
+      image: String(assignment?.productImage || premiumProduct?.image || TASK_PRODUCT_IMAGE_POOL[0]),
+      totalAmount: resolvedAmount,
+      profit: roundCurrency(resolvedAmount * rate),
+      creationTime: createdAt,
+      ratingNo: Math.random().toString(36).substring(2, 12),
+      isPremium: true,
+      premiumMeta: {
+        position: premiumPosition,
+        orderId: assignment?.orderId || null,
+      },
+    };
+  }
+
+  const product = getRandomTaskProduct(catalog) || {
+    name: 'Default Task Product',
+    image: TASK_PRODUCT_IMAGE_POOL[0],
+  };
+
+  const amount = roundCurrency(
+    amountRange.min + Math.random() * Math.max(1, amountRange.max - amountRange.min)
+  );
+
+  return {
+    name: String(product?.name || 'Task Product'),
+    image: String(product?.image || TASK_PRODUCT_IMAGE_POOL[0]),
+    totalAmount: amount,
+    profit: roundCurrency(amount * rate),
+    creationTime: formatTaskTimestamp(new Date()),
+    ratingNo: Math.random().toString(36).substring(2, 12),
+    isPremium: false,
+    premiumMeta: null,
+  };
+};
+
+const buildPremiumBundleDetails = (enteredPremiumAmount: number) => {
+  const premiumAmount = roundCurrency(enteredPremiumAmount);
+  const individualProductCount = Math.random() < 0.5 ? 1 : 3;
+  const bundleItems: Array<{ name: string; type: 'premium' | 'individual'; amount: number }> = [];
+
+  const premiumCoreAmount = roundCurrency(premiumAmount * 0.62);
+  bundleItems.push({
+    name: 'Premium Core Product',
+    type: 'premium',
+    amount: premiumCoreAmount,
+  });
+
+  let remaining = roundCurrency(Math.max(0, premiumAmount - premiumCoreAmount));
+  for (let index = 0; index < individualProductCount; index++) {
+    const isLast = index === individualProductCount - 1;
+    const rawSlice = isLast
+      ? remaining
+      : roundCurrency(remaining / (individualProductCount - index));
+    const amount = roundCurrency(Math.max(0, rawSlice));
+    remaining = roundCurrency(Math.max(0, remaining - amount));
+
+    bundleItems.push({
+      name: PREMIUM_BUNDLE_PRODUCT_NAMES[(Math.floor(Math.random() * PREMIUM_BUNDLE_PRODUCT_NAMES.length) + index) % PREMIUM_BUNDLE_PRODUCT_NAMES.length],
+      type: 'individual',
+      amount,
+    });
+  }
+
+  const normalizedBundleTotal = roundCurrency(bundleItems.reduce((sum, item) => sum + item.amount, 0));
+
+  return {
+    bundleTotal: normalizedBundleTotal,
+    individualProductCount,
+    bundleItems,
+  };
+};
+
+const getVipPremiumProfitRate = (vipTier: string): number => {
+  const tier = String(vipTier || 'Normal');
+  if (tier === 'Silver') return 0.075;
+  if (tier === 'Gold') return 0.1;
+  if (tier === 'Platinum') return 0.125;
+  if (tier === 'Diamond') return 0.15;
+  return 0.05;
+};
+
+const buildTaskState = (user: any) => {
+  const dailyTaskSetLimit = Number.isInteger(Number(user?.dailyTaskSetLimit)) && Number(user?.dailyTaskSetLimit) > 0
+    ? Number(user.dailyTaskSetLimit)
+    : DEFAULT_DAILY_TASK_SET_LIMIT;
+  const extraTaskSets = Number.isInteger(Number(user?.extraTaskSets)) && Number(user?.extraTaskSets) >= 0
+    ? Number(user.extraTaskSets)
+    : 0;
+  const taskSetsCompletedToday = Number.isInteger(Number(user?.taskSetsCompletedToday)) && Number(user?.taskSetsCompletedToday) >= 0
+    ? Number(user.taskSetsCompletedToday)
+    : 0;
+  const currentSetTasksCompleted = Number.isInteger(Number(user?.currentSetTasksCompleted)) && Number(user?.currentSetTasksCompleted) >= 0
+    ? Number(user.currentSetTasksCompleted)
+    : 0;
+  const currentSetDate = typeof user?.currentSetDate === 'string' ? user.currentSetDate : null;
+  const tasksPerSet = getTasksPerSetByTier(user?.vipTier || 'Normal');
+
+  return {
+    dailyTaskSetLimit,
+    extraTaskSets,
+    taskSetsCompletedToday,
+    currentSetTasksCompleted,
+    currentSetDate,
+    tasksPerSet,
+  };
+};
+
+const ADMIN_PERMISSION_ALL = '*';
+const ADMIN_ALLOWED_PERMISSIONS = [
+  'users.view',
+  'users.adjust_balance',
+  'users.assign_premium',
+  'users.reset_tasks',
+  'users.manage_task_limits',
+  'users.unfreeze',
+  'users.update_vip',
+  'support.manage',
+  'withdrawals.manage',
+  'invitations.manage',
+  'premium.manage',
+] as const;
+
+type AdminPermission = typeof ADMIN_ALLOWED_PERMISSIONS[number] | '*';
+
+const BASELINE_LIMITED_ADMIN_PERMISSIONS: AdminPermission[] = [
+  'users.view',
+  'users.adjust_balance',
+  'users.assign_premium',
+  'support.manage',
+];
+
+const sanitizeAdminPermissions = (permissions: unknown): AdminPermission[] => {
+  if (!Array.isArray(permissions)) {
+    return [];
+  }
+  const legacyPermissionMap: Record<string, AdminPermission[]> = {
+    'users.manage': ['users.adjust_balance', 'users.reset_tasks', 'users.manage_task_limits', 'users.unfreeze', 'users.update_vip'],
+    'premium.assign': ['users.assign_premium'],
+    'premium.manage': ['users.assign_premium'],
+  };
+  const unique = new Set<string>();
+  for (const value of permissions) {
+    const permission = String(value || '').trim();
+    if (!permission) continue;
+    if (legacyPermissionMap[permission]) {
+      for (const mappedPermission of legacyPermissionMap[permission]) {
+        unique.add(mappedPermission);
+      }
+      continue;
+    }
+    if (permission === ADMIN_PERMISSION_ALL || ADMIN_ALLOWED_PERMISSIONS.includes(permission as any)) {
+      unique.add(permission);
+    }
+  }
+  return Array.from(unique) as AdminPermission[];
+};
+
+const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; response: any }> => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) {
+    return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
+  }
+  const token = authHeader.replace('Bearer ', '').trim();
+  const expectedKey = getAdminApiKey();
+  if (!expectedKey || token !== expectedKey) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Super admin key required' }, 403) };
+  }
+  return { ok: true };
+};
+
+const requireAdminPermission = async (
+  c: any,
+  requiredPermission: AdminPermission,
+): Promise<
+  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
+  | { ok: false; response: any }
+> => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) {
+    return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
+  }
+
+  const token = authHeader.replace('Bearer ', '').trim();
+  const expectedKey = getAdminApiKey();
+
+  if (expectedKey && token === expectedKey) {
+    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] };
+  }
+
+  const { userId, error } = await verifyJWT(token);
+  if (error || !userId) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Invalid admin token' }, 403) };
+  }
+
+  const adminAccount = await kv.get(`admin:account:${userId}`);
+  if (!adminAccount || adminAccount.active === false) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
+  }
+
+  const permissions = sanitizeAdminPermissions(adminAccount.permissions);
+  const hasPermission = permissions.includes(ADMIN_PERMISSION_ALL) || permissions.includes(requiredPermission);
+
+  if (!hasPermission) {
+    return { ok: false, response: c.json({ error: `Forbidden - Missing permission: ${requiredPermission}` }, 403) };
+  }
+
+  return { ok: true, isSuperAdmin: false, userId, permissions };
+};
+
+const requireSupportAccess = async (c: any) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) {
+    return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
+  }
+
+  const token = authHeader.replace('Bearer ', '').trim();
+  const expectedKey = getAdminApiKey();
+
+  if (expectedKey && token === expectedKey) {
+    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[] };
+  }
+
+  const { userId, error } = await verifyJWT(token);
+  if (error || !userId) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Invalid admin token' }, 403) };
+  }
+
+  const adminAccount = await kv.get(`admin:account:${userId}`);
+  if (!adminAccount || adminAccount.active === false) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
+  }
+
+  const permissions = sanitizeAdminPermissions(adminAccount.permissions);
+  return { ok: true, isSuperAdmin: false, userId, permissions };
+
+};
+
+type AdminScopeConfig =
+  | { mode: 'all' }
+  | { mode: 'parent'; parentUserId: string }
+  | { mode: 'users'; userIds: Set<string> };
+
+const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null }): Promise<AdminScopeConfig> => {
+  if (adminAccess.isSuperAdmin || !adminAccess.userId) {
+    return { mode: 'all' };
+  }
+
+  const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
+  if (!adminAccount) {
+    return { mode: 'all' };
+  }
+
+  const managedUserIds = Array.isArray(adminAccount?.managedUserIds)
+    ? adminAccount.managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (managedUserIds.length > 0) {
+    return { mode: 'users', userIds: new Set(managedUserIds) };
+  }
+
+  const managedParentUserId = String(adminAccount?.managedParentUserId || '').trim();
+  if (managedParentUserId) {
+    return { mode: 'parent', parentUserId: managedParentUserId };
+  }
+
+  return { mode: 'all' };
+};
+
+const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
+  if (scope.mode === 'all') {
+    return true;
+  }
+
+  if (!user?.id) {
+    return false;
+  }
+
+  if (scope.mode === 'users') {
+    return scope.userIds.has(String(user.id));
+  }
+
+  return String(user?.parentUserId || '') === scope.parentUserId;
+};
+
+const getRequesterIp = (c: any): string => {
+  const forwardedFor = String(c.req.header('x-forwarded-for') || '').trim();
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0].trim() || 'unknown';
+  }
+
+  return String(
+    c.req.header('x-real-ip') ||
+    c.req.header('cf-connecting-ip') ||
+    c.req.header('x-client-ip') ||
+    'unknown',
+  ).trim() || 'unknown';
+};
+
+const getRequesterCountry = (c: any): string => {
+  const countryCode = String(
+    c.req.header('cf-ipcountry') ||
+    c.req.header('x-vercel-ip-country') ||
+    c.req.header('x-country-code') ||
+    '',
+  ).trim().toUpperCase();
+
+  if (!countryCode || countryCode === 'XX') {
+    return 'Unknown';
+  }
+
+  return countryCode;
+};
+
+const getRequestLocation = (c: any): { ip: string; country: string } => ({
+  ip: getRequesterIp(c),
+  country: getRequesterCountry(c),
+});
+
+const toCountryDisplayName = (countryCodeOrName: string): string => {
+  const value = String(countryCodeOrName || '').trim();
+  if (!value) return 'Unknown';
+  if (value.length !== 2) return value;
+
+  try {
+    const displayNames = new Intl.DisplayNames(['en'], { type: 'region' });
+    const regionName = displayNames.of(value.toUpperCase());
+    return regionName || value.toUpperCase();
+  } catch {
+    return value.toUpperCase();
+  }
+};
+
+const isPrivateOrLocalIp = (ipAddress: string): boolean => {
+  const ip = String(ipAddress || '').trim().replace(/^::ffff:/i, '');
+  if (!ip) return true;
+
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
+
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(ip)) {
+    return true;
+  }
+
+  return false;
+};
+
+const resolveBestRequestLocation = async (c: any): Promise<{ ip: string; country: string }> => {
+  const base = getRequestLocation(c);
+  const normalizedIp = String(base.ip || '').trim().replace(/^::ffff:/i, '');
+  const normalizedCountry = toCountryDisplayName(base.country || 'Unknown');
+
+  if (normalizedCountry !== 'Unknown' || !normalizedIp || normalizedIp === 'unknown' || isPrivateOrLocalIp(normalizedIp)) {
+    return {
+      ip: normalizedIp || 'unknown',
+      country: normalizedCountry,
+    };
+  }
+
+  try {
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(normalizedIp)}`);
+    if (response.ok) {
+      const geo = await response.json();
+      if (geo?.success) {
+        const countryName = String(geo?.country || '').trim();
+        const cityName = String(geo?.city || '').trim();
+        const regionName = String(geo?.region || '').trim();
+        const bestCountry = countryName || normalizedCountry;
+        const locationLabel = cityName
+          ? `${cityName}${regionName ? `, ${regionName}` : ''}, ${bestCountry}`
+          : bestCountry;
+
+        return {
+          ip: normalizedIp,
+          country: locationLabel || 'Unknown',
+        };
+      }
+    }
+  } catch (error) {
+    console.warn(`Geo lookup failed for ip ${normalizedIp}: ${error}`);
+  }
+
+  return {
+    ip: normalizedIp,
+    country: normalizedCountry,
+  };
+};
+
+const getAdminRateLimitIdentity = (c: any, adminAccess: { isSuperAdmin: boolean; userId: string | null }): string => {
+  const ip = getRequesterIp(c);
+  if (adminAccess.isSuperAdmin) {
+    return `super:${ip}`;
+  }
+  return `admin:${adminAccess.userId || 'unknown'}:${ip}`;
+};
+
+const enforceAdminRateLimit = async (
+  c: any,
+  adminAccess: { isSuperAdmin: boolean; userId: string | null },
+  action: string,
+  limit: number,
+  windowMs: number,
+): Promise<{ allowed: true } | { allowed: false; retryAfterSec: number }> => {
+  const identity = getAdminRateLimitIdentity(c, adminAccess);
+  const rateLimitKey = `admin:ratelimit:${action}:${identity}`;
+  const nowMs = Date.now();
+
+  const state = await kv.get(rateLimitKey) || {};
+  const windowStartedAtMs = Number(state.windowStartedAtMs || 0);
+  const count = Number(state.count || 0);
+  const withinWindow = windowStartedAtMs > 0 && (nowMs - windowStartedAtMs) < windowMs;
+  const nextCount = withinWindow ? count + 1 : 1;
+  const nextWindowStart = withinWindow ? windowStartedAtMs : nowMs;
+
+  if (withinWindow && count >= limit) {
+    const retryAfterSec = Math.max(1, Math.ceil((windowMs - (nowMs - windowStartedAtMs)) / 1000));
+    return { allowed: false, retryAfterSec };
+  }
+
+  await kv.set(rateLimitKey, {
+    count: nextCount,
+    windowStartedAtMs: nextWindowStart,
+    updatedAtMs: nowMs,
+  });
+
+  return { allowed: true };
+};
+
+const isLikelyTestUser = (user: any): boolean => {
+  const email = String(user?.email || '').trim().toLowerCase();
+  const username = String(user?.username || '').trim().toLowerCase();
+
+  if (!email && !username) {
+    return false;
+  }
+
+  if (email.endsWith('@tank.local') || email.endsWith('@test.local')) {
+    return true;
+  }
+
+  if (
+    username.startsWith('user_')
+    || username.startsWith('child_')
+    || username.startsWith('cs_user_')
+    || username.startsWith('premium_test_')
+    || username.startsWith('verify_premium_')
+  ) {
+    return true;
+  }
+
+  if (
+    email.startsWith('premium-test-')
+    || email.startsWith('verify-premium-')
+    || email.startsWith('user_')
+    || email.startsWith('child_')
+    || email.startsWith('cs_user_')
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+const buildNeutralizedTestUser = (user: any) => {
+  const now = new Date().toISOString();
+  return {
+    ...user,
+    accountFrozen: false,
+    freezeAmount: 0,
+    balance: 0,
+    premiumAssignment: null,
+    productsSubmitted: 0,
+    totalProfitFromChildren: 0,
+    taskSetsCompletedToday: 0,
+    currentSetTasksCompleted: 0,
+    currentSetDate: null,
+    updatedAt: now,
+    testDataCleanup: {
+      cleanedAt: now,
+      mode: 'neutralized',
+    },
   };
 };
 
@@ -516,6 +1341,9 @@ app.post("/signup", async (c) => {
     // Resolve parent user from validated invitation code
     const parentUserId: string | null = parentInviteInfo?.userId || null;
 
+    const normalizedWithdrawalPassword = String(withdrawalPassword || '').trim();
+    const hashedWithdrawalPassword = await hashWithdrawalPassword(normalizedWithdrawalPassword);
+
     // Create user profile in KV store
     const userProfile = {
       id: userId,
@@ -525,12 +1353,20 @@ app.post("/signup", async (c) => {
       username: normalizedUsername,
       vipTier: 'Normal',
       gender: gender || 'male',
-      withdrawalPassword: withdrawalPassword || '',
+      withdrawalPassword: hashedWithdrawalPassword,
       invitationCode: userInvitationCode,
       parentUserId: parentUserId || null,
       childCount: 0,
       totalProfitFromChildren: 0,
       balance: 0,
+      welcomeBonusGranted: false,
+      dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
+      extraTaskSets: 0,
+      taskSetsCompletedToday: 0,
+      totalTaskSetsCompleted: 0,
+      tierSetProgress: 0,
+      currentSetTasksCompleted: 0,
+      currentSetDate: null,
       createdAt: new Date().toISOString(),
     };
     
@@ -614,28 +1450,39 @@ app.post("/signup", async (c) => {
 // Admin: list invitation codes
 app.get("/admin/invitation-codes", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'invitations.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
 
-    const codeRows = await kv.getByPrefix('invitecode:');
+    const codeRows = await getKvRowsByPrefix('invitecode:');
     const invitationCodes = await Promise.all((codeRows ?? []).map(async (row: any) => {
-      const code = String(row?.key || '').replace('invitecode:', '');
-      const ownerUserId = row?.userId || null;
+      const rawKey = String(row?.key || '');
+      const code = rawKey.replace('invitecode:', '');
+      const payload = row?.value ?? {};
+      const ownerUserId = payload?.userId || null;
+
+      if (!code) {
+        return null;
+      }
+
+      if (!adminAccess.isSuperAdmin && ownerUserId !== adminAccess.userId) {
+        return null;
+      }
+
       const referrals = ownerUserId ? (await kv.getByPrefix(`referral:${ownerUserId}:`))?.length || 0 : 0;
       return {
         code,
         ownerUserId,
-        ownerName: row?.name || 'Platform Invite',
-        ownerEmail: row?.email || null,
+        ownerName: payload?.name || 'Platform Invite',
+        ownerEmail: payload?.email || null,
         signups: referrals,
-        status: row?.status || 'active',
-        createdAt: row?.createdAt || new Date().toISOString(),
+        status: payload?.status || 'active',
+        createdAt: payload?.createdAt || new Date().toISOString(),
       };
     }));
 
-    return c.json({ success: true, invitationCodes });
+    return c.json({ success: true, invitationCodes: invitationCodes.filter(Boolean) });
   } catch (error) {
     console.error(`Error fetching invitation codes: ${error}`);
     return c.json({ error: 'Internal server error while fetching invitation codes' }, 500);
@@ -645,18 +1492,22 @@ app.get("/admin/invitation-codes", async (c) => {
 // Admin: generate invitation code (optionally bound to an owner user)
 app.post("/admin/invitation-codes/generate", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'invitations.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const ownerUserId = body?.ownerUserId || null;
+    const ownerUserId = adminAccess.isSuperAdmin ? (body?.ownerUserId || null) : adminAccess.userId;
     let ownerProfile: any = null;
+    let ownerAdminAccount: any = null;
 
     if (ownerUserId) {
       ownerProfile = await kv.get(`user:${ownerUserId}`);
       if (!ownerProfile) {
+        ownerAdminAccount = await kv.get(`admin:account:${ownerUserId}`);
+      }
+      if (!ownerProfile && !ownerAdminAccount) {
         return c.json({ error: 'Owner user not found' }, 404);
       }
     }
@@ -664,8 +1515,8 @@ app.post("/admin/invitation-codes/generate", async (c) => {
     const code = await generateInvitationCode();
     const payload = {
       userId: ownerUserId,
-      email: ownerProfile?.email || null,
-      name: ownerProfile?.name || 'Platform Invite',
+      email: ownerProfile?.email || ownerAdminAccount?.authEmail || null,
+      name: ownerProfile?.name || ownerAdminAccount?.displayName || ownerAdminAccount?.username || 'Platform Invite',
       createdAt: new Date().toISOString(),
       status: 'active',
       generatedBy: 'admin',
@@ -694,9 +1545,9 @@ app.post("/admin/invitation-codes/generate", async (c) => {
 // Admin: enable/disable invitation code
 app.put("/admin/invitation-codes/status", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'invitations.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
 
     const { code, status } = await c.req.json();
@@ -715,6 +1566,10 @@ app.put("/admin/invitation-codes/status", async (c) => {
       return c.json({ error: 'Invitation code not found' }, 404);
     }
 
+    if (!adminAccess.isSuperAdmin && existing?.userId !== adminAccess.userId) {
+      return c.json({ error: 'Forbidden - You can only manage your own invitation codes' }, 403);
+    }
+
     const updated = {
       ...existing,
       status,
@@ -726,6 +1581,242 @@ app.put("/admin/invitation-codes/status", async (c) => {
   } catch (error) {
     console.error(`Error updating invitation code status: ${error}`);
     return c.json({ error: 'Internal server error while updating invitation code status' }, 500);
+  }
+});
+
+app.get('/contact-links', async (c) => {
+  try {
+    const config = await getContactLinksConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching contact links: ${error}`);
+    return c.json({ error: 'Internal server error while fetching contact links' }, 500);
+  }
+});
+
+app.put('/admin/contact-links', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'support.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const hasWhatsapp = Object.prototype.hasOwnProperty.call(body, 'whatsapp');
+    const hasTelegram = Object.prototype.hasOwnProperty.call(body, 'telegram');
+
+    if (!hasWhatsapp && !hasTelegram) {
+      return c.json({ error: 'Provide whatsapp and/or telegram' }, 400);
+    }
+
+    const currentConfig = await getContactLinksConfig();
+    const nextWhatsapp = hasWhatsapp
+      ? String(body?.whatsapp || '').trim()
+      : String(currentConfig.whatsapp || '').trim();
+    const nextTelegram = hasTelegram
+      ? String(body?.telegram || '').trim()
+      : String(currentConfig.telegram || '').trim();
+
+    if (!nextWhatsapp || !nextTelegram) {
+      return c.json({ error: 'whatsapp and telegram cannot be empty' }, 400);
+    }
+
+    const payload = {
+      whatsapp: nextWhatsapp,
+      telegram: nextTelegram,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminAccess.userId || 'super_admin',
+    };
+
+    await kv.set('support:contact-links', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating contact links: ${error}`);
+    return c.json({ error: 'Internal server error while updating contact links' }, 500);
+  }
+});
+
+app.get('/deposit-config', async (c) => {
+  try {
+    const config = await getDepositConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching deposit config: ${error}`);
+    return c.json({ error: 'Internal server error while fetching deposit config' }, 500);
+  }
+});
+
+app.put('/admin/deposit-config', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    if (!adminAccess.isSuperAdmin) {
+      const hasAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage')
+        || adminAccess.permissions.includes('withdrawals.manage');
+      if (!hasAccess) {
+        return c.json({ error: 'Forbidden - Missing permission: support.manage or withdrawals.manage' }, 403);
+      }
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const currentConfig = await getDepositConfig();
+    const payload = {
+      bank: {
+        accountName: String(body?.bank?.accountName || currentConfig.bank.accountName),
+        accountNumber: String(body?.bank?.accountNumber || currentConfig.bank.accountNumber),
+        bankName: String(body?.bank?.bankName || currentConfig.bank.bankName),
+        routingNumber: String(body?.bank?.routingNumber || currentConfig.bank.routingNumber),
+        instructions: String(body?.bank?.instructions || currentConfig.bank.instructions),
+      },
+      crypto: {
+        network: String(body?.crypto?.network || currentConfig.crypto.network),
+        walletAddress: String(body?.crypto?.walletAddress || currentConfig.crypto.walletAddress),
+        instructions: String(body?.crypto?.instructions || currentConfig.crypto.instructions),
+        defaultAsset: String(body?.crypto?.defaultAsset || currentConfig.crypto.defaultAsset || 'BTC').toUpperCase(),
+        assets: (Array.isArray(body?.crypto?.assets) && body.crypto.assets.length > 0
+          ? body.crypto.assets
+          : currentConfig.crypto.assets
+        )
+          .map((item: any) => ({
+            asset: String(item?.asset || '').toUpperCase(),
+            network: String(item?.network || ''),
+            walletAddress: String(item?.walletAddress || ''),
+            instructions: String(item?.instructions || ''),
+          }))
+          .filter((item: any) => item.asset && item.network && item.walletAddress),
+      },
+      minimumAmount: Number.isFinite(Number(body?.minimumAmount)) && Number(body.minimumAmount) > 0
+        ? Number(body.minimumAmount)
+        : currentConfig.minimumAmount,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminAccess.userId || 'super_admin',
+    };
+
+    await kv.set('payments:deposit-config', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating deposit config: ${error}`);
+    return c.json({ error: 'Internal server error while updating deposit config' }, 500);
+  }
+});
+
+app.post('/deposits/request', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const {
+      method,
+      amount,
+      reference,
+      note,
+      transactionHash,
+      sourceWalletAddress,
+      destinationWalletAddress,
+      cryptoAsset,
+      cryptoNetwork,
+    } = await c.req.json();
+    const normalizedMethod = String(method || '').toLowerCase();
+    const normalizedAmount = Number(amount || 0);
+
+    if (!['bank', 'crypto'].includes(normalizedMethod)) {
+      return c.json({ error: 'method must be bank or crypto' }, 400);
+    }
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return c.json({ error: 'amount must be a positive number' }, 400);
+    }
+
+    const normalizedReference = String(reference || '').trim() || null;
+    const normalizedTransactionHash = String(transactionHash || '').trim() || null;
+    const normalizedSourceWalletAddress = String(sourceWalletAddress || '').trim() || null;
+    const normalizedDestinationWalletAddressInput = String(destinationWalletAddress || '').trim() || null;
+    const normalizedCryptoAsset = String(cryptoAsset || '').trim().toUpperCase() || null;
+    const normalizedCryptoNetworkInput = String(cryptoNetwork || '').trim() || null;
+
+    let resolvedCryptoAsset: string | null = null;
+    let resolvedCryptoNetwork: string | null = null;
+    let resolvedDestinationWalletAddress: string | null = null;
+
+    if (normalizedMethod === 'crypto') {
+      const depositConfig = await getDepositConfig();
+      const configAssets = Array.isArray(depositConfig?.crypto?.assets) ? depositConfig.crypto.assets : [];
+      const fallbackAsset = configAssets.find((item: any) => item?.asset === depositConfig?.crypto?.defaultAsset)
+        || configAssets[0]
+        || null;
+      const matchedAsset = configAssets.find((item: any) => item?.asset === normalizedCryptoAsset) || fallbackAsset;
+
+      resolvedCryptoAsset = String(matchedAsset?.asset || normalizedCryptoAsset || '').toUpperCase() || null;
+      resolvedCryptoNetwork = String(normalizedCryptoNetworkInput || matchedAsset?.network || depositConfig?.crypto?.network || '').trim() || null;
+      resolvedDestinationWalletAddress = String(normalizedDestinationWalletAddressInput || matchedAsset?.walletAddress || depositConfig?.crypto?.walletAddress || '').trim() || null;
+
+      if (!normalizedTransactionHash) {
+        return c.json({ error: 'transactionHash is required for crypto deposits' }, 400);
+      }
+      if (!resolvedCryptoAsset) {
+        return c.json({ error: 'cryptoAsset is required for crypto deposits' }, 400);
+      }
+      if (!resolvedCryptoNetwork) {
+        return c.json({ error: 'cryptoNetwork is required for crypto deposits' }, 400);
+      }
+      if (!resolvedDestinationWalletAddress) {
+        return c.json({ error: 'destinationWalletAddress is required for crypto deposits' }, 400);
+      }
+    }
+
+    const user = await kv.get(`user:${userId}`);
+    if (!user) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const requestId = `dep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const request = {
+      id: requestId,
+      userId,
+      userName: user.name || 'User',
+      userEmail: user.contactEmail || user.email || null,
+      method: normalizedMethod,
+      amount: normalizedAmount,
+      reference: normalizedMethod === 'crypto'
+        ? (normalizedTransactionHash || normalizedReference)
+        : normalizedReference,
+      transactionHash: normalizedMethod === 'crypto'
+        ? (normalizedTransactionHash || normalizedReference)
+        : null,
+      sourceWalletAddress: normalizedMethod === 'crypto' ? normalizedSourceWalletAddress : null,
+      destinationWalletAddress: normalizedMethod === 'crypto' ? resolvedDestinationWalletAddress : null,
+      cryptoAsset: normalizedMethod === 'crypto' ? resolvedCryptoAsset : null,
+      cryptoNetwork: normalizedMethod === 'crypto' ? resolvedCryptoNetwork : null,
+      note: String(note || '').trim() || null,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(`deposit:request:${requestId}`, request);
+    const userRequests = await kv.get(`deposit:requests:user:${userId}`) || [];
+    userRequests.push(requestId);
+    await kv.set(`deposit:requests:user:${userId}`, userRequests.slice(-200));
+
+    const queue = await kv.get('deposit:requests:queue') || [];
+    queue.push(requestId);
+    await kv.set('deposit:requests:queue', queue.slice(-1000));
+
+    return c.json({ success: true, request });
+  } catch (error) {
+    console.error(`Error creating deposit request: ${error}`);
+    return c.json({ error: 'Internal server error while creating deposit request' }, 500);
   }
 });
 
@@ -754,14 +1845,131 @@ app.post("/signin", async (c) => {
       return c.json({ error: error.message }, 400);
     }
 
+    const loginLocation = await resolveBestRequestLocation(c);
+    const profileKey = `user:${data.user?.id || ''}`;
+    const existingProfile = data.user?.id ? await kv.get(profileKey) : null;
+    if (existingProfile) {
+      await kv.set(profileKey, {
+        ...existingProfile,
+        lastLoginAt: new Date().toISOString(),
+        lastLoginIp: loginLocation.ip,
+        lastLoginCountry: loginLocation.country,
+      });
+    }
+
     return c.json({ 
       success: true,
       session: data.session,
       user: data.user,
+      loginLocation,
     });
   } catch (error) {
     console.error(`Signin error: ${error}`);
     return c.json({ error: "Internal server error during signin" }, 500);
+  }
+});
+
+// Admin sign in endpoint (live limited-admin login)
+app.post('/admin/signin', async (c) => {
+  try {
+    const { username, password } = await c.req.json();
+
+    const normalizedUsername = normalizeUsername(String(username || ''));
+    if (!normalizedUsername || !password) {
+      return c.json({ error: 'username and password are required' }, 400);
+    }
+
+    const requesterIp = getRequesterIp(c);
+    const attemptsKey = `admin:signin:attempts:${normalizedUsername}:${requesterIp}`;
+    const nowMs = Date.now();
+    const lockDurationMs = 15 * 60 * 1000;
+    const attemptWindowMs = 15 * 60 * 1000;
+    const maxAttempts = 5;
+    const storedAttempts = await kv.get(attemptsKey) || {};
+    const windowStartedAtMs = Number(storedAttempts.windowStartedAtMs || 0) || nowMs;
+    const lockUntilMs = Number(storedAttempts.lockUntilMs || 0) || 0;
+    const isWindowExpired = (nowMs - windowStartedAtMs) > attemptWindowMs;
+    let failedAttempts = isWindowExpired ? 0 : Number(storedAttempts.failedAttempts || 0);
+
+    if (lockUntilMs > nowMs) {
+      return c.json({ error: 'Too many failed attempts. Try again later.' }, 429);
+    }
+
+    const adminEmail = `admin.${normalizedUsername}@${AUTH_EMAIL_DOMAIN}`;
+    const supabase = getAnonClient();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: adminEmail,
+      password,
+    });
+
+    if (error || !data?.user?.id) {
+      failedAttempts += 1;
+      const nextState = {
+        failedAttempts,
+        windowStartedAtMs: isWindowExpired ? nowMs : windowStartedAtMs,
+        lockUntilMs: failedAttempts >= maxAttempts ? nowMs + lockDurationMs : 0,
+        lastAttemptAtMs: nowMs,
+      };
+      await kv.set(attemptsKey, nextState);
+      return c.json({ error: error?.message || 'Invalid admin credentials' }, 403);
+    }
+
+    const adminAccount = await kv.get(`admin:account:${data.user.id}`);
+    if (!adminAccount || adminAccount.active === false) {
+      await supabase.auth.signOut();
+      failedAttempts += 1;
+      const nextState = {
+        failedAttempts,
+        windowStartedAtMs: isWindowExpired ? nowMs : windowStartedAtMs,
+        lockUntilMs: failedAttempts >= maxAttempts ? nowMs + lockDurationMs : 0,
+        lastAttemptAtMs: nowMs,
+      };
+      await kv.set(attemptsKey, nextState);
+      return c.json({ error: 'Admin account is inactive or not found' }, 403);
+    }
+
+    const persistedPermissions = sanitizeAdminPermissions(adminAccount.permissions);
+    const effectivePermissions = Array.from(
+      new Set<AdminPermission>([
+        ...persistedPermissions,
+        ...BASELINE_LIMITED_ADMIN_PERMISSIONS,
+      ])
+    );
+
+    await kv.set(attemptsKey, {
+      failedAttempts: 0,
+      windowStartedAtMs: nowMs,
+      lockUntilMs: 0,
+      lastSuccessAtMs: nowMs,
+    });
+
+    const adminLoginLocation = await resolveBestRequestLocation(c);
+    const updatedAdminAccount = {
+      ...adminAccount,
+      permissions: effectivePermissions,
+      lastLoginAt: new Date().toISOString(),
+      lastLoginIp: adminLoginLocation.ip,
+      lastLoginCountry: adminLoginLocation.country,
+      updatedAt: new Date().toISOString(),
+    };
+    await kv.set(`admin:account:${data.user.id}`, updatedAdminAccount);
+
+    return c.json({
+      success: true,
+      admin: {
+        userId: updatedAdminAccount.userId,
+        username: updatedAdminAccount.username,
+        displayName: updatedAdminAccount.displayName,
+        active: updatedAdminAccount.active !== false,
+        permissions: effectivePermissions,
+        lastLoginAt: updatedAdminAccount.lastLoginAt,
+        lastLoginCountry: updatedAdminAccount.lastLoginCountry,
+      },
+      session: data.session,
+    });
+  } catch (error) {
+    console.error(`Admin signin error: ${error}`);
+    return c.json({ error: 'Internal server error during admin signin' }, 500);
   }
 });
 
@@ -808,6 +2016,18 @@ app.get("/profile", async (c) => {
         name: metadataName || metadataUsername || 'User',
         username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
         vipTier: 'Normal',
+        balance: 0,
+        welcomeBonusGranted: false,
+        dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
+        extraTaskSets: 0,
+        taskSetsCompletedToday: 0,
+        totalTaskSetsCompleted: 0,
+        tierSetProgress: 0,
+        currentSetTasksCompleted: 0,
+        currentSetDate: null,
+        lastLoginAt: null,
+        lastLoginIp: null,
+        lastLoginCountry: null,
         createdAt: new Date().toISOString(),
       };
       await kv.set(`user:${userId}`, newProfile);
@@ -815,8 +2035,27 @@ app.get("/profile", async (c) => {
       return c.json({ success: true, profile: newProfile });
     }
 
+    const requestLocation = await resolveBestRequestLocation(c);
+    const shouldBackfillLoginMetadata = !profile?.lastLoginAt
+      || !profile?.lastLoginIp
+      || String(profile?.lastLoginIp || '').trim().toLowerCase() === 'unknown'
+      || !profile?.lastLoginCountry
+      || String(profile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
+
+    let effectiveProfile = profile;
+    if (shouldBackfillLoginMetadata) {
+      effectiveProfile = {
+        ...profile,
+        lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
+        lastLoginIp: requestLocation.ip || profile?.lastLoginIp || 'unknown',
+        lastLoginCountry: requestLocation.country || profile?.lastLoginCountry || 'Unknown',
+      };
+      await kv.set(`user:${userId}`, effectiveProfile);
+    }
+
     console.log('Profile found for user:', userId);
-    return c.json({ success: true, profile });
+    const { withdrawalPassword: _withdrawalPassword, ...safeProfile } = effectiveProfile;
+    return c.json({ success: true, profile: safeProfile });
   } catch (error) {
     console.error(`Error fetching profile: ${error}`);
     return c.json({ error: "Internal server error while fetching profile" }, 500);
@@ -937,7 +2176,7 @@ app.put("/vip-tier", async (c) => {
     }
 
     // Update VIP tier
-    const updatedProfile = { ...profile, vipTier };
+    const updatedProfile = { ...profile, vipTier, tierSetProgress: 0, updatedAt: new Date().toISOString() };
     await kv.set(`user:${userId}`, updatedProfile);
 
     return c.json({ success: true, profile: updatedProfile });
@@ -950,46 +2189,154 @@ app.put("/vip-tier", async (c) => {
 // Admin: list users and platform metrics
 app.get("/admin/users", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
+
+    if (!adminAccess.isSuperAdmin) {
+      const hasUsersAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('users.view')
+        || adminAccess.permissions.includes('users.adjust_balance')
+        || adminAccess.permissions.includes('users.assign_premium')
+        || adminAccess.permissions.includes('users.reset_tasks')
+        || adminAccess.permissions.includes('users.manage_task_limits')
+        || adminAccess.permissions.includes('users.unfreeze')
+        || adminAccess.permissions.includes('users.update_vip');
+      if (!hasUsersAccess) {
+        return c.json({ error: 'Forbidden - Missing user management permission' }, 403);
+      }
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
 
     const rawUsers = await kv.getByPrefix('user:');
     const users = (rawUsers ?? []).map((user: any) => ({
       id: user?.id ?? '',
       email: user?.email ?? '',
       name: user?.name ?? 'User',
+      lastLoginAt: user?.lastLoginAt ?? null,
+      lastLoginCountry: user?.lastLoginCountry ?? null,
+      lastLoginIp: user?.lastLoginIp ?? null,
       vipTier: user?.vipTier ?? 'Normal',
       balance: Number(user?.balance ?? 0),
       productsSubmitted: Number(user?.productsSubmitted ?? 0),
       accountFrozen: Boolean(user?.accountFrozen ?? false),
       freezeAmount: Number(user?.freezeAmount ?? 0),
+      dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
+      extraTaskSets: Number(user?.extraTaskSets ?? 0),
+      taskSetsCompletedToday: Number(user?.taskSetsCompletedToday ?? 0),
+      currentSetTasksCompleted: Number(user?.currentSetTasksCompleted ?? 0),
+      currentSetDate: user?.currentSetDate ?? null,
+      parentUserId: user?.parentUserId ?? null,
       createdAt: user?.createdAt ?? new Date().toISOString(),
     }));
 
+    const scopedUsers = users.filter((user: any) => isUserInAdminScope(scope, user));
+    const sortedUsers = scopedUsers.sort((a: any, b: any) => {
+      const bCreatedAt = new Date(b?.createdAt || 0).getTime();
+      const aCreatedAt = new Date(a?.createdAt || 0).getTime();
+      return bCreatedAt - aCreatedAt;
+    });
+
     const metrics = {
-      totalUsers: users.length,
-      totalRevenue: users.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
-      totalTransactions: users.reduce((sum: number, user: any) => sum + (Number(user.productsSubmitted) || 0), 0),
-      activeUsers: users.filter((user: any) => !user.accountFrozen).length,
-      frozenAccounts: users.filter((user: any) => user.accountFrozen).length,
+      totalUsers: sortedUsers.length,
+      totalRevenue: sortedUsers.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
+      totalTransactions: sortedUsers.reduce((sum: number, user: any) => sum + (Number(user.productsSubmitted) || 0), 0),
+      activeUsers: sortedUsers.filter((user: any) => !user.accountFrozen).length,
+      frozenAccounts: sortedUsers.filter((user: any) => user.accountFrozen).length,
       totalCommissionsPaid: 0,
     };
 
-    return c.json({ success: true, users, metrics });
+    return c.json({ success: true, users: sortedUsers, metrics });
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
   }
 });
 
-// Admin: unfreeze a user account
-app.post("/admin/unfreeze", async (c) => {
+// Admin (super key only): cleanup test users in one action
+app.post('/admin/users/cleanup-test-data', async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
     if (!adminCheck.ok) {
       return adminCheck.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'users.cleanup_test_data', 3, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for test data cleanup. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = body?.dryRun === undefined ? false : Boolean(body.dryRun);
+    const deleteUsers = Boolean(body?.deleteUsers);
+
+    const userRows = await getKvRowsByPrefix('user:');
+    const matchedRows = userRows.filter((row: any) => isLikelyTestUser(row?.value));
+
+    const summary: any = {
+      scannedUsers: userRows.length,
+      matchedUsers: matchedRows.length,
+      processedUsers: 0,
+      deletedUsers: 0,
+      neutralizedUsers: 0,
+      failedUsers: 0,
+      dryRun,
+      deleteUsers,
+      sampleUserIds: [] as string[],
+    };
+
+    for (const row of matchedRows) {
+      const user = row?.value || {};
+      const userId = String(user?.id || '').trim();
+      if (userId && summary.sampleUserIds.length < 50) {
+        summary.sampleUserIds.push(userId);
+      }
+
+      if (dryRun) {
+        continue;
+      }
+
+      try {
+        if (deleteUsers) {
+          await kv.del(row.key);
+          await kv.del(`admin:adjustments:${userId}`).catch(() => undefined);
+          summary.deletedUsers += 1;
+        } else {
+          const normalizedUser = buildNeutralizedTestUser(user);
+          await kv.set(row.key, normalizedUser);
+          await kv.del(`admin:adjustments:${userId}`).catch(() => undefined);
+          summary.neutralizedUsers += 1;
+        }
+        summary.processedUsers += 1;
+      } catch (error) {
+        console.error(`Cleanup failed for user ${userId}: ${error}`);
+        summary.failedUsers += 1;
+      }
+    }
+
+    return c.json({
+      success: true,
+      mode: deleteUsers ? 'delete' : 'neutralize',
+      summary,
+    });
+  } catch (error) {
+    console.error(`Error cleaning test users: ${error}`);
+    return c.json({ error: 'Internal server error while cleaning test users' }, 500);
+  }
+});
+
+// Admin: unfreeze a user account
+app.post("/admin/unfreeze", async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.unfreeze');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.unfreeze', 30, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for unfreeze action. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const { userId } = await c.req.json();
@@ -1003,10 +2350,15 @@ app.post("/admin/unfreeze", async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, user)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
     const currentBalance = Number(user?.balance ?? 0);
     const freezeAmount = Number(user?.freezeAmount ?? 0);
     const nextBalance = user?.accountFrozen
-      ? Math.abs(currentBalance) + freezeAmount + 150
+      ? currentBalance + freezeAmount
       : currentBalance;
 
     const updatedUser = {
@@ -1034,7 +2386,12 @@ app.post("/admin/premium", async (c) => {
       return adminCheck.response;
     }
 
-    const { userId, amount, position } = await c.req.json();
+    const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'premium.assign', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const { userId, amount, position, productId } = await c.req.json();
     if (!userId || amount === undefined || position === undefined) {
       return c.json({ error: 'userId, amount, and position are required' }, 400);
     }
@@ -1056,23 +2413,52 @@ app.post("/admin/premium", async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const normalizedProductId = String(productId || '').trim();
+    const catalog = await getTaskProductCatalog();
+    const assignedProduct = normalizedProductId
+      ? catalog.find((item: any) => String(item?.id || '') === normalizedProductId)
+      : null;
+
+    if (normalizedProductId && !assignedProduct) {
+      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
+    }
+
     const currentBalance = Number(user?.balance ?? 0);
-    const boostedCommission = premiumAmount;
-    const shouldFreeze = premiumAmount > currentBalance;
+    const bundleDetails = buildPremiumBundleDetails(premiumAmount);
+    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
+    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const updatedUser = {
       ...user,
-      productsSubmitted: Number(user?.productsSubmitted ?? 0) + 1,
       premiumAssignment: {
-        amount: premiumAmount,
+        orderId: premiumOrderId,
+        amount: bundleTotal,
+        enteredAmount: premiumAmount,
         position: premiumPosition,
+        productId: assignedProduct?.id || null,
+        productName: assignedProduct?.name || null,
+        productImage: assignedProduct?.image || null,
+        vipRate: vipPremiumRate,
+        multiplier: 1,
+        potentialProfit: potentialPremiumProfit,
+        bundleProductCount: bundleDetails.individualProductCount,
+        bundleItems: bundleDetails.bundleItems,
+        previousBalance: null,
+        balanceAfterAssignment: null,
+        topUpRequired: null,
+        projectedBalanceAfterEncounter: balanceAfterAssignment,
+        projectedTopUpRequired,
+        encounteredAt: null,
+        encounteredTaskNumber: null,
         assignedAt: new Date().toISOString(),
       },
-      accountFrozen: shouldFreeze,
-      freezeAmount: shouldFreeze ? premiumAmount : 0,
-      balance: shouldFreeze
-        ? -(premiumAmount - currentBalance)
-        : currentBalance + boostedCommission,
+      accountFrozen: Boolean(user?.accountFrozen ?? false),
+      freezeAmount: Number(user?.freezeAmount ?? 0),
+      balance: currentBalance,
     };
 
     await kv.set(key, updatedUser);
@@ -1081,8 +2467,13 @@ app.post("/admin/premium", async (c) => {
       success: true,
       user: updatedUser,
       result: {
-        boostedCommission,
-        frozen: shouldFreeze,
+        boostedCommission: potentialPremiumProfit,
+        potentialProfit: potentialPremiumProfit,
+        frozen: false,
+        willFreezeOnEncounter: projectedTopUpRequired > 0,
+        orderId: premiumOrderId,
+        bundleTotal,
+        topUpRequired: projectedTopUpRequired,
       },
     });
   } catch (error) {
@@ -1091,59 +2482,12 @@ app.post("/admin/premium", async (c) => {
   }
 });
 
-// Public: get global premium trigger config
-app.get("/premium/global-config", async (c) => {
-  try {
-    const config = await getGlobalPremiumConfig();
-    return c.json({ success: true, config });
-  } catch (error) {
-    console.error(`Error fetching global premium config: ${error}`);
-    return c.json({ error: 'Internal server error while fetching global premium config' }, 500);
-  }
-});
-
-// Admin: update global premium trigger config
-app.put("/admin/premium/global-config", async (c) => {
-  try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
-    }
-
-    const { enabled, position, amount } = await c.req.json();
-    const nextEnabled = enabled === undefined ? true : Boolean(enabled);
-    const nextPosition = Number(position);
-    const nextAmount = Number(amount);
-
-    if (!Number.isInteger(nextPosition) || nextPosition <= 0) {
-      return c.json({ error: 'position must be a positive integer' }, 400);
-    }
-
-    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
-      return c.json({ error: 'amount must be a positive number' }, 400);
-    }
-
-    const payload = {
-      enabled: nextEnabled,
-      position: nextPosition,
-      amount: nextAmount,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await kv.set('premium:global-config', payload);
-    return c.json({ success: true, config: payload });
-  } catch (error) {
-    console.error(`Error updating global premium config: ${error}`);
-    return c.json({ error: 'Internal server error while updating global premium config' }, 500);
-  }
-});
-
 // Admin: update a user's VIP tier
 app.put("/admin/vip-tier", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
 
     const { userId, vipTier } = await c.req.json();
@@ -1162,9 +2506,15 @@ app.put("/admin/vip-tier", async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, user)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
     const updatedUser = {
       ...user,
       vipTier,
+      tierSetProgress: 0,
       updatedAt: new Date().toISOString(),
     };
 
@@ -1312,6 +2662,284 @@ app.get("/admin/premium/analytics", async (c) => {
   }
 });
 
+// Admin: list task product catalog
+app.get('/admin/task-products', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const products = await getTaskProductCatalog();
+    return c.json({ success: true, products });
+  } catch (error) {
+    console.error(`Error listing task products: ${error}`);
+    return c.json({ error: 'Internal server error while listing task products' }, 500);
+  }
+});
+
+// Admin: add one task product manually
+app.post('/admin/task-products', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const name = String(body?.name || '').trim();
+    const image = String(body?.image || '').trim();
+    const isPremiumTemplate = Boolean(body?.isPremiumTemplate);
+    const isActive = body?.isActive === undefined ? true : Boolean(body?.isActive);
+
+    if (!name) {
+      return c.json({ error: 'name is required' }, 400);
+    }
+
+    const products = await getTaskProductCatalog();
+    const timestamp = new Date().toISOString();
+    const fallbackImage = TASK_PRODUCT_IMAGE_POOL[products.length % TASK_PRODUCT_IMAGE_POOL.length];
+
+    const newProduct = {
+      id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      image: image || fallbackImage,
+      isActive,
+      isArchived: false,
+      isPremiumTemplate,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    const updatedProducts = [newProduct, ...products];
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+
+    return c.json({ success: true, product: newProduct, products: updatedProducts });
+  } catch (error) {
+    console.error(`Error creating task product: ${error}`);
+    return c.json({ error: 'Internal server error while creating task product' }, 500);
+  }
+});
+
+// Admin: auto-generate task products (AI-style)
+app.post('/admin/task-products/generate', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const count = Math.max(1, Math.min(50, Number(body?.count || 10)));
+
+    const generated = generateAiTaskProducts(count);
+    const products = await getTaskProductCatalog();
+    const updatedProducts = [...generated, ...products].slice(0, 500);
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+
+    return c.json({ success: true, generated, products: updatedProducts });
+  } catch (error) {
+    console.error(`Error generating task products: ${error}`);
+    return c.json({ error: 'Internal server error while generating task products' }, 500);
+  }
+});
+
+// Admin: update one task product
+app.put('/admin/task-products/:productId', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const productId = String(c.req.param('productId') || '').trim();
+    if (!productId) {
+      return c.json({ error: 'productId is required' }, 400);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const products = await getTaskProductCatalog();
+    const targetIndex = products.findIndex((item: any) => String(item?.id || '') === productId);
+    if (targetIndex < 0) {
+      return c.json({ error: 'Task product not found' }, 404);
+    }
+
+    const target = products[targetIndex];
+    const updated = {
+      ...target,
+      name: body?.name !== undefined ? String(body.name || '').trim() || target.name : target.name,
+      image: body?.image !== undefined ? String(body.image || '').trim() || target.image : target.image,
+      isActive: body?.isActive !== undefined ? Boolean(body.isActive) : target.isActive,
+      isPremiumTemplate: body?.isPremiumTemplate !== undefined ? Boolean(body.isPremiumTemplate) : target.isPremiumTemplate,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updatedProducts = [...products];
+    updatedProducts[targetIndex] = updated;
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+
+    return c.json({ success: true, product: updated, products: updatedProducts });
+  } catch (error) {
+    console.error(`Error updating task product: ${error}`);
+    return c.json({ error: 'Internal server error while updating task product' }, 500);
+  }
+});
+
+// Admin: delete one task product
+app.delete('/admin/task-products/:productId', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const productId = String(c.req.param('productId') || '').trim();
+    if (!productId) {
+      return c.json({ error: 'productId is required' }, 400);
+    }
+
+    const products = await getTaskProductCatalog();
+    const exists = products.some((item: any) => String(item?.id || '') === productId);
+    if (!exists) {
+      return c.json({ error: 'Task product not found' }, 404);
+    }
+
+    const updatedProducts = products.map((item: any) => {
+      if (String(item?.id || '') !== productId) {
+        return item;
+      }
+      return {
+        ...item,
+        isArchived: true,
+        isActive: false,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+
+    return c.json({ success: true, archivedProductId: productId, products: updatedProducts });
+  } catch (error) {
+    console.error(`Error deleting task product: ${error}`);
+    return c.json({ error: 'Internal server error while deleting task product' }, 500);
+  }
+});
+
+// Admin: restore archived task product
+app.post('/admin/task-products/:productId/restore', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const productId = String(c.req.param('productId') || '').trim();
+    if (!productId) {
+      return c.json({ error: 'productId is required' }, 400);
+    }
+
+    const products = await getTaskProductCatalog();
+    const exists = products.some((item: any) => String(item?.id || '') === productId);
+    if (!exists) {
+      return c.json({ error: 'Task product not found' }, 404);
+    }
+
+    const updatedProducts = products.map((item: any) => {
+      if (String(item?.id || '') !== productId) {
+        return item;
+      }
+      return {
+        ...item,
+        isArchived: false,
+        isActive: true,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    return c.json({ success: true, restoredProductId: productId, products: updatedProducts });
+  } catch (error) {
+    console.error(`Error restoring task product: ${error}`);
+    return c.json({ error: 'Internal server error while restoring task product' }, 500);
+  }
+});
+
+// Protected: get next task product generated from admin catalog and premium assignment rules
+app.get('/tasks/next-product', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    if (userProfile?.accountFrozen) {
+      return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
+    }
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
+    if (normalizedTaskState.taskSetsCompletedToday >= maxSetsForToday) {
+      return c.json({
+        error: 'Daily task set limit reached. Contact admin for additional sets.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: 0,
+        },
+      }, 400);
+    }
+
+    if (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet) {
+      return c.json({
+        error: 'Current task set is complete. Reset task set before starting more products.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
+          setCompleted: true,
+        },
+      }, 409);
+    }
+
+    const nextTaskNumber = normalizedTaskState.currentSetTasksCompleted + 1;
+    const product = await buildNextTaskProduct(userProfile, nextTaskNumber);
+
+    return c.json({
+      success: true,
+      product,
+      taskState: {
+        ...normalizedTaskState,
+        nextTaskNumber,
+        maxSetsForToday,
+        remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
+      },
+    });
+  } catch (error) {
+    console.error(`Error generating next task product: ${error}`);
+    return c.json({ error: 'Internal server error while generating next task product' }, 500);
+  }
+});
+
 // Submit product with profit sharing (protected route)
 app.post("/submit-product", async (c) => {
   try {
@@ -1343,13 +2971,126 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: "User profile not found" }, 404);
     }
 
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
+
+    if (normalizedTaskState.taskSetsCompletedToday >= maxSetsForToday) {
+      return c.json({
+        error: 'Daily task set limit reached. Contact admin for additional sets.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: 0,
+        },
+      }, 400);
+    }
+
+    if (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet) {
+      return c.json({
+        error: 'Current task set is complete. Reset task set before submitting more products.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
+          setCompleted: true,
+        },
+      }, 409);
+    }
+
+    if (userProfile?.accountFrozen) {
+      return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
+    }
+
+    const activePremiumAssignment = userProfile?.premiumAssignment || null;
+    let effectivePremiumAssignment = activePremiumAssignment;
+    let currentBalanceForProfit = roundCurrency(Number(userProfile?.balance ?? 0));
+    const premiumPosition = Number(activePremiumAssignment?.position ?? 0);
+    const nextTaskNumber = normalizedTaskState.currentSetTasksCompleted + 1;
+    const shouldTriggerPremiumEncounter = Boolean(
+      activePremiumAssignment
+      && !activePremiumAssignment?.encounteredAt
+      && Number.isInteger(premiumPosition)
+      && premiumPosition > 0
+      && nextTaskNumber === premiumPosition
+    );
+
+    if (shouldTriggerPremiumEncounter) {
+      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
+      const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const encounteredAt = new Date().toISOString();
+
+      const updatedAssignment = {
+        ...activePremiumAssignment,
+        amount: bundleTotal,
+        previousBalance: currentBalance,
+        balanceAfterAssignment: balanceAfterEncounter,
+        topUpRequired,
+        encounteredAt,
+        encounteredTaskNumber: nextTaskNumber,
+      };
+
+      effectivePremiumAssignment = updatedAssignment;
+
+      if (balanceAfterEncounter < 0) {
+        const frozenProfile = {
+          ...userProfile,
+          premiumAssignment: updatedAssignment,
+          accountFrozen: true,
+          freezeAmount: topUpRequired,
+          balance: balanceAfterEncounter,
+          updatedAt: encounteredAt,
+        };
+
+        await kv.set(`user:${userId}`, frozenProfile);
+
+        return c.json({
+          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+          premiumEncounter: {
+            orderId: updatedAssignment.orderId || null,
+            position: premiumPosition,
+            topUpRequired,
+            amount: bundleTotal,
+          },
+          user: {
+            accountFrozen: true,
+            freezeAmount: topUpRequired,
+            balance: balanceAfterEncounter,
+            premiumAssignment: updatedAssignment,
+          },
+        }, 403);
+      }
+
+      currentBalanceForProfit = balanceAfterEncounter;
+    }
+
     // Calculate profit distribution
     const profitAmount = productValue * 0.8; // 80% to user
 
     // Update user balance
     const updatedProfile = {
       ...userProfile,
-      balance: (userProfile.balance || 0) + profitAmount,
+      balance: roundCurrency(currentBalanceForProfit + profitAmount),
+      premiumAssignment: effectivePremiumAssignment,
+      productsSubmitted: Number(userProfile.productsSubmitted || 0) + 1,
+      dailyTaskSetLimit: normalizedTaskState.dailyTaskSetLimit,
+      extraTaskSets: normalizedTaskState.extraTaskSets,
+      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
+      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
+      currentSetDate: todayDate,
+      updatedAt: new Date().toISOString(),
     };
     await kv.set(`user:${userId}`, updatedProfile);
 
@@ -1449,10 +3190,463 @@ app.post("/submit-product", async (c) => {
         commissionsCascade: commissionLog,
       },
       newBalance: updatedProfile.balance,
+      taskState: {
+        dailyTaskSetLimit: updatedProfile.dailyTaskSetLimit,
+        extraTaskSets: updatedProfile.extraTaskSets,
+        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
+        currentSetTasksCompleted: updatedProfile.currentSetTasksCompleted,
+        tasksPerSet: normalizedTaskState.tasksPerSet,
+        currentSetDate: updatedProfile.currentSetDate,
+        maxSetsForToday,
+        remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
+      },
     });
   } catch (error) {
     console.error(`Error submitting product: ${error}`);
     return c.json({ error: "Internal server error while submitting product" }, 500);
+  }
+});
+
+app.post('/tasks/complete-product', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const { productName, productValue, profit } = await c.req.json();
+    const normalizedName = String(productName || '').trim();
+    const normalizedValue = Number(productValue || 0);
+    const normalizedProfit = Number(profit || 0);
+
+    if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
+      return c.json({ error: 'productName and productValue are required' }, 400);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    if (userProfile?.accountFrozen) {
+      return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
+    }
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
+    if (normalizedTaskState.taskSetsCompletedToday >= maxSetsForToday) {
+      return c.json({
+        error: 'Daily task set limit reached. Contact admin for additional sets.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: 0,
+        },
+      }, 400);
+    }
+
+    if (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet) {
+      return c.json({
+        error: 'Current task set is complete. Reset task set before submitting more products.',
+        taskState: {
+          ...normalizedTaskState,
+          maxSetsForToday,
+          remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
+          setCompleted: true,
+        },
+      }, 409);
+    }
+
+    const activePremiumAssignment = userProfile?.premiumAssignment || null;
+    let effectivePremiumAssignment = activePremiumAssignment;
+    let currentBalanceForProfit = roundCurrency(Number(userProfile?.balance ?? 0));
+    const premiumPosition = Number(activePremiumAssignment?.position ?? 0);
+    const nextTaskNumber = normalizedTaskState.currentSetTasksCompleted + 1;
+    const shouldTriggerPremiumEncounter = Boolean(
+      activePremiumAssignment
+      && !activePremiumAssignment?.encounteredAt
+      && Number.isInteger(premiumPosition)
+      && premiumPosition > 0
+      && nextTaskNumber === premiumPosition
+    );
+
+    if (shouldTriggerPremiumEncounter) {
+      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
+      const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const encounteredAt = new Date().toISOString();
+
+      const updatedAssignment = {
+        ...activePremiumAssignment,
+        amount: bundleTotal,
+        previousBalance: currentBalance,
+        balanceAfterAssignment: balanceAfterEncounter,
+        topUpRequired,
+        encounteredAt,
+        encounteredTaskNumber: nextTaskNumber,
+      };
+
+      effectivePremiumAssignment = updatedAssignment;
+
+      if (balanceAfterEncounter < 0) {
+        const frozenProfile = {
+          ...userProfile,
+          premiumAssignment: updatedAssignment,
+          accountFrozen: true,
+          freezeAmount: topUpRequired,
+          balance: balanceAfterEncounter,
+          updatedAt: encounteredAt,
+        };
+
+        await kv.set(`user:${userId}`, frozenProfile);
+
+        return c.json({
+          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+          premiumEncounter: {
+            orderId: updatedAssignment.orderId || null,
+            position: premiumPosition,
+            topUpRequired,
+            amount: bundleTotal,
+          },
+          user: {
+            accountFrozen: true,
+            freezeAmount: topUpRequired,
+            balance: balanceAfterEncounter,
+            premiumAssignment: updatedAssignment,
+          },
+        }, 403);
+      }
+
+      currentBalanceForProfit = balanceAfterEncounter;
+    }
+
+    const expectedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
+    const appliedProfit = Number.isFinite(normalizedProfit) && normalizedProfit > 0 ? roundCurrency(normalizedProfit) : expectedProfit;
+
+    const updatedProfile = {
+      ...userProfile,
+      balance: roundCurrency(currentBalanceForProfit + appliedProfit),
+      premiumAssignment: effectivePremiumAssignment,
+      productsSubmitted: Number(userProfile.productsSubmitted || 0) + 1,
+      dailyTaskSetLimit: normalizedTaskState.dailyTaskSetLimit,
+      extraTaskSets: normalizedTaskState.extraTaskSets,
+      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
+      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
+      currentSetDate: todayDate,
+      lastCompletedTaskAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(`user:${userId}`, updatedProfile);
+
+    const userProfits = await kv.get(`profits:${userId}`) || {
+      totalEarned: 0,
+      fromDirectChildren: 0,
+      fromIndirectReferrals: 0,
+      byLevel: {},
+    };
+    userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + appliedProfit);
+    await kv.set(`profits:${userId}`, userProfits);
+
+    const submittedAt = new Date().toISOString();
+    await kv.set(`product:${userId}:${Date.now()}`, {
+      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      productName: normalizedName,
+      productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
+      productValue: normalizedValue,
+      userEarned: appliedProfit,
+      commissionsCascade: [],
+      status: 'approved',
+      submittedAt,
+    });
+
+    const currentSetDone = updatedProfile.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    if (currentSetDone) {
+      const existingAlerts = await kv.get(`admin:reset-alerts:${userId}`) || [];
+      existingAlerts.push({
+        id: `rst_${Date.now()}`,
+        userId,
+        userName: updatedProfile.name || 'User',
+        vipTier: updatedProfile.vipTier || 'Normal',
+        message: `Task set complete (${updatedProfile.currentSetTasksCompleted}/${normalizedTaskState.tasksPerSet}). Reset required.`,
+        createdAt: new Date().toISOString(),
+        status: 'new',
+      });
+      await kv.set(`admin:reset-alerts:${userId}`, existingAlerts.slice(-50));
+    }
+
+    return c.json({
+      success: true,
+      result: {
+        productName: normalizedName,
+        productValue: normalizedValue,
+        profit: appliedProfit,
+      },
+      user: updatedProfile,
+      taskState: {
+        dailyTaskSetLimit: updatedProfile.dailyTaskSetLimit,
+        extraTaskSets: updatedProfile.extraTaskSets,
+        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
+        currentSetTasksCompleted: updatedProfile.currentSetTasksCompleted,
+        tasksPerSet: normalizedTaskState.tasksPerSet,
+        currentSetDate: updatedProfile.currentSetDate,
+        maxSetsForToday,
+        remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
+        setCompleted: currentSetDone,
+      },
+      resetRequired: currentSetDone,
+    });
+  } catch (error) {
+    console.error(`Error completing product task: ${error}`);
+    return c.json({ error: 'Internal server error while completing product task' }, 500);
+  }
+});
+
+// Reset current task set (protected route)
+app.post('/tasks/reset-set', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const mode = String(body?.mode || 'complete_set');
+
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
+
+    const isSetComplete = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const canCountAnotherSet = normalizedTaskState.taskSetsCompletedToday < maxSetsForToday;
+    const shouldCountCompletedSet = isSetComplete && canCountAnotherSet;
+
+    if (mode === 'complete_set' && !isSetComplete) {
+      return c.json({ error: 'Current task set is not complete yet' }, 400);
+    }
+
+    if (mode === 'complete_set' && !canCountAnotherSet) {
+      return c.json({ error: 'Daily task set limit reached' }, 400);
+    }
+
+    if (shouldCountCompletedSet) {
+      normalizedTaskState.taskSetsCompletedToday += 1;
+    }
+
+    const vipProgress = applyVipAutoUpgrade(userProfile, shouldCountCompletedSet ? 1 : 0);
+
+    const shouldClearPremiumAssignmentOnReset = Boolean(userProfile?.accountFrozen);
+
+    const updatedProfile = {
+      ...userProfile,
+      vipTier: vipProgress.vipTier,
+      tierSetProgress: vipProgress.tierSetProgress,
+      totalTaskSetsCompleted: vipProgress.totalTaskSetsCompleted,
+      dailyTaskSetLimit: normalizedTaskState.dailyTaskSetLimit,
+      extraTaskSets: normalizedTaskState.extraTaskSets,
+      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
+      currentSetTasksCompleted: 0,
+      currentSetDate: todayDate,
+      balance: roundCurrency(Number(userProfile?.balance || 0)),
+      accountFrozen: false,
+      freezeAmount: 0,
+      premiumAssignment: shouldClearPremiumAssignmentOnReset ? null : userProfile?.premiumAssignment || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    return c.json({
+      success: true,
+      message: mode === 'complete_set' ? 'Task set completed and reset' : 'Task set reset',
+      vipUpgrade: {
+        upgraded: vipProgress.upgraded,
+        upgrades: vipProgress.upgrades,
+        currentTier: vipProgress.vipTier,
+        tierSetProgress: vipProgress.tierSetProgress,
+        requiredSetsForNextUpgrade: vipProgress.requiredSetsForNextUpgrade,
+        remainingSetsForNextUpgrade: vipProgress.remainingSetsForNextUpgrade,
+      },
+      taskState: {
+        dailyTaskSetLimit: updatedProfile.dailyTaskSetLimit,
+        extraTaskSets: updatedProfile.extraTaskSets,
+        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
+        currentSetTasksCompleted: updatedProfile.currentSetTasksCompleted,
+        tasksPerSet: getTasksPerSetByTier(updatedProfile.vipTier || 'Normal'),
+        currentSetDate: updatedProfile.currentSetDate,
+        maxSetsForToday,
+        remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
+      },
+    });
+  } catch (error) {
+    console.error(`Error resetting task set: ${error}`);
+    return c.json({ error: 'Internal server error while resetting task set' }, 500);
+  }
+});
+
+app.get('/records', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    // Get submitted/frozen records
+    const products = await kv.getByPrefix(`product:${userId}:`);
+    const backendRecords = (products || [])
+      .filter((item: any) => item)
+      .map((item: any, index: number) => {
+        const iso = String(item?.submittedAt || item?.createdAt || new Date().toISOString());
+        const parsedDate = new Date(iso);
+        const safeDate = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+        const timestamp = `${safeDate.getFullYear()}-${String(safeDate.getMonth() + 1).padStart(2, '0')}-${String(safeDate.getDate()).padStart(2, '0')} ${String(safeDate.getHours()).padStart(2, '0')}:${String(safeDate.getMinutes()).padStart(2, '0')}:${String(safeDate.getSeconds()).padStart(2, '0')}`;
+        const rawStatus = String(item?.status || 'approved').toLowerCase();
+        const status = (rawStatus === 'pending' || rawStatus === 'frozen' || rawStatus === 'approved')
+          ? rawStatus
+          : 'approved';
+        return {
+          id: String(item?.id || `record_${index}_${safeDate.getTime()}`),
+          timestamp,
+          productName: String(item?.productName || item?.name || 'Product Task'),
+          productImage: String(item?.productImage || item?.image || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
+          totalAmount: Number(item?.productValue || item?.value || item?.totalAmount || 0),
+          profit: roundCurrency(Number(item?.userEarned || item?.profit || 0)),
+          status,
+          submittedAt: safeDate.toISOString(),
+        };
+      });
+
+    // Get assigned products for current set (simulate/generate for now, 3 per set)
+    // Use same logic as frontend for now
+    const setSize = 3;
+    const productNames = [
+      'stainless steel black sink waterfall faucet',
+      'wireless bluetooth noise cancelling headphones',
+      'smart home security camera system',
+      'portable solar power bank charger',
+      'ergonomic mesh office chair',
+      'led desk lamp with wireless charging',
+      'stainless steel cookware set',
+      'digital air fryer with touch screen',
+      'robot vacuum cleaner with mapping',
+      'electric standing desk converter',
+      'waterproof fitness tracker watch',
+      'ceramic non-stick frying pan',
+      'bamboo kitchen utensil set',
+      'glass meal prep containers',
+      'electric milk frother and steamer',
+    ];
+    const productImages = [
+      'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
+      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
+      'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
+      'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
+      'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
+      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+      'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
+      'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
+      'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+      'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
+      'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
+      'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+      'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
+      'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
+      'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
+    ];
+    // Default to Silver tier logic for now
+    const commissionRate = 0.0075;
+    const productRange = { min: 399, max: 598 };
+    const assigned = [];
+    for (let i = 0; i < setSize; i++) {
+      const randomIndex = Math.floor(Math.random() * productNames.length);
+      const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
+      const profit = Math.round(totalAmount * commissionRate * 100) / 100;
+      const now = new Date();
+      const creationDate = new Date(now);
+      creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
+      creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
+      const year = creationDate.getFullYear();
+      const month = String(creationDate.getMonth() + 1).padStart(2, '0');
+      const day = String(creationDate.getDate()).padStart(2, '0');
+      const hours = String(creationDate.getHours()).padStart(2, '0');
+      const minutes = String(creationDate.getMinutes()).padStart(2, '0');
+      const seconds = String(creationDate.getSeconds()).padStart(2, '0');
+      const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      assigned.push({
+        id: `assigned-${i}`,
+        timestamp: creationTime,
+        productName: productNames[randomIndex],
+        productImage: productImages[randomIndex],
+        totalAmount,
+        profit,
+        status: 'pending',
+      });
+    }
+
+    // Merge: if assigned product exists in backendRecords (by name and totalAmount), use backend status; else pending
+    const mergedRecords = assigned.map((ap) => {
+      const found = backendRecords.find(
+        (br) => br.productName === ap.productName && br.totalAmount === ap.totalAmount
+      );
+      if (found) return found;
+      return ap;
+    });
+    // Add any backend records not in assigned (e.g., frozen/approved from previous sets)
+    backendRecords.forEach((br) => {
+      if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
+        mergedRecords.push(br);
+      }
+    });
+
+    return c.json({ success: true, records: mergedRecords });
+  } catch (error) {
+    console.error(`Error fetching records: ${error}`);
+    return c.json({ error: 'Internal server error while fetching records' }, 500);
   }
 });
 
@@ -1630,9 +3824,45 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: "User profile not found" }, 404);
     }
 
-    // Verify withdrawal password
-    if (!withdrawalPassword || withdrawalPassword !== userProfile.withdrawalPassword) {
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const completedSetsToday = normalizedTaskState.taskSetsCompletedToday
+      + (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet ? 1 : 0);
+    const requiredSetsForWithdrawal = normalizedTaskState.dailyTaskSetLimit;
+
+    if (completedSetsToday < requiredSetsForWithdrawal) {
+      return c.json({
+        error: `Complete ${requiredSetsForWithdrawal} task set(s) before requesting withdrawal`,
+        taskRequirement: {
+          requiredSets: requiredSetsForWithdrawal,
+          completedSets: completedSetsToday,
+          tasksPerSet: normalizedTaskState.tasksPerSet,
+          currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
+        },
+      }, 403);
+    }
+
+    const passwordCheck = await verifyWithdrawalPassword(
+      String(withdrawalPassword || ''),
+      String(userProfile.withdrawalPassword || ''),
+    );
+
+    if (!passwordCheck.valid) {
       return c.json({ error: "Invalid withdrawal password" }, 401);
+    }
+
+    if (passwordCheck.upgradedHash) {
+      userProfile.withdrawalPassword = passwordCheck.upgradedHash;
+      await kv.set(`user:${userId}`, userProfile);
     }
 
     // Check sufficient balance
@@ -1724,17 +3954,20 @@ app.get("/withdrawal-history", async (c) => {
 // Admin: view pending withdrawal requests
 app.get("/admin/withdrawals", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
     }
+
+    const scope = await getAdminScopeConfig(adminAccess);
 
     const pendingIds = await kv.get('withdrawals:pending') || [];
     const withdrawals = [];
 
     for (const id of pendingIds) {
       const w = await kv.get(`withdrawal:${id}`);
-      if (w && w.status === 'pending') {
+      const owner = w ? await kv.get(`user:${w.userId}`) : null;
+      if (w && w.status === 'pending' && isUserInAdminScope(scope, owner)) {
         withdrawals.push(w);
       }
     }
@@ -1756,9 +3989,14 @@ app.get("/admin/withdrawals", async (c) => {
 // Admin: approve withdrawal request
 app.post("/admin/approve-withdrawal", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'withdrawals.approve', 30, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for withdrawal approval. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const { withdrawalId } = await c.req.json();
@@ -1769,6 +4007,12 @@ app.post("/admin/approve-withdrawal", async (c) => {
     const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
+    }
+
+    const owner = await kv.get(`user:${withdrawal.userId}`);
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, owner)) {
+      return c.json({ error: 'Forbidden - Withdrawal is outside your admin scope' }, 403);
     }
 
     if (withdrawal.status !== 'pending') {
@@ -1817,9 +4061,14 @@ app.post("/admin/approve-withdrawal", async (c) => {
 // Admin: deny withdrawal request
 app.post("/admin/deny-withdrawal", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'withdrawals.deny', 30, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for withdrawal denial. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const { withdrawalId, denialReason } = await c.req.json();
@@ -1830,6 +4079,12 @@ app.post("/admin/deny-withdrawal", async (c) => {
     const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
+    }
+
+    const owner = await kv.get(`user:${withdrawal.userId}`);
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, owner)) {
+      return c.json({ error: 'Forbidden - Withdrawal is outside your admin scope' }, 403);
     }
 
     if (withdrawal.status !== 'pending') {
@@ -1869,6 +4124,740 @@ app.post("/admin/deny-withdrawal", async (c) => {
   } catch (error) {
     console.error(`Error denying withdrawal: ${error}`);
     return c.json({ error: "Internal server error while denying withdrawal" }, 500);
+  }
+});
+
+// Admin: adjust user account balance (bonus, reward, topup, adjustment)
+app.post('/admin/users/adjust-balance', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.adjust_balance');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.adjust_balance', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for balance adjustment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const { userId, amount, category, note } = await c.req.json();
+    const adjustmentAmount = Number(amount);
+    const adjustmentCategory = String(category || 'adjustment').toLowerCase();
+    const normalizedNote = String(note || '').trim();
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    if (!Number.isFinite(adjustmentAmount) || adjustmentAmount === 0) {
+      return c.json({ error: 'amount must be a non-zero number' }, 400);
+    }
+
+    if (!['bonus', 'reward', 'topup', 'adjustment'].includes(adjustmentCategory)) {
+      return c.json({ error: 'category must be one of: bonus, reward, topup, adjustment' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const previousBalance = Number(userProfile.balance || 0);
+    const nextBalance = previousBalance + adjustmentAmount;
+    const timestamp = new Date().toISOString();
+
+    const updatedProfile = {
+      ...userProfile,
+      balance: nextBalance,
+      updatedAt: timestamp,
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    const adjustmentLog = await kv.get(`admin:adjustments:${userId}`) || [];
+    adjustmentLog.push({
+      id: `${userId}-${Date.now()}`,
+      amount: adjustmentAmount,
+      category: adjustmentCategory,
+      note: normalizedNote || null,
+      previousBalance,
+      newBalance: nextBalance,
+      createdAt: timestamp,
+      performedBy: adminAccess.userId || 'super_admin',
+    });
+    await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
+
+    return c.json({
+      success: true,
+      user: updatedProfile,
+      adjustment: {
+        amount: adjustmentAmount,
+        category: adjustmentCategory,
+        previousBalance,
+        newBalance: nextBalance,
+      },
+    });
+  } catch (error) {
+    console.error(`Error adjusting user balance: ${error}`);
+    return c.json({ error: 'Internal server error while adjusting user balance' }, 500);
+  }
+});
+
+// Admin: assign premium product to one user (quick action)
+app.post('/admin/users/assign-premium', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.assign_premium');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'premium.assign', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const userId = body?.userId;
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const normalizedProductId = String(body?.productId || '').trim();
+
+    if (body?.amount === undefined || body?.amount === null || body?.amount === '') {
+      return c.json({ error: 'amount is required for premium assignment' }, 400);
+    }
+    if (body?.position === undefined || body?.position === null || body?.position === '') {
+      return c.json({ error: 'position is required for premium assignment' }, 400);
+    }
+    const amount = Number(body.amount);
+    const position = Number(body.position);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return c.json({ error: 'amount must be a positive number' }, 400);
+    }
+
+    if (!Number.isInteger(position) || position <= 0) {
+      return c.json({ error: 'position must be a positive integer' }, 400);
+    }
+
+    const key = `user:${userId}`;
+    const user = await kv.get(key);
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const catalog = await getTaskProductCatalog();
+    const assignedProduct = normalizedProductId
+      ? catalog.find((item: any) => String(item?.id || '') === normalizedProductId)
+      : null;
+
+    if (normalizedProductId && !assignedProduct) {
+      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, user)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const currentBalance = Number(user?.balance ?? 0);
+    const bundleDetails = buildPremiumBundleDetails(amount);
+    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
+    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const updatedUser = {
+      ...user,
+      premiumAssignment: {
+        orderId: premiumOrderId,
+        amount: bundleTotal,
+        enteredAmount: amount,
+        position,
+        productId: assignedProduct?.id || null,
+        productName: assignedProduct?.name || null,
+        productImage: assignedProduct?.image || null,
+        vipRate: vipPremiumRate,
+        multiplier: 1,
+        potentialProfit: potentialPremiumProfit,
+        bundleProductCount: bundleDetails.individualProductCount,
+        bundleItems: bundleDetails.bundleItems,
+        previousBalance: null,
+        balanceAfterAssignment: null,
+        topUpRequired: null,
+        projectedBalanceAfterEncounter: balanceAfterAssignment,
+        projectedTopUpRequired,
+        encounteredAt: null,
+        encounteredTaskNumber: null,
+        assignedAt: new Date().toISOString(),
+      },
+      accountFrozen: Boolean(user?.accountFrozen ?? false),
+      freezeAmount: Number(user?.freezeAmount ?? 0),
+      balance: currentBalance,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(key, updatedUser);
+
+    return c.json({
+      success: true,
+      user: updatedUser,
+      result: {
+        boostedCommission: potentialPremiumProfit,
+        potentialProfit: potentialPremiumProfit,
+        frozen: false,
+        willFreezeOnEncounter: projectedTopUpRequired > 0,
+        orderId: premiumOrderId,
+        bundleTotal,
+        topUpRequired: projectedTopUpRequired,
+      },
+    });
+  } catch (error) {
+    console.error(`Error assigning premium to user: ${error}`);
+    return c.json({ error: 'Internal server error while assigning premium' }, 500);
+  }
+});
+
+// Admin: reset user task set (manual or complete_set)
+app.post('/admin/users/reset-task-set', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.reset_tasks');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const { userId, mode } = await c.req.json();
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const resetMode = String(mode || 'manual');
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+
+    const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
+    const isSetComplete = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const canCountAnotherSet = normalizedTaskState.taskSetsCompletedToday < maxSetsForToday;
+    const shouldCountCompletedSet = isSetComplete && canCountAnotherSet;
+
+    if (resetMode === 'complete_set' && !isSetComplete) {
+      return c.json({ error: 'Current task set is not complete yet' }, 400);
+    }
+    if (resetMode === 'complete_set' && !canCountAnotherSet) {
+      return c.json({ error: 'Daily task set limit reached' }, 400);
+    }
+
+    if (shouldCountCompletedSet) {
+      normalizedTaskState.taskSetsCompletedToday += 1;
+    }
+
+    const vipProgress = applyVipAutoUpgrade(userProfile, shouldCountCompletedSet ? 1 : 0);
+
+    const shouldClearPremiumAssignmentOnReset = Boolean(userProfile?.accountFrozen);
+
+    const updatedProfile = {
+      ...userProfile,
+      vipTier: vipProgress.vipTier,
+      tierSetProgress: vipProgress.tierSetProgress,
+      totalTaskSetsCompleted: vipProgress.totalTaskSetsCompleted,
+      dailyTaskSetLimit: normalizedTaskState.dailyTaskSetLimit,
+      extraTaskSets: normalizedTaskState.extraTaskSets,
+      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
+      currentSetTasksCompleted: 0,
+      currentSetDate: todayDate,
+      balance: roundCurrency(Number(userProfile?.balance || 0)),
+      accountFrozen: false,
+      freezeAmount: 0,
+      premiumAssignment: shouldClearPremiumAssignmentOnReset ? null : userProfile?.premiumAssignment || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    return c.json({
+      success: true,
+      user: updatedProfile,
+      vipUpgrade: {
+        upgraded: vipProgress.upgraded,
+        upgrades: vipProgress.upgrades,
+        currentTier: vipProgress.vipTier,
+        tierSetProgress: vipProgress.tierSetProgress,
+        requiredSetsForNextUpgrade: vipProgress.requiredSetsForNextUpgrade,
+        remainingSetsForNextUpgrade: vipProgress.remainingSetsForNextUpgrade,
+      },
+      taskState: {
+        dailyTaskSetLimit: updatedProfile.dailyTaskSetLimit,
+        extraTaskSets: updatedProfile.extraTaskSets,
+        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
+        currentSetTasksCompleted: updatedProfile.currentSetTasksCompleted,
+        tasksPerSet: getTasksPerSetByTier(updatedProfile.vipTier || 'Normal'),
+        currentSetDate: updatedProfile.currentSetDate,
+        maxSetsForToday,
+        remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
+      },
+    });
+  } catch (error) {
+    console.error(`Error resetting user task set: ${error}`);
+    return c.json({ error: 'Internal server error while resetting user task set' }, 500);
+  }
+});
+
+// Admin: update user task limits (daily sets + extra sets)
+app.put('/admin/users/task-limits', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.manage_task_limits');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const { userId, dailyTaskSetLimit, extraTaskSets } = await c.req.json();
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const baseLimit = Number(dailyTaskSetLimit);
+    const extraSets = Number(extraTaskSets ?? 0);
+
+    if (!Number.isInteger(baseLimit) || baseLimit <= 0) {
+      return c.json({ error: 'dailyTaskSetLimit must be a positive integer' }, 400);
+    }
+
+    if (!Number.isInteger(extraSets) || extraSets < 0) {
+      return c.json({ error: 'extraTaskSets must be a non-negative integer' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const updatedProfile = {
+      ...userProfile,
+      dailyTaskSetLimit: baseLimit,
+      extraTaskSets: extraSets,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    return c.json({
+      success: true,
+      user: updatedProfile,
+      taskLimits: {
+        dailyTaskSetLimit: baseLimit,
+        extraTaskSets: extraSets,
+        maxSetsPerDay: baseLimit + extraSets,
+      },
+    });
+  } catch (error) {
+    console.error(`Error updating user task limits: ${error}`);
+    return c.json({ error: 'Internal server error while updating task limits' }, 500);
+  }
+});
+
+// Admin: create limited admin accounts (super admin only)
+app.post('/admin/accounts', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const { username, name, password, permissions } = await c.req.json();
+
+    const normalizedUsername = normalizeUsername(String(username || ''));
+    const displayName = String(name || username || '').trim();
+    if (!normalizedUsername || normalizedUsername.length < 3) {
+      return c.json({ error: 'username must contain at least 3 letters or numbers' }, 400);
+    }
+    if (!displayName) {
+      return c.json({ error: 'name is required' }, 400);
+    }
+    if (!password || String(password).length < 6) {
+      return c.json({ error: 'password must be at least 6 characters' }, 400);
+    }
+
+    const adminPermissions = sanitizeAdminPermissions(permissions);
+    if (adminPermissions.length === 0) {
+      return c.json({ error: 'At least one valid permission is required' }, 400);
+    }
+
+    const adminEmail = `admin.${normalizedUsername}@${AUTH_EMAIL_DOMAIN}`;
+    const supabase = getServiceClient();
+    const { data, error } = await supabase.auth.admin.createUser({
+      email: adminEmail,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        name: displayName,
+        username: normalizedUsername,
+        role: 'limited_admin',
+      },
+    });
+
+    if (error || !data?.user?.id) {
+      return c.json({ error: error?.message || 'Failed to create admin user' }, 400);
+    }
+
+    const adminUserId = data.user.id;
+    const record = {
+      userId: adminUserId,
+      username: normalizedUsername,
+      displayName,
+      authEmail: adminEmail,
+      role: 'limited_admin',
+      active: true,
+      permissions: adminPermissions,
+      createdAt: new Date().toISOString(),
+    };
+
+    await kv.set(`admin:account:${adminUserId}`, record);
+
+    return c.json({ success: true, admin: record });
+  } catch (error) {
+    console.error(`Error creating admin account: ${error}`);
+    return c.json({ error: 'Internal server error while creating admin account' }, 500);
+  }
+});
+
+// Admin: list limited admin accounts (super admin only)
+app.get('/admin/validate-super-key', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    return c.json({
+      success: true,
+      message: 'Super admin key is valid',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error(`Error validating super admin key: ${error}`);
+    return c.json({ error: 'Internal server error while validating super admin key' }, 500);
+  }
+});
+
+// Admin: list limited admin accounts (super admin only)
+app.get('/admin/accounts', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const rows = await kv.getByPrefix('admin:account:');
+    const admins = (rows || []).map((row: any) => ({
+      userId: row?.userId,
+      username: row?.username,
+      displayName: row?.displayName,
+      authEmail: row?.authEmail,
+      active: row?.active !== false,
+      permissions: sanitizeAdminPermissions(row?.permissions),
+      createdAt: row?.createdAt,
+      updatedAt: row?.updatedAt || null,
+    }));
+
+    return c.json({ success: true, admins });
+  } catch (error) {
+    console.error(`Error listing admin accounts: ${error}`);
+    return c.json({ error: 'Internal server error while listing admin accounts' }, 500);
+  }
+});
+
+// Admin: update limited admin account permissions/status (super admin only)
+app.put('/admin/accounts/:adminUserId', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const adminUserId = c.req.param('adminUserId');
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    const existing = await kv.get(`admin:account:${adminUserId}`);
+    if (!existing) {
+      return c.json({ error: 'Admin account not found' }, 404);
+    }
+
+    const { permissions, active, displayName } = await c.req.json();
+    const nextPermissions = permissions === undefined
+      ? sanitizeAdminPermissions(existing.permissions)
+      : sanitizeAdminPermissions(permissions);
+
+    if (nextPermissions.length === 0) {
+      return c.json({ error: 'At least one valid permission is required' }, 400);
+    }
+
+    const updated = {
+      ...existing,
+      permissions: nextPermissions,
+      active: active === undefined ? existing.active !== false : Boolean(active),
+      displayName: displayName ? String(displayName).trim() : existing.displayName,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(`admin:account:${adminUserId}`, updated);
+    return c.json({ success: true, admin: updated });
+  } catch (error) {
+    console.error(`Error updating admin account: ${error}`);
+    return c.json({ error: 'Internal server error while updating admin account' }, 500);
+  }
+});
+
+// Admin: aggregated critical alerts (withdrawals, support queue, frozen accounts, referrals)
+app.get("/admin/alerts", async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    if (!adminAccess.isSuperAdmin) {
+      const canViewAlerts = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('users.view')
+        || adminAccess.permissions.includes('support.manage')
+        || adminAccess.permissions.includes('withdrawals.manage');
+      if (!canViewAlerts) {
+        return c.json({ error: 'Forbidden - Missing alert visibility permission' }, 403);
+      }
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+
+    const alerts: Array<{
+      id: string;
+      type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral';
+      severity: 'critical' | 'high' | 'medium' | 'info';
+      title: string;
+      message: string;
+      createdAt: string;
+      status: 'new' | 'action_required' | 'resolved';
+      meta?: Record<string, any>;
+    }> = [];
+
+    const nowIso = new Date().toISOString();
+
+    const pendingWithdrawalIds = await kv.get('withdrawals:pending') || [];
+    for (const withdrawalId of pendingWithdrawalIds) {
+      const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+      if (!withdrawal || withdrawal.status !== 'pending') continue;
+
+      const withdrawalOwner = await kv.get(`user:${withdrawal.userId}`);
+      if (!isUserInAdminScope(scope, withdrawalOwner)) {
+        continue;
+      }
+
+      alerts.push({
+        id: `withdrawal_pending:${withdrawalId}`,
+        type: 'withdrawal_pending',
+        severity: Number(withdrawal.amount || 0) >= 10000 ? 'critical' : 'high',
+        title: 'Pending withdrawal approval',
+        message: `${withdrawal.userName || 'User'} requested $${Number(withdrawal.amount || 0).toFixed(2)}`,
+        createdAt: withdrawal.requestedAt || nowIso,
+        status: 'action_required',
+        meta: {
+          withdrawalId,
+          amount: Number(withdrawal.amount || 0),
+          userId: withdrawal.userId || null,
+          userName: withdrawal.userName || null,
+        },
+      });
+    }
+
+    const supportQueue = await kv.get('tickets:queue') || [];
+    for (const ticketId of supportQueue) {
+      const ticket = await kv.get(`ticket:${ticketId}`);
+      if (!ticket) continue;
+
+      const ticketOwner = await kv.get(`user:${ticket.userId}`);
+      if (!isUserInAdminScope(scope, ticketOwner)) {
+        continue;
+      }
+
+      const ticketStatus = String(ticket.status || 'open').toLowerCase();
+      if (ticketStatus === 'resolved' || ticketStatus === 'closed') continue;
+
+      const priority = String(ticket.priority || 'medium').toLowerCase();
+      const severity: 'critical' | 'high' | 'medium' | 'info' =
+        priority === 'urgent' ? 'critical' : priority === 'high' ? 'high' : 'medium';
+
+      alerts.push({
+        id: `support_ticket:${ticketId}`,
+        type: 'support_ticket',
+        severity,
+        title: 'Customer service ticket needs attention',
+        message: `${ticket.userName || 'User'}: ${ticket.subject || ticket.category || 'Support request'}`,
+        createdAt: ticket.updatedAt || ticket.createdAt || nowIso,
+        status: 'action_required',
+        meta: {
+          ticketId,
+          userId: ticket.userId || null,
+          userName: ticket.userName || null,
+          priority: priority,
+          category: ticket.category || null,
+        },
+      });
+    }
+
+    const users = await kv.getByPrefix('user:');
+    const scopedUsers = (users || []).filter((user: any) => isUserInAdminScope(scope, user));
+
+    const frozenUsers = scopedUsers.filter((user: any) => Boolean(user?.accountFrozen));
+    for (const frozenUser of frozenUsers.slice(0, 20)) {
+      alerts.push({
+        id: `frozen_account:${frozenUser.id}`,
+        type: 'frozen_account',
+        severity: 'critical',
+        title: 'Frozen account requires intervention',
+        message: `${frozenUser.name || 'User'} is frozen with freeze amount $${Number(frozenUser.freezeAmount || 0).toFixed(2)}`,
+        createdAt: frozenUser.updatedAt || frozenUser.createdAt || nowIso,
+        status: 'action_required',
+        meta: {
+          userId: frozenUser.id,
+          userName: frozenUser.name || null,
+          freezeAmount: Number(frozenUser.freezeAmount || 0),
+        },
+      });
+    }
+
+    const premiumUsers = scopedUsers
+      .filter((user: any) => Boolean(user?.premiumAssignment))
+      .sort((a: any, b: any) => new Date(b?.premiumAssignment?.assignedAt || b?.updatedAt || nowIso).getTime() - new Date(a?.premiumAssignment?.assignedAt || a?.updatedAt || nowIso).getTime())
+      .slice(0, 20);
+
+    for (const premiumUser of premiumUsers) {
+      const premiumAssignment = premiumUser?.premiumAssignment || {};
+      const isActive = !Boolean(premiumUser?.accountFrozen);
+      alerts.push({
+        id: `premium_assignment:${premiumUser.id}`,
+        type: 'premium_assignment',
+        severity: isActive ? 'info' : 'high',
+        title: 'Premium order assigned',
+        message: `${premiumUser.name || 'User'} premium order ${premiumAssignment?.orderId || 'N/A'} is ${isActive ? 'active' : 'inactive (frozen)'}`,
+        createdAt: premiumAssignment?.assignedAt || premiumUser?.updatedAt || premiumUser?.createdAt || nowIso,
+        status: isActive ? 'new' : 'action_required',
+        meta: {
+          userId: premiumUser.id,
+          userName: premiumUser.name || null,
+          orderId: premiumAssignment?.orderId || null,
+          amount: Number(premiumAssignment?.amount || 0),
+          active: isActive,
+        },
+      });
+    }
+
+    const referralUsers = scopedUsers
+      .filter((user: any) => Boolean(user?.parentUserId))
+      .sort((a: any, b: any) => new Date(b?.createdAt || nowIso).getTime() - new Date(a?.createdAt || nowIso).getTime())
+      .slice(0, 20);
+
+    for (const referralUser of referralUsers) {
+      alerts.push({
+        id: `new_referral:${referralUser.id}`,
+        type: 'new_referral',
+        severity: 'info',
+        title: 'New referred user signup',
+        message: `${referralUser.name || 'User'} joined your referred users`,
+        createdAt: referralUser.createdAt || nowIso,
+        status: 'action_required',
+        meta: {
+          userId: referralUser.id,
+          userName: referralUser.name || null,
+          parentUserId: referralUser.parentUserId || null,
+        },
+      });
+    }
+
+    const approvedIds = await kv.get('withdrawals:approved') || [];
+    for (const withdrawalId of approvedIds.slice(-5)) {
+      const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+      if (!withdrawal) continue;
+      alerts.push({
+        id: `withdrawal_approved:${withdrawalId}`,
+        type: 'withdrawal_approved',
+        severity: 'info',
+        title: 'Withdrawal approved',
+        message: `${withdrawal.userName || 'User'} approved for $${Number(withdrawal.amount || 0).toFixed(2)}`,
+        createdAt: withdrawal.approvedAt || nowIso,
+        status: 'resolved',
+        meta: { withdrawalId },
+      });
+    }
+
+    const deniedIds = await kv.get('withdrawals:denied') || [];
+    for (const withdrawalId of deniedIds.slice(-5)) {
+      const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+      if (!withdrawal) continue;
+      alerts.push({
+        id: `withdrawal_denied:${withdrawalId}`,
+        type: 'withdrawal_denied',
+        severity: 'medium',
+        title: 'Withdrawal denied',
+        message: `${withdrawal.userName || 'User'} denied: ${withdrawal.denialReason || 'No reason provided'}`,
+        createdAt: withdrawal.deniedAt || nowIso,
+        status: 'resolved',
+        meta: { withdrawalId },
+      });
+    }
+
+    const sortedAlerts = alerts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const summary = {
+      total: sortedAlerts.length,
+      actionRequired: sortedAlerts.filter((alert) => alert.status === 'action_required').length,
+      pendingWithdrawals: sortedAlerts.filter((alert) => alert.type === 'withdrawal_pending').length,
+      openSupportTickets: sortedAlerts.filter((alert) => alert.type === 'support_ticket').length,
+      frozenAccounts: sortedAlerts.filter((alert) => alert.type === 'frozen_account').length,
+      critical: sortedAlerts.filter((alert) => alert.severity === 'critical').length,
+      high: sortedAlerts.filter((alert) => alert.severity === 'high').length,
+    };
+
+    return c.json({
+      success: true,
+      summary,
+      alerts: sortedAlerts.slice(0, 50),
+    });
+  } catch (error) {
+    console.error(`Error fetching admin alerts: ${error}`);
+    return c.json({ error: 'Internal server error while fetching admin alerts' }, 500);
   }
 });
 
@@ -2452,6 +5441,112 @@ app.post("/support-tickets/:id/reply", async (c) => {
   } catch (error) {
     console.error(`Error adding reply: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// Admin: list support tickets (all active admins can review customer service queue)
+app.get('/admin/support-tickets', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    if (!adminAccess.isSuperAdmin) {
+      const hasSupportAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage');
+      if (!hasSupportAccess) {
+        return c.json({ error: 'Forbidden - Missing permission: support.manage' }, 403);
+      }
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+
+    const ticketRows = await kv.getByPrefix('ticket:');
+    const tickets: any[] = [];
+
+    for (const ticket of ticketRows || []) {
+      if (!ticket?.id || !ticket?.userId) continue;
+
+      const ticketOwner = await kv.get(`user:${ticket.userId}`);
+      if (!isUserInAdminScope(scope, ticketOwner)) continue;
+
+      tickets.push(ticket);
+    }
+
+    return c.json({
+      success: true,
+      tickets: tickets.sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()),
+      total: tickets.length,
+    });
+  } catch (error) {
+    console.error(`Error fetching admin support tickets: ${error}`);
+    return c.json({ error: 'Internal server error while fetching admin support tickets' }, 500);
+  }
+});
+
+// Admin: reply to support ticket
+app.post('/admin/support-tickets/:id/reply', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'support.reply', 60, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for support replies. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const ticketId = c.req.param('id');
+    const { message, status } = await c.req.json();
+    const replyMessage = String(message || '').trim();
+    if (!replyMessage) {
+      return c.json({ error: 'message is required' }, 400);
+    }
+
+    const ticket = await kv.get(`ticket:${ticketId}`);
+    if (!ticket) {
+      return c.json({ error: 'Ticket not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    const ticketOwner = await kv.get(`user:${ticket.userId}`);
+    if (!isUserInAdminScope(scope, ticketOwner)) {
+      return c.json({ error: 'Forbidden - Ticket is outside your admin scope' }, 403);
+    }
+
+    let adminName = 'Super Admin';
+    if (!adminAccess.isSuperAdmin && adminAccess.userId) {
+      const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
+      adminName = adminAccount?.displayName || adminAccount?.username || 'Support Admin';
+    }
+
+    const reply = {
+      id: `reply_admin_${Date.now()}`,
+      userId: adminAccess.userId || 'super_admin',
+      userName: adminName,
+      message: replyMessage,
+      createdAt: new Date().toISOString(),
+      role: 'admin',
+    };
+
+    ticket.replies = Array.isArray(ticket.replies) ? ticket.replies : [];
+    ticket.replies.push(reply);
+    ticket.status = status || (ticket.status === 'resolved' ? 'resolved' : 'in-progress');
+    ticket.updatedAt = new Date().toISOString();
+
+    await kv.set(`ticket:${ticketId}`, ticket);
+
+    return c.json({
+      success: true,
+      ticket,
+      reply,
+      message: 'Admin reply sent successfully',
+    });
+  } catch (error) {
+    console.error(`Error replying as admin: ${error}`);
+    return c.json({ error: 'Internal server error while replying to support ticket' }, 500);
   }
 });
 

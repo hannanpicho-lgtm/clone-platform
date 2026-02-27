@@ -35,43 +35,84 @@ interface PremiumAnalytics {
   }>;
 }
 
-interface GlobalPremiumConfig {
-  enabled: boolean;
-  position: number;
-  amount: number;
-  updatedAt?: string | null;
+interface TaskCatalogProduct {
+  id: string;
+  name: string;
+  image: string;
+  isActive: boolean;
+  isArchived?: boolean;
+  isPremiumTemplate: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-const ADMIN_API_KEY = localStorage.getItem('adminApiKey') || '';
 const FUNCTION_BASE = `${(import.meta.env.VITE_SUPABASE_URL || 'https://tpxgfjevorhdtwkesvcb.supabase.co').replace(/\/$/, '')}/functions/v1/make-server-44a642d3`;
 
-export function PremiumManagementPanel() {
+interface PremiumManagementPanelProps {
+  adminToken?: string | null;
+  isSuperAdmin?: boolean;
+}
+
+export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: PremiumManagementPanelProps) {
   const [assignments, setAssignments] = useState<PremiumAssignment[]>([]);
   const [analytics, setAnalytics] = useState<PremiumAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [globalConfig, setGlobalConfig] = useState<GlobalPremiumConfig>({
-    enabled: true,
-    position: 27,
-    amount: 10000,
-    updatedAt: null,
-  });
 
   // Form states for assigning new premium
   const [formUserId, setFormUserId] = useState('');
   const [formAmount, setFormAmount] = useState('');
   const [formPosition, setFormPosition] = useState('');
+  const [formProductId, setFormProductId] = useState('');
+  const [taskProducts, setTaskProducts] = useState<TaskCatalogProduct[]>([]);
+  const [newProductName, setNewProductName] = useState('');
+  const [newProductImage, setNewProductImage] = useState('');
+  const [newProductIsPremiumTemplate, setNewProductIsPremiumTemplate] = useState(false);
+  const [aiGenerateCount, setAiGenerateCount] = useState('10');
+  const [showArchivedProducts, setShowArchivedProducts] = useState(false);
+  const [showRevokeModal, setShowRevokeModal] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<{ userId: string; userName: string } | null>(null);
+  const authToken = String(adminToken || '').trim();
 
   // Load premium assignments
+  const loadTaskProducts = async () => {
+    if (!authToken) {
+      setTaskProducts([]);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setTaskProducts(Array.isArray(data.products) ? data.products : []);
+      }
+    } catch {
+      // keep existing state if request fails
+    }
+  };
+
   const loadAssignments = async () => {
+    if (!isSuperAdmin || !authToken) {
+      setAssignments([]);
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
       const res = await fetch(`${FUNCTION_BASE}/admin/premium/list`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
       });
@@ -91,13 +132,18 @@ export function PremiumManagementPanel() {
 
   // Load analytics
   const loadAnalytics = async () => {
+    if (!isSuperAdmin || !authToken) {
+      setAnalytics(null);
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
       const res = await fetch(`${FUNCTION_BASE}/admin/premium/analytics`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
       });
@@ -118,31 +164,40 @@ export function PremiumManagementPanel() {
   // Assign premium product
   const handleAssignPremium = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
     setLoading(true);
     setError('');
     setMessage('');
 
     try {
-      const res = await fetch(`${FUNCTION_BASE}/admin/premium`, {
+      const res = await fetch(`${FUNCTION_BASE}/admin/users/assign-premium`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           userId: formUserId,
           amount: parseFloat(formAmount),
           position: parseInt(formPosition),
+          productId: formProductId || null,
         }),
       });
 
       const data = await res.json();
       if (data.success) {
-        setMessage(`✓ Premium product assigned to ${data.user.name}`);
+        setMessage('✓ Premium product assigned successfully');
         setFormUserId('');
         setFormAmount('');
         setFormPosition('');
-        await loadAssignments();
+        setFormProductId('');
+        if (isSuperAdmin) {
+          await loadAssignments();
+        }
       } else {
         setError(data.error || 'Failed to assign premium');
       }
@@ -154,8 +209,17 @@ export function PremiumManagementPanel() {
   };
 
   // Revoke premium assignment
-  const handleRevoke = async (userId: string) => {
-    if (!confirm(`Revoke premium assignment for user ${userId}?`)) return;
+  const openRevokeModal = (userId: string, userName: string) => {
+    setRevokeTarget({ userId, userName });
+    setShowRevokeModal(true);
+  };
+
+  const handleRevoke = async () => {
+    if (!revokeTarget?.userId) return;
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -165,15 +229,17 @@ export function PremiumManagementPanel() {
       const res = await fetch(`${FUNCTION_BASE}/admin/premium/revoke`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId: revokeTarget.userId }),
       });
 
       const data = await res.json();
       if (data.success) {
         setMessage(`✓ Premium assignment revoked`);
+        setShowRevokeModal(false);
+        setRevokeTarget(null);
         await loadAssignments();
       } else {
         setError(data.error || 'Failed to revoke premium');
@@ -185,75 +251,245 @@ export function PremiumManagementPanel() {
     }
   };
 
-  useEffect(() => {
-    loadAssignments();
-    loadAnalytics();
-    loadGlobalConfig();
-  }, []);
-
-  const loadGlobalConfig = async () => {
-    try {
-      const res = await fetch(`${FUNCTION_BASE}/premium/global-config`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      const data = await res.json();
-      if (data.success && data.config) {
-        setGlobalConfig({
-          enabled: Boolean(data.config.enabled),
-          position: Number(data.config.position) || 27,
-          amount: Number(data.config.amount) || 10000,
-          updatedAt: data.config.updatedAt || null,
-        });
-      }
-    } catch {
-      // Keep default config if fetch fails
-    }
-  };
-
-  const handleSaveGlobalConfig = async (e: React.FormEvent) => {
+  const handleCreateTaskProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    if (!newProductName.trim()) {
+      setError('Product name is required');
+      return;
+    }
+
     setLoading(true);
     setError('');
     setMessage('');
 
     try {
-      const payload = {
-        enabled: Boolean(globalConfig.enabled),
-        position: Number(globalConfig.position),
-        amount: Number(globalConfig.amount),
-      };
-
-      const res = await fetch(`${FUNCTION_BASE}/admin/premium/global-config`, {
-        method: 'PUT',
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products`, {
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${ADMIN_API_KEY}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          name: newProductName,
+          image: newProductImage,
+          isPremiumTemplate: newProductIsPremiumTemplate,
+          isActive: true,
+        }),
       });
 
-      const data = await res.json();
-      if (data.success) {
-        setGlobalConfig({
-          enabled: Boolean(data.config.enabled),
-          position: Number(data.config.position),
-          amount: Number(data.config.amount),
-          updatedAt: data.config.updatedAt || null,
-        });
-        setMessage('✓ Global premium trigger updated');
-      } else {
-        setError(data.error || 'Failed to update global premium trigger');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to add product');
+        return;
       }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setNewProductName('');
+      setNewProductImage('');
+      setNewProductIsPremiumTemplate(false);
+      setMessage('✓ Task product added');
     } catch (err) {
-      setError(`Error updating global premium trigger: ${err}`);
+      setError(`Error adding product: ${err}`);
     } finally {
       setLoading(false);
     }
   };
+
+  const handleGenerateTaskProducts = async () => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    const count = Math.max(1, Math.min(50, Number(aiGenerateCount || 10)));
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/generate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ count }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to generate products');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage(`✓ Generated ${Array.isArray(data?.generated) ? data.generated.length : count} products`);
+    } catch (err) {
+      setError(`Error generating products: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTogglePremiumTemplate = async (product: TaskCatalogProduct) => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/${product.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          isPremiumTemplate: !product.isPremiumTemplate,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to update product');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage('✓ Product updated');
+    } catch (err) {
+      setError(`Error updating product: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleProductActive = async (product: TaskCatalogProduct) => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/${product.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          isActive: !product.isActive,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to update product status');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage(`✓ Product ${product.isActive ? 'deactivated' : 'activated'}`);
+    } catch (err) {
+      setError(`Error updating product status: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteProduct = async (product: TaskCatalogProduct) => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/${product.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to archive product');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage('✓ Product archived');
+      if (formProductId === product.id) {
+        setFormProductId('');
+      }
+    } catch (err) {
+      setError(`Error archiving product: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestoreProduct = async (product: TaskCatalogProduct) => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/${product.id}/restore`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to restore product');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage('✓ Product restored');
+    } catch (err) {
+      setError(`Error restoring product: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authToken) {
+      loadTaskProducts();
+    }
+    if (isSuperAdmin && authToken) {
+      loadAssignments();
+      loadAnalytics();
+    }
+  }, [isSuperAdmin, authToken]);
 
   return (
     <div className="space-y-6">
@@ -299,70 +535,12 @@ export function PremiumManagementPanel() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Global Premium Trigger</CardTitle>
-          <CardDescription>
-            Set one premium encounter rule that applies to every user account.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSaveGlobalConfig} className="space-y-4">
-            <div className="flex items-center gap-3">
-              <input
-                id="globalPremiumEnabled"
-                type="checkbox"
-                checked={globalConfig.enabled}
-                onChange={(e) => setGlobalConfig({ ...globalConfig, enabled: e.target.checked })}
-                className="h-4 w-4"
-              />
-              <label htmlFor="globalPremiumEnabled" className="text-sm font-medium">
-                Enable premium encounter trigger
-              </label>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Encounter Position</label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={String(globalConfig.position)}
-                  onChange={(e) => setGlobalConfig({ ...globalConfig, position: Number(e.target.value || 0) })}
-                  required
-                />
-                <p className="text-xs text-gray-500 mt-1">Example: 10 means premium on the 10th submission.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Premium Amount ($)</label>
-                <Input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={String(globalConfig.amount)}
-                  onChange={(e) => setGlobalConfig({ ...globalConfig, amount: Number(e.target.value || 0) })}
-                  required
-                />
-              </div>
-            </div>
-
-            <Button type="submit" disabled={loading} className="w-full md:w-auto">
-              {loading ? 'Saving...' : 'Save Global Trigger'}
-            </Button>
-
-            {globalConfig.updatedAt && (
-              <p className="text-xs text-gray-500">Last updated: {new Date(globalConfig.updatedAt).toLocaleString()}</p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-
       <Tabs defaultValue="assign" className="w-full">
         <TabsList>
           <TabsTrigger value="assign">Assign Premium</TabsTrigger>
-          <TabsTrigger value="active">Active Assignments</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="products">Task Products</TabsTrigger>
+          {isSuperAdmin && <TabsTrigger value="active">Active Assignments</TabsTrigger>}
+          {isSuperAdmin && <TabsTrigger value="analytics">Analytics</TabsTrigger>}
         </TabsList>
 
         {/* Assign Premium Tab */}
@@ -409,6 +587,25 @@ export function PremiumManagementPanel() {
                   </div>
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium mb-1">Premium Product (optional)</label>
+                  <select
+                    value={formProductId}
+                    onChange={(e) => setFormProductId(e.target.value)}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Auto-select premium product</option>
+                    {taskProducts
+                      .filter((item) => item.isActive)
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} {item.isPremiumTemplate ? '(premium template)' : ''}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">If selected, this exact product is used when the assigned position is reached.</p>
+                </div>
+
                 <Button type="submit" disabled={loading} className="w-full">
                   {loading ? 'Assigning...' : 'Assign Premium Product'}
                 </Button>
@@ -428,7 +625,177 @@ export function PremiumManagementPanel() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="products" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Task Product Catalog</CardTitle>
+              <CardDescription>Add products manually or auto-generate AI-style product variety.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={handleCreateTaskProduct} className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-medium mb-1">Product Name</label>
+                  <Input
+                    value={newProductName}
+                    onChange={(e) => setNewProductName(e.target.value)}
+                    placeholder="e.g. Smart Commerce Bundle"
+                    required
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="block text-sm font-medium mb-1">Image URL (optional)</label>
+                  <Input
+                    value={newProductImage}
+                    onChange={(e) => setNewProductImage(e.target.value)}
+                    placeholder="https://..."
+                  />
+                </div>
+                <div className="md:col-span-1 flex items-end gap-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={newProductIsPremiumTemplate}
+                      onChange={(e) => setNewProductIsPremiumTemplate(e.target.checked)}
+                    />
+                    Premium template
+                  </label>
+                  <Button type="submit" disabled={loading} className="ml-auto">
+                    {loading ? 'Saving...' : 'Add Product'}
+                  </Button>
+                </div>
+              </form>
+
+              <div className="border rounded-lg p-3 space-y-2">
+                <div className="flex flex-col md:flex-row gap-2 md:items-center">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium mb-1">AI Auto Generator Count</label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="50"
+                      value={aiGenerateCount}
+                      onChange={(e) => setAiGenerateCount(e.target.value)}
+                    />
+                  </div>
+                  <Button type="button" onClick={handleGenerateTaskProducts} disabled={loading}>
+                    {loading ? 'Generating...' : 'Generate Products'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2 py-1 rounded-full bg-green-100 text-green-700 border border-green-200">
+                      Active: {taskProducts.filter((product) => !Boolean(product.isArchived)).length}
+                    </span>
+                    <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
+                      Archived: {taskProducts.filter((product) => Boolean(product.isArchived)).length}
+                    </span>
+                    <span className="text-gray-500 ml-1">
+                      Showing {showArchivedProducts ? 'archived' : 'active'} products
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowArchivedProducts((prev) => !prev)}
+                  >
+                    {showArchivedProducts ? 'Show Active' : 'Show Archived'}
+                  </Button>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Premium Template</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead>Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {taskProducts.filter((product) => Boolean(product.isArchived) === showArchivedProducts).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-gray-500 py-6">
+                          {showArchivedProducts ? 'No archived products.' : 'No active task products available.'}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      taskProducts
+                        .filter((product) => Boolean(product.isArchived) === showArchivedProducts)
+                        .slice(0, 100)
+                        .map((product) => (
+                        <TableRow key={product.id}>
+                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell>{product.isArchived ? 'Archived' : (product.isActive ? 'Active' : 'Inactive')}</TableCell>
+                          <TableCell>{product.isPremiumTemplate ? 'Yes' : 'No'}</TableCell>
+                          <TableCell className="text-xs text-gray-500">
+                            {product.updatedAt ? new Date(product.updatedAt).toLocaleString() : '—'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleTogglePremiumTemplate(product)}
+                                disabled={loading || Boolean(product.isArchived)}
+                              >
+                                {product.isPremiumTemplate ? 'Unset Premium' : 'Set Premium'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleToggleProductActive(product)}
+                                disabled={loading || Boolean(product.isArchived)}
+                              >
+                                {product.isActive ? 'Deactivate' : 'Activate'}
+                              </Button>
+                              {product.isArchived ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRestoreProduct(product)}
+                                  disabled={loading}
+                                >
+                                  Restore
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleDeleteProduct(product)}
+                                  disabled={loading}
+                                >
+                                  Archive
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {message && (
+                <Alert className="mt-4 border-green-200 bg-green-50">
+                  <AlertDescription className="text-green-800">{message}</AlertDescription>
+                </Alert>
+              )}
+              {error && (
+                <Alert className="mt-4 border-red-200 bg-red-50">
+                  <AlertDescription className="text-red-800">{error}</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Active Assignments Tab */}
+        {isSuperAdmin && (
         <TabsContent value="active" className="space-y-4">
           <Card>
             <CardHeader>
@@ -481,7 +848,7 @@ export function PremiumManagementPanel() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => handleRevoke(assign.userId)}
+                              onClick={() => openRevokeModal(assign.userId, assign.userName)}
                               disabled={loading}
                             >
                               Revoke
@@ -507,8 +874,10 @@ export function PremiumManagementPanel() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
         {/* Analytics Tab */}
+        {isSuperAdmin && (
         <TabsContent value="analytics" className="space-y-4">
           <Card>
             <CardHeader>
@@ -591,7 +960,45 @@ export function PremiumManagementPanel() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
       </Tabs>
+
+      {showRevokeModal && revokeTarget && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-red-600 to-rose-600 text-white">
+              <h3 className="text-lg font-bold">Revoke Premium Assignment</h3>
+              <p className="text-xs opacity-90">User: {revokeTarget.userName || revokeTarget.userId}</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-700">
+                This removes the premium assignment for this user. Continue?
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowRevokeModal(false);
+                    setRevokeTarget(null);
+                  }}
+                  disabled={loading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  onClick={handleRevoke}
+                  disabled={loading}
+                >
+                  {loading ? 'Revoking...' : 'Confirm Revoke'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

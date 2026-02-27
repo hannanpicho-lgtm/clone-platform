@@ -41,6 +41,7 @@ interface BonusPayoutsProps {
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 const getCategoryColor = (category: string) => {
   switch (category) {
@@ -79,9 +80,12 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
     try {
       setLoading(true);
       setError('');
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/bonus-payouts`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/bonus-payouts`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!response.ok) {
+        throw new Error('Bonuses are temporarily unavailable');
+      }
       const data = await response.json();
       if (data.bonuses) {
         setBonuses(data.bonuses);
@@ -89,7 +93,7 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
       }
     } catch (err) {
       console.error('Error fetching bonuses:', err);
-      setError('Failed to load bonuses');
+      setError('Bonuses are temporarily unavailable');
     } finally {
       setLoading(false);
     }
@@ -97,9 +101,12 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/bonus-payouts/history`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/bonus-payouts/history`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!response.ok) {
+        return;
+      }
       const data = await response.json();
       if (data.history) {
         setHistory(data.history);
@@ -123,7 +130,7 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
   const handleClaimBonus = async (bonusId: string) => {
     try {
       setClaimingId(bonusId);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/bonus-payouts/claim`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/bonus-payouts/claim`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -138,11 +145,11 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
         fetchHistory();
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setError(data.error || 'Failed to claim bonus');
+        setError(data.error || 'Unable to claim bonus right now');
       }
     } catch (err) {
       console.error('Error claiming bonus:', err);
-      setError('Failed to claim bonus');
+      setError('Unable to claim bonus right now');
     } finally {
       setClaimingId(null);
     }
@@ -158,10 +165,12 @@ export function BonusPayouts({ accessToken }: BonusPayoutsProps) {
 
   if (error && bonuses.length === 0) {
     return (
-      <Alert className="border-red-300 bg-red-50">
-        <AlertCircle className="h-4 w-4 text-red-600" />
-        <AlertDescription className="text-red-700">{error}</AlertDescription>
-      </Alert>
+      <Card className="p-6 bg-gray-50 border-gray-200">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-gray-700">{error}</p>
+          <button onClick={fetchBonuses} className="px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100">Retry</button>
+        </div>
+      </Card>
     );
   }
 

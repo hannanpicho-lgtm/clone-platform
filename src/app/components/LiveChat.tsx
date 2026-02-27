@@ -25,6 +25,7 @@ interface LiveChatProps {
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 const AUTO_REPLIES = [
   "Thank you for your message. Our support team will respond soon!",
@@ -55,9 +56,12 @@ export function LiveChat({ accessToken }: LiveChatProps) {
   const fetchConversations = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/chat/conversations`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/chat/conversations`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
+      if (!response.ok) {
+        throw new Error('Unable to load conversations');
+      }
       const data = await response.json();
       if (data.conversations) {
         setConversations(data.conversations);
@@ -85,9 +89,12 @@ export function LiveChat({ accessToken }: LiveChatProps) {
   const fetchMessages = async (convId: string) => {
     try {
       const response = await fetch(
-        `${BASE_URL}/make-server-44a642d3/chat/messages?conversationId=${convId}`,
+        `${FUNCTIONS_BASE_URL}/make-server-44a642d3/chat/messages?conversationId=${convId}`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
+      if (!response.ok) {
+        return;
+      }
       const data = await response.json();
       if (data.messages) {
         setMessages(data.messages);
@@ -116,7 +123,7 @@ export function LiveChat({ accessToken }: LiveChatProps) {
 
     try {
       setSending(true);
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/chat/messages`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/chat/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -147,7 +154,7 @@ export function LiveChat({ accessToken }: LiveChatProps) {
       }
     } catch (err) {
       console.error('Error sending message:', err);
-      setError('Failed to send message');
+      setError('Message could not be sent right now');
     } finally {
       setSending(false);
     }
@@ -166,9 +173,9 @@ export function LiveChat({ accessToken }: LiveChatProps) {
       <h2 className="text-2xl font-bold text-gray-900">Live Chat Support</h2>
 
       {error && (
-        <Alert className="border-red-300 bg-red-50">
-          <AlertCircle className="h-4 w-4 text-red-600" />
-          <AlertDescription className="text-red-700">{error}</AlertDescription>
+        <Alert className="border-gray-300 bg-gray-50">
+          <AlertCircle className="h-4 w-4 text-gray-600" />
+          <AlertDescription className="text-gray-700">{error}</AlertDescription>
         </Alert>
       )}
 

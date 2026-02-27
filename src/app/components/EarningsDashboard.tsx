@@ -32,7 +32,8 @@ export function EarningsDashboard({
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const BASE_URL = 'https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3';
+  const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+  const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
   useEffect(() => {
     fetchEarnings();
@@ -42,17 +43,17 @@ export function EarningsDashboard({
 
   const fetchEarnings = async () => {
     try {
-      const response = await fetch(`${BASE_URL}/earnings`, {
+      const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/earnings`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
-      if (!response.ok) throw new Error('Failed to fetch earnings');
+      if (!response.ok) throw new Error('Earnings are temporarily unavailable');
 
       const data = await response.json();
       setEarnings(data.earnings);
       setError('');
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || 'Earnings are temporarily unavailable');
     } finally {
       setLoading(false);
     }
@@ -74,10 +75,12 @@ export function EarningsDashboard({
 
   if (error) {
     return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+      <Card className="p-6 bg-gray-50 border-gray-200">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-gray-700">{error}</p>
+          <Button onClick={fetchEarnings} variant="outline" size="sm">Retry</Button>
+        </div>
+      </Card>
     );
   }
 

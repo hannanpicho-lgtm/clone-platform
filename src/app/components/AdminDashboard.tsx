@@ -8,6 +8,7 @@ import {
   DollarSign,
   TrendingUp,
   Shield,
+  Bell,
   LogOut,
   Search,
   MessageSquare,
@@ -27,23 +28,45 @@ import {
   Copy,
 } from 'lucide-react';
 import { safeFetch } from '/src/utils/safeFetch';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId } from '/utils/supabase/info';
 import { PremiumManagementPanel } from './PremiumManagementPanel';
 
 interface AdminDashboardProps {
   onLogout: () => void;
+  adminAccessToken?: string | null;
+  adminIsSuperAdmin?: boolean;
+  adminPermissions?: string[];
 }
 
 interface User {
   id: string;
   email: string;
   name: string;
+  lastLoginAt?: string | null;
+  lastLoginCountry?: string | null;
+  lastLoginIp?: string | null;
   vipTier: string;
   balance: number;
   productsSubmitted: number;
   accountFrozen: boolean;
   freezeAmount?: number;
+  dailyTaskSetLimit?: number;
+  extraTaskSets?: number;
+  taskSetsCompletedToday?: number;
+  currentSetTasksCompleted?: number;
+  currentSetDate?: string | null;
   createdAt: string;
+}
+
+interface LimitedAdminAccount {
+  userId: string;
+  username: string;
+  displayName: string;
+  authEmail: string;
+  active: boolean;
+  permissions: string[];
+  createdAt: string;
+  updatedAt?: string | null;
 }
 
 interface Transaction {
@@ -76,17 +99,75 @@ interface InvitationCode {
 
 interface SupportCase {
   id: string;
+  userId?: string;
   userName: string;
   category: string;
   priority: 'high' | 'medium' | 'low';
   status: 'open' | 'in_progress' | 'resolved';
   updatedAt: string;
+  repliesCount?: number;
+  messages?: Array<{
+    id: string;
+    role: 'user' | 'admin';
+    sender: string;
+    message: string;
+    createdAt: string;
+  }>;
 }
 
-export function AdminDashboard({ onLogout }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'transactions' | 'premium' | 'invitations' | 'customer-service' | 'settings'>('overview');
+interface WithdrawalRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'denied';
+  requestedAt: string;
+  approvedAt?: string;
+  deniedAt?: string;
+  denialReason?: string;
+}
+
+interface AdminAlert {
+  id: string;
+  type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral' | 'premium_assignment';
+  severity: 'critical' | 'high' | 'medium' | 'info';
+  title: string;
+  message: string;
+  createdAt: string;
+  status: 'new' | 'action_required' | 'resolved';
+}
+
+interface AlertsSummary {
+  total: number;
+  actionRequired: number;
+  pendingWithdrawals: number;
+  openSupportTickets: number;
+  frozenAccounts: number;
+  critical: number;
+  high: number;
+}
+
+export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin = true, adminPermissions = ['*'] }: AdminDashboardProps) {
+  const LIMITED_ADMIN_PERMISSION_OPTIONS = [
+    'users.view',
+    'users.adjust_balance',
+    'users.assign_premium',
+    'users.reset_tasks',
+    'users.manage_task_limits',
+    'users.unfreeze',
+    'users.update_vip',
+    'support.manage',
+    'withdrawals.manage',
+    'invitations.manage',
+    'premium.manage',
+  ];
+
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'transactions' | 'premium' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [users, setUsers] = useState<User[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'approved' | 'pending'>('all');
   const [invitationCodes, setInvitationCodes] = useState<InvitationCode[]>([]);
   const [supportCases, setSupportCases] = useState<SupportCase[]>([]);
   const [metrics, setMetrics] = useState<PlatformMetrics>({
@@ -98,92 +179,266 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     totalCommissionsPaid: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
-  const [demoMode, setDemoMode] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showUserDetails, setShowUserDetails] = useState(false);
+  const [adminAlerts, setAdminAlerts] = useState<AdminAlert[]>([]);
+  const [alertsSummary, setAlertsSummary] = useState<AlertsSummary>({
+    total: 0,
+    actionRequired: 0,
+    pendingWithdrawals: 0,
+    openSupportTickets: 0,
+    frozenAccounts: 0,
+    critical: 0,
+    high: 0,
+  });
+  const [showAlertsPanel, setShowAlertsPanel] = useState(false);
+  const [adminAccounts, setAdminAccounts] = useState<LimitedAdminAccount[]>([]);
+  const [newAdminUsername, setNewAdminUsername] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [newAdminPermissions, setNewAdminPermissions] = useState('users.view,users.adjust_balance,users.assign_premium,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,invitations.manage,support.manage,withdrawals.manage');
+  const [superAdminKey, setSuperAdminKey] = useState('');
+  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
+  const [supportStatusFilter, setSupportStatusFilter] = useState<'all' | 'open' | 'in_progress' | 'resolved'>('all');
+  const [supportLinks, setSupportLinks] = useState({
+    whatsapp: '',
+    telegram: '',
+  });
+  const [savingSupportLinks, setSavingSupportLinks] = useState(false);
+  const [showAdjustBalanceModal, setShowAdjustBalanceModal] = useState(false);
+  const [showAssignPremiumModal, setShowAssignPremiumModal] = useState(false);
+  const [showTaskLimitsModal, setShowTaskLimitsModal] = useState(false);
+  const [showEditPermissionsModal, setShowEditPermissionsModal] = useState(false);
+  const [showDenyWithdrawalModal, setShowDenyWithdrawalModal] = useState(false);
+  const [actionTargetUser, setActionTargetUser] = useState<{ id: string; name: string } | null>(null);
+  const [taskLimitsTargetUser, setTaskLimitsTargetUser] = useState<{ id: string; name: string } | null>(null);
+  const [permissionsTargetAdmin, setPermissionsTargetAdmin] = useState<LimitedAdminAccount | null>(null);
+  const [adjustBalanceAmount, setAdjustBalanceAmount] = useState('100');
+  const [adjustBalanceCategory, setAdjustBalanceCategory] = useState('bonus');
+  const [adjustBalanceNote, setAdjustBalanceNote] = useState('');
+  const [premiumAmountInput, setPremiumAmountInput] = useState('');
+  const [premiumPositionInput, setPremiumPositionInput] = useState('');
+  const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
+  const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
+  const [permissionsInput, setPermissionsInput] = useState('');
+  const [denyWithdrawalId, setDenyWithdrawalId] = useState('');
+  const [denyReasonInput, setDenyReasonInput] = useState('Insufficient verification details');
+  const [submittingAction, setSubmittingAction] = useState(false);
 
   useEffect(() => {
     loadAdminData();
   }, []);
 
-  const generateFiveCharInvitationCode = () => {
-    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const digits = '0123456789';
-    const parts: string[] = [];
-
-    for (let i = 0; i < 4; i++) {
-      parts.push(letters[Math.floor(Math.random() * letters.length)]);
+  useEffect(() => {
+    const storedKey = typeof window !== 'undefined' ? window.sessionStorage.getItem('superAdminKey') : '';
+    if (storedKey) {
+      setSuperAdminKey(storedKey);
     }
-    parts.push(digits[Math.floor(Math.random() * digits.length)]);
+  }, []);
 
-    for (let i = parts.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [parts[i], parts[j]] = [parts[j], parts[i]];
+  const getAdminAuthToken = () => {
+    const token = String(adminAccessToken || '').trim();
+    if (token) return token;
+    if (adminIsSuperAdmin) {
+      return String(superAdminKey || '').trim();
+    }
+    return '';
+  };
+
+  const hasAdminPermission = (permission: string) => {
+    if (adminIsSuperAdmin) return true;
+    return adminPermissions.includes('*') || adminPermissions.includes(permission);
+  };
+
+  const hasAnyAdminPermission = (permissions: string[]) => permissions.some((permission) => hasAdminPermission(permission));
+
+  const canViewUsers = hasAdminPermission('users.view');
+  const canAdjustBalance = hasAnyAdminPermission(['users.adjust_balance', 'users.manage']);
+  const canAssignPremium = hasAnyAdminPermission(['users.assign_premium', 'premium.assign', 'premium.manage']);
+  const canResetTasks = hasAnyAdminPermission(['users.reset_tasks', 'users.manage']);
+  const canManageTaskLimits = hasAnyAdminPermission(['users.manage_task_limits', 'users.manage']);
+  const canUnfreezeUsers = hasAnyAdminPermission(['users.unfreeze', 'users.manage']);
+  const canUpdateVip = hasAnyAdminPermission(['users.update_vip', 'users.manage']);
+  const canManageUsers = canAdjustBalance || canResetTasks || canManageTaskLimits || canUnfreezeUsers || canUpdateVip;
+  const canManageInvitations = hasAdminPermission('invitations.manage');
+  const canManageSupport = hasAdminPermission('support.manage');
+
+  const formatLocationLabel = (value?: string | null) => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Unknown';
+    if (raw.toLowerCase() === 'unknown') return 'Unknown';
+
+    if (raw.length === 2 && /^[A-Za-z]{2}$/.test(raw)) {
+      try {
+        const display = new Intl.DisplayNames(['en'], { type: 'region' });
+        const fullName = display.of(raw.toUpperCase());
+        return fullName ? `${fullName} (${raw.toUpperCase()})` : raw.toUpperCase();
+      } catch {
+        return raw.toUpperCase();
+      }
     }
 
-    return parts.join('');
+    return raw;
   };
 
-  const buildTrainingInvitationCodes = (sourceUsers: User[]): InvitationCode[] => {
-    const fallbackOwners = sourceUsers.length > 0 ? sourceUsers : [
-      { id: '1', name: 'Training User', email: '', vipTier: 'Normal', balance: 0, productsSubmitted: 0, accountFrozen: false, createdAt: '2026-02-23' }
-    ];
-
-    return fallbackOwners.slice(0, 5).map((user, index) => ({
-      code: generateFiveCharInvitationCode(),
-      owner: user.name,
-      referrals: Math.max(0, Math.floor(user.productsSubmitted / 8)),
-      status: index < 4 ? 'active' : 'disabled',
-      generatedAt: user.createdAt,
-      ownerUserId: user.id,
-    }));
+  const formatIpLabel = (value?: string | null) => {
+    const raw = String(value || '').trim();
+    if (!raw || raw.toLowerCase() === 'unknown') {
+      return 'Unknown';
+    }
+    return raw;
   };
 
-  const buildTrainingSupportCases = (sourceUsers: User[]): SupportCase[] => {
-    const caseUsers = sourceUsers.length > 0 ? sourceUsers : [
-      { id: '1', name: 'Training User', email: '', vipTier: 'Normal', balance: 0, productsSubmitted: 0, accountFrozen: false, createdAt: '2026-02-23' }
-    ];
-
-    return caseUsers.slice(0, 4).map((user, index) => ({
-      id: `CS-${1000 + index}`,
-      userName: user.name,
-      category: index % 2 === 0 ? 'Referral Issue' : 'Withdrawal Help',
-      priority: index === 0 ? 'high' : index === 1 ? 'medium' : 'low',
-      status: index === 0 ? 'open' : index === 1 ? 'in_progress' : 'resolved',
-      updatedAt: index === 0 ? '5 min ago' : index === 1 ? '20 min ago' : '1h ago',
-    }));
+  const getTasksPerSetForTier = (tier: string) => {
+    return 3;
   };
+
+  const isResetRequired = (user: User) => {
+    const completed = Number(user.currentSetTasksCompleted || 0);
+    return completed >= getTasksPerSetForTier(user.vipTier || 'Normal');
+  };
+
 
   const reloadInvitationCodes = async (backendUsers: User[]) => {
+    if (!canManageInvitations) {
+      setInvitationCodes([]);
+      return;
+    }
+
     try {
       const invitationResponse = await safeFetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes`,
         {
           headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
+            Authorization: `Bearer ${getAdminAuthToken()}`,
           },
         }
       );
 
       if (invitationResponse && invitationResponse.ok) {
         const invitationData = await invitationResponse.json();
-        const mappedCodes = (invitationData?.invitationCodes || []).map((item: any) => ({
-          code: item.code,
-          owner: item.ownerName || item.ownerEmail || 'Platform Invite',
-          referrals: Number(item.signups || 0),
-          status: item.status === 'disabled' ? 'disabled' : 'active',
-          generatedAt: item.createdAt || new Date().toISOString(),
-          ownerUserId: item.ownerUserId || null,
-        })) as InvitationCode[];
+        const mappedCodes = (invitationData?.invitationCodes || [])
+          .map((item: any) => ({
+            code: String(item?.code || '').trim(),
+            owner: item?.ownerName || item?.ownerEmail || 'Platform Invite',
+            referrals: Number(item?.signups || 0),
+            status: item?.status === 'disabled' ? 'disabled' : 'active',
+            generatedAt: item?.createdAt || new Date().toISOString(),
+            ownerUserId: item?.ownerUserId || null,
+          }))
+          .filter((item: any) => Boolean(item.code)) as InvitationCode[];
 
-        setInvitationCodes(mappedCodes.length > 0 ? mappedCodes : buildTrainingInvitationCodes(backendUsers));
+        setInvitationCodes(mappedCodes);
         return;
       }
     } catch {
     }
 
-    setInvitationCodes(buildTrainingInvitationCodes(backendUsers));
+    setInvitationCodes([]);
+  };
+
+  const loadAdminWithdrawals = async () => {
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/withdrawals`,
+        {
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+          },
+        }
+      );
+
+      if (!response || !response.ok) {
+        setWithdrawals([]);
+        return;
+      }
+
+      const data = await response.json();
+      const mapped = (Array.isArray(data?.withdrawals) ? data.withdrawals : []).map((item: any) => ({
+        id: item.id,
+        userId: item.userId,
+        userName: item.userName || item.name || 'Unknown User',
+        userEmail: item.userEmail || item.email || '',
+        amount: Number(item.amount || 0),
+        status: (item.status || 'pending') as 'pending' | 'approved' | 'denied',
+        requestedAt: item.requestedAt || item.createdAt || new Date().toISOString(),
+        approvedAt: item.approvedAt,
+        deniedAt: item.deniedAt,
+        denialReason: item.denialReason,
+      })) as WithdrawalRequest[];
+
+      setWithdrawals(mapped);
+    } catch {
+      setWithdrawals([]);
+    }
+  };
+
+  const loadAdminAlerts = async (forceDemo = false, sourceUsers: User[] = users, sourceSupport: SupportCase[] = supportCases) => {
+    if (!forceDemo) {
+      try {
+        const response = await safeFetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/alerts`,
+          {
+            headers: {
+              Authorization: `Bearer ${getAdminAuthToken()}`,
+            },
+          }
+        );
+
+        if (response && response.ok) {
+          const data = await response.json();
+          setAdminAlerts(data?.alerts || []);
+          setAlertsSummary(data?.summary || {
+            total: 0,
+            actionRequired: 0,
+            pendingWithdrawals: 0,
+            openSupportTickets: 0,
+            frozenAccounts: 0,
+            critical: 0,
+            high: 0,
+          });
+          return;
+        }
+      } catch {
+      }
+    }
+
+    const fallbackAlerts: AdminAlert[] = [];
+    sourceUsers.filter((user) => user.accountFrozen).slice(0, 5).forEach((user) => {
+      fallbackAlerts.push({
+        id: `frozen:${user.id}`,
+        type: 'frozen_account',
+        severity: 'critical',
+        title: 'Frozen account requires intervention',
+        message: `${user.name} is frozen and needs admin action`,
+        createdAt: new Date().toISOString(),
+        status: 'action_required',
+      });
+    });
+
+    sourceSupport.filter((item) => item.status !== 'resolved').slice(0, 5).forEach((item) => {
+      fallbackAlerts.push({
+        id: `support:${item.id}`,
+        type: 'support_ticket',
+        severity: item.priority === 'high' ? 'high' : 'medium',
+        title: 'Customer service ticket needs attention',
+        message: `${item.userName}: ${item.category}`,
+        createdAt: new Date().toISOString(),
+        status: 'action_required',
+      });
+    });
+
+    setAdminAlerts(fallbackAlerts);
+    setAlertsSummary({
+      total: fallbackAlerts.length,
+      actionRequired: fallbackAlerts.filter((item) => item.status === 'action_required').length,
+      pendingWithdrawals: fallbackAlerts.filter((item) => item.type === 'withdrawal_pending').length,
+      openSupportTickets: fallbackAlerts.filter((item) => item.type === 'support_ticket').length,
+      frozenAccounts: fallbackAlerts.filter((item) => item.type === 'frozen_account').length,
+      critical: fallbackAlerts.filter((item) => item.severity === 'critical').length,
+      high: fallbackAlerts.filter((item) => item.severity === 'high').length,
+    });
   };
 
   const loadAdminData = async () => {
@@ -194,7 +449,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users`,
         {
           headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
+            Authorization: `Bearer ${getAdminAuthToken()}`,
           },
         }
       );
@@ -207,14 +462,36 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
         await reloadInvitationCodes(backendUsers);
 
-        setDemoMode(false);
+        await loadAdminWithdrawals();
+
+        try {
+          const linksResponse = await safeFetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/contact-links`,
+            {
+              headers: {
+                Authorization: `Bearer ${getAdminAuthToken()}`,
+              },
+            }
+          );
+
+          if (linksResponse.ok) {
+            const linksData = await linksResponse.json();
+            const config = linksData?.config || {};
+            setSupportLinks({
+              whatsapp: String(config.whatsapp || ''),
+              telegram: String(config.telegram || ''),
+            });
+          }
+        } catch {
+          // Keep existing values silently
+        }
 
         try {
           const supportResponse = await safeFetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/support-tickets`,
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/support-tickets`,
             {
               headers: {
-                Authorization: `Bearer ${publicAnonKey}`,
+                Authorization: `Bearer ${getAdminAuthToken()}`,
               },
             }
           );
@@ -225,220 +502,544 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               setSupportCases(
                 supportData.tickets.slice(0, 10).map((ticket: any, index: number) => ({
                   id: ticket.id || `CS-${2000 + index}`,
+                  userId: ticket.userId || null,
                   userName: ticket.userName || ticket.user || 'Unknown User',
-                  category: ticket.category || 'General',
+                  category: ticket.subject || ticket.category || 'General',
                   priority: (ticket.priority || 'medium') as 'high' | 'medium' | 'low',
-                  status: (ticket.status === 'pending' ? 'open' : ticket.status === 'in_progress' ? 'in_progress' : ticket.status === 'resolved' ? 'resolved' : 'open') as 'open' | 'in_progress' | 'resolved',
+                  status: (ticket.status === 'pending' || ticket.status === 'open' ? 'open' : ticket.status === 'in-progress' || ticket.status === 'in_progress' ? 'in_progress' : ticket.status === 'resolved' ? 'resolved' : 'open') as 'open' | 'in_progress' | 'resolved',
                   updatedAt: ticket.updatedAt || ticket.createdAt || 'recently',
+                  repliesCount: Array.isArray(ticket.replies) ? ticket.replies.length : 0,
+                  messages: [
+                    {
+                      id: `${ticket.id || `CS-${2000 + index}`}-initial`,
+                      role: 'user',
+                      sender: ticket.userName || ticket.user || 'User',
+                      message: String(ticket.message || ticket.subject || 'Support request'),
+                      createdAt: ticket.createdAt || ticket.updatedAt || 'recently',
+                    },
+                    ...((Array.isArray(ticket.replies) ? ticket.replies : []).map((reply: any, replyIndex: number) => ({
+                      id: reply.id || `${ticket.id || `CS-${2000 + index}`}-reply-${replyIndex}`,
+                      role: reply?.role === 'admin' ? 'admin' : 'user',
+                      sender: reply?.userName || (reply?.role === 'admin' ? 'Support Admin' : (ticket.userName || 'User')),
+                      message: String(reply?.message || ''),
+                      createdAt: reply?.createdAt || ticket.updatedAt || 'recently',
+                    }))).filter((reply: any) => reply.message),
+                  ],
                 }))
               );
             } else {
-              setSupportCases(buildTrainingSupportCases(backendUsers));
+              setSupportCases([]);
             }
           } else {
-            setSupportCases(buildTrainingSupportCases(backendUsers));
+            setSupportCases([]);
           }
         } catch {
-          setSupportCases(buildTrainingSupportCases(backendUsers));
+          setSupportCases([]);
         }
+
+        await loadAdminAlerts(false, backendUsers, supportCases);
+        await loadAdminAccounts();
       } else {
         throw new Error('Backend not available');
       }
     } catch (err) {
-      // Use demo data
-      loadDemoData();
+      setUsers([]);
+      setTransactions([]);
+      setWithdrawals([]);
+      setInvitationCodes([]);
+      setSupportCases([]);
+      setMetrics({
+        totalUsers: 0,
+        totalRevenue: 0,
+        totalTransactions: 0,
+        activeUsers: 0,
+        frozenAccounts: 0,
+        totalCommissionsPaid: 0,
+      });
+      await loadAdminAlerts(true, [], []);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadDemoData = () => {
-    // Demo users
-    const demoUsers: User[] = [
-      {
-        id: '1',
-        email: 'john@example.com',
-        name: 'John Smith',
-        vipTier: 'Gold',
-        balance: 15334,
-        productsSubmitted: 42,
-        accountFrozen: false,
-        createdAt: '2024-01-15',
-      },
-      {
-        id: '2',
-        email: 'sarah@example.com',
-        name: 'Sarah Johnson',
-        vipTier: 'Platinum',
-        balance: -7000,
-        productsSubmitted: 27,
-        accountFrozen: true,
-        freezeAmount: 10000,
-        createdAt: '2024-02-01',
-      },
-      {
-        id: '3',
-        email: 'mike@example.com',
-        name: 'Mike Chen',
-        vipTier: 'Diamond',
-        balance: 45280,
-        productsSubmitted: 55,
-        accountFrozen: false,
-        createdAt: '2024-01-10',
-      },
-      {
-        id: '4',
-        email: 'emma@example.com',
-        name: 'Emma Wilson',
-        vipTier: 'Silver',
-        balance: 8450,
-        productsSubmitted: 35,
-        accountFrozen: false,
-        createdAt: '2024-02-10',
-      },
-      {
-        id: '5',
-        email: 'david@example.com',
-        name: 'David Brown',
-        vipTier: 'Normal',
-        balance: 3200,
-        productsSubmitted: 22,
-        accountFrozen: false,
-        createdAt: '2024-02-14',
-      },
-    ];
+  const loadAdminAccounts = async () => {
+    if (!superAdminKey.trim()) {
+      setAdminAccounts([]);
+      return;
+    }
 
-    // Demo transactions
-    const demoTransactions: Transaction[] = [
-      {
-        id: 't1',
-        userId: '1',
-        userName: 'John Smith',
-        productName: 'Premium Headphones',
-        commission: 125.50,
-        timestamp: '2024-02-16 14:32',
-        status: 'approved',
-      },
-      {
-        id: 't2',
-        userId: '3',
-        userName: 'Mike Chen',
-        productName: 'Smart Watch',
-        commission: 89.99,
-        timestamp: '2024-02-16 13:15',
-        status: 'approved',
-      },
-      {
-        id: 't3',
-        userId: '2',
-        userName: 'Sarah Johnson',
-        productName: 'Premium Merged Product',
-        commission: 1500.00,
-        timestamp: '2024-02-16 12:00',
-        status: 'pending',
-      },
-      {
-        id: 't4',
-        userId: '4',
-        userName: 'Emma Wilson',
-        productName: 'Wireless Keyboard',
-        commission: 45.75,
-        timestamp: '2024-02-16 11:45',
-        status: 'approved',
-      },
-      {
-        id: 't5',
-        userId: '1',
-        userName: 'John Smith',
-        productName: 'Gaming Mouse',
-        commission: 67.20,
-        timestamp: '2024-02-16 10:30',
-        status: 'approved',
-      },
-    ];
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/accounts`,
+        {
+          headers: {
+            Authorization: `Bearer ${superAdminKey.trim()}`,
+          },
+        }
+      );
 
-    setUsers(demoUsers);
-    setTransactions(demoTransactions);
-    setInvitationCodes(buildTrainingInvitationCodes(demoUsers));
-    setSupportCases(buildTrainingSupportCases(demoUsers));
-    setMetrics({
-      totalUsers: demoUsers.length,
-      totalRevenue: 234567.89,
-      totalTransactions: 523,
-      activeUsers: 4,
-      frozenAccounts: 1,
-      totalCommissionsPaid: 45780.45,
-    });
-    setDemoMode(true);
+      if (!response || !response.ok) {
+        setAdminAccounts([]);
+        return;
+      }
+
+      const data = await response.json();
+      setAdminAccounts(Array.isArray(data?.admins) ? data.admins : []);
+    } catch {
+      setAdminAccounts([]);
+    }
   };
 
-  const handleUnfreezeAccount = async (userId: string) => {
-    if (demoMode) {
-      // Demo mode - update local state
-      setUsers(users.map(user => 
-        user.id === userId 
-          ? { ...user, accountFrozen: false, balance: Math.abs(user.balance) + (user.freezeAmount || 0) + 150 }
-          : user
-      ));
-      alert('✅ Account unfrozen successfully (Demo Mode)');
-    } else {
-      // Backend mode
-      try {
-        const response = await safeFetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/unfreeze`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${publicAnonKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ userId }),
-          }
-        );
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadAdminAlerts(false);
+    }, 30000);
 
-        if (response.ok) {
-          loadAdminData();
-          alert('✅ Account unfrozen successfully');
-        } else {
-          alert('❌ Failed to unfreeze account');
+    return () => clearInterval(interval);
+  }, [users, supportCases]);
+
+  const handleUnfreezeAccount = async (userId: string) => {
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/unfreeze`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId }),
         }
-      } catch (err) {
-        alert('❌ Error unfreezing account');
+      );
+
+      if (response.ok) {
+        loadAdminData();
+        loadAdminAlerts(false);
+        alert('✅ Account unfrozen successfully');
+      } else {
+        alert('❌ Failed to unfreeze account');
       }
+    } catch (err) {
+      alert('❌ Error unfreezing account');
     }
   };
 
   const handleUpdateVIPTier = async (userId: string, newTier: string) => {
-    if (demoMode) {
-      setUsers(users.map(user => 
-        user.id === userId ? { ...user, vipTier: newTier } : user
-      ));
-      alert(`✅ VIP tier updated to ${newTier} (Demo Mode)`);
-    } else {
-      try {
-        const response = await safeFetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/vip-tier`,
-          {
-            method: 'PUT',
-            headers: {
-              Authorization: `Bearer ${publicAnonKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ userId, vipTier: newTier }),
-          }
-        );
-
-        if (response.ok) {
-          loadAdminData();
-          setSelectedUser(prev => prev ? { ...prev, vipTier: newTier } : prev);
-          alert(`✅ VIP tier updated to ${newTier}`);
-        } else {
-          const errorData = await response.json().catch(() => ({}));
-          alert(`❌ Failed to update VIP tier${errorData?.error ? `: ${errorData.error}` : ''}`);
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/vip-tier`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId, vipTier: newTier }),
         }
-      } catch (err) {
-        alert('❌ Error updating VIP tier');
+      );
+
+      if (response.ok) {
+        loadAdminData();
+        setSelectedUser(prev => prev ? { ...prev, vipTier: newTier } : prev);
+        alert(`✅ VIP tier updated to ${newTier}`);
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        alert(`❌ Failed to update VIP tier${errorData?.error ? `: ${errorData.error}` : ''}`);
       }
+    } catch (err) {
+      alert('❌ Error updating VIP tier');
+    }
+  };
+
+  const openAdjustBalanceModal = (userId: string) => {
+    const targetUser = users.find((user) => user.id === userId);
+    setActionTargetUser({ id: userId, name: targetUser?.name || 'User' });
+    setAdjustBalanceAmount('100');
+    setAdjustBalanceCategory('bonus');
+    setAdjustBalanceNote('');
+    setShowAdjustBalanceModal(true);
+  };
+
+  const submitAdjustBalance = async () => {
+    if (!actionTargetUser?.id) return;
+
+    const amount = Number(adjustBalanceAmount);
+    if (!Number.isFinite(amount) || amount === 0) {
+      alert('❌ Invalid amount');
+      return;
+    }
+
+    const category = String(adjustBalanceCategory || 'adjustment').trim().toLowerCase();
+    const note = String(adjustBalanceNote || '');
+
+    try {
+      setSubmittingAction(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/adjust-balance`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId: actionTargetUser.id, amount, category, note }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to adjust balance${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminData();
+      setShowAdjustBalanceModal(false);
+      setActionTargetUser(null);
+      alert('✅ Account adjusted successfully');
+    } catch {
+      alert('❌ Failed to adjust balance');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const openAssignPremiumModal = (userId: string) => {
+    const targetUser = users.find((user) => user.id === userId);
+    setActionTargetUser({ id: userId, name: targetUser?.name || 'User' });
+    setPremiumAmountInput('');
+    setPremiumPositionInput('');
+    setShowAssignPremiumModal(true);
+  };
+
+  const submitAssignPremium = async () => {
+    if (!actionTargetUser?.id) return;
+
+    if (!premiumAmountInput.trim()) {
+      alert('❌ Premium amount is required');
+      return;
+    }
+
+    const payload: any = { userId: actionTargetUser.id };
+    const parsedAmount = Number(premiumAmountInput);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      alert('❌ Invalid premium amount');
+      return;
+    }
+    payload.amount = parsedAmount;
+
+    if (premiumPositionInput.trim()) {
+      const parsedPosition = Number(premiumPositionInput);
+      if (!Number.isFinite(parsedPosition)) {
+        alert('❌ Invalid premium position');
+        return;
+      }
+      payload.position = parsedPosition;
+    }
+
+    try {
+      setSubmittingAction(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/assign-premium`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to assign premium${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminData();
+      setShowAssignPremiumModal(false);
+      setActionTargetUser(null);
+      alert('✅ Premium assigned successfully');
+    } catch {
+      alert('❌ Failed to assign premium');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleResetTaskSetForUser = async (userId: string, mode: 'manual' | 'complete_set' = 'manual') => {
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/reset-task-set`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId, mode }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to reset task set${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminData();
+      alert('✅ Task set reset successfully');
+    } catch {
+      alert('❌ Failed to reset task set');
+    }
+  };
+
+  const handleUpdateTaskLimitsForUser = (userId: string, user: User) => {
+    const targetUser = users.find((item) => item.id === userId);
+    setTaskLimitsTargetUser({ id: userId, name: targetUser?.name || user.name || 'User' });
+    setTaskLimitDailyInput(String(user.dailyTaskSetLimit ?? 3));
+    setTaskLimitExtraInput(String(user.extraTaskSets ?? 0));
+    setShowTaskLimitsModal(true);
+  };
+
+  const submitTaskLimitsForUser = async () => {
+    if (!taskLimitsTargetUser?.id) return;
+
+    const dailyTaskSetLimit = Number(taskLimitDailyInput);
+    const extraTaskSets = Number(taskLimitExtraInput);
+
+    if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
+      alert('❌ Daily task set limit must be at least 1');
+      return;
+    }
+
+    if (!Number.isFinite(extraTaskSets) || extraTaskSets < 0) {
+      alert('❌ Extra task sets cannot be negative');
+      return;
+    }
+
+    try {
+      setSubmittingAction(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/task-limits`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to update task limits${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminData();
+      setShowTaskLimitsModal(false);
+      setTaskLimitsTargetUser(null);
+      alert('✅ Task limits updated successfully');
+    } catch {
+      alert('❌ Failed to update task limits');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleCreateLimitedAdmin = async () => {
+    const username = newAdminUsername.trim();
+    const name = newAdminName.trim();
+    const password = newAdminPassword;
+    const permissions = newAdminPermissions
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    if (!username || !name || !password || permissions.length === 0) {
+      alert('❌ Fill username, name, password, and permissions');
+      return;
+    }
+
+    if (!superAdminKey.trim()) {
+      alert('❌ Super admin key is required to create limited admin accounts');
+      return;
+    }
+
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/accounts`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${superAdminKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, name, password, permissions }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to create limited admin${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      setNewAdminUsername('');
+      setNewAdminName('');
+      setNewAdminPassword('');
+      setNewAdminPermissions('users.view');
+      await loadAdminAccounts();
+      alert('✅ Limited admin created');
+    } catch {
+      alert('❌ Failed to create limited admin');
+    }
+  };
+
+  const handleToggleAdminActive = async (account: LimitedAdminAccount) => {
+    if (!superAdminKey.trim()) {
+      alert('❌ Super admin key is required to manage limited admin accounts');
+      return;
+    }
+
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/accounts/${account.userId}`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${superAdminKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            active: !account.active,
+            permissions: account.permissions,
+            displayName: account.displayName,
+          }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to update admin account${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminAccounts();
+      alert('✅ Admin account updated');
+    } catch {
+      alert('❌ Failed to update admin account');
+    }
+  };
+
+  const handleEditAdminPermissions = (account: LimitedAdminAccount) => {
+    if (!superAdminKey.trim()) {
+      alert('❌ Super admin key is required to manage limited admin accounts');
+      return;
+    }
+
+    setPermissionsTargetAdmin(account);
+    setPermissionsInput(account.permissions.join(','));
+    setShowEditPermissionsModal(true);
+  };
+
+  const submitEditAdminPermissions = async () => {
+    if (!permissionsTargetAdmin) return;
+    if (!superAdminKey.trim()) {
+      alert('❌ Super admin key is required to manage limited admin accounts');
+      return;
+    }
+
+    const permissions = permissionsInput
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (permissions.length === 0) {
+      alert('❌ At least one permission is required');
+      return;
+    }
+
+    try {
+      setSubmittingAction(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/accounts/${permissionsTargetAdmin.userId}`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${superAdminKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            active: permissionsTargetAdmin.active,
+            permissions,
+            displayName: permissionsTargetAdmin.displayName,
+          }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to update permissions${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminAccounts();
+      setShowEditPermissionsModal(false);
+      setPermissionsTargetAdmin(null);
+      alert('✅ Admin permissions updated');
+    } catch {
+      alert('❌ Failed to update admin permissions');
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleSaveSupportLinks = async () => {
+    if (!canManageSupport) {
+      alert('❌ Missing permission: support.manage');
+      return;
+    }
+
+    if (!supportLinks.whatsapp.trim() && !supportLinks.telegram.trim()) {
+      alert('❌ Provide WhatsApp and/or Telegram link');
+      return;
+    }
+
+    try {
+      setSavingSupportLinks(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/contact-links`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            whatsapp: supportLinks.whatsapp.trim(),
+            telegram: supportLinks.telegram.trim(),
+          }),
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(`❌ Failed to save links${data?.error ? `: ${data.error}` : ''}`);
+        return;
+      }
+
+      setSupportLinks({
+        whatsapp: String(data?.config?.whatsapp || supportLinks.whatsapp),
+        telegram: String(data?.config?.telegram || supportLinks.telegram),
+      });
+      alert('✅ Customer Service links updated');
+    } catch {
+      alert('❌ Failed to save Customer Service links');
+    } finally {
+      setSavingSupportLinks(false);
     }
   };
 
@@ -477,16 +1078,13 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const handleToggleInvitationCode = (code: string) => {
-    if (demoMode) {
-      setInvitationCodes(prev => prev.map(item =>
-        item.code === code
-          ? { ...item, status: item.status === 'active' ? 'disabled' : 'active' }
-          : item
-      ));
+    const normalizedCode = String(code || '').trim();
+    if (!normalizedCode) {
+      alert('❌ Invitation code is missing. Please reload and try again.');
       return;
     }
 
-    const target = invitationCodes.find(item => item.code === code);
+    const target = invitationCodes.find(item => item.code === normalizedCode);
     if (!target) return;
 
     const nextStatus = target.status === 'active' ? 'disabled' : 'active';
@@ -495,10 +1093,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       {
         method: 'PUT',
         headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
+          Authorization: `Bearer ${getAdminAuthToken()}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ code, status: nextStatus }),
+        body: JSON.stringify({ code: normalizedCode, status: nextStatus }),
       }
     )
       .then(async (response) => {
@@ -512,7 +1110,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
           return;
         }
         await reloadInvitationCodes(users);
-        alert(`✅ Invitation code ${code} is now ${nextStatus}.`);
+        alert(`✅ Invitation code ${normalizedCode} is now ${nextStatus}.`);
       })
       .catch(() => {
         alert('❌ Failed to update invitation code status');
@@ -520,25 +1118,13 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   };
 
   const handleAddInvitationCode = () => {
-    if (demoMode) {
-      const nextCode: InvitationCode = {
-        code: generateFiveCharInvitationCode(),
-        owner: 'Training Admin',
-        referrals: 0,
-        status: 'active',
-        generatedAt: new Date().toLocaleString(),
-      };
-      setInvitationCodes(prev => [nextCode, ...prev]);
-      return;
-    }
-
     const ownerUserId = users[0]?.id || null;
     safeFetch(
       `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes/generate`,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
+          Authorization: `Bearer ${getAdminAuthToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ ownerUserId }),
@@ -567,10 +1153,151 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
     setSupportCases(prev => prev.map(item =>
       item.id === id ? { ...item, status: nextStatus, updatedAt: 'just now' } : item
     ));
+    loadAdminAlerts(false);
+  };
+
+  const handleReplySupportCase = async (caseId: string) => {
+    const message = (supportReplyDrafts[caseId] || '').trim();
+    if (!message) {
+      alert('❌ Reply message is required');
+      return;
+    }
+
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/support-tickets/${caseId}/reply`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to reply${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      setSupportReplyDrafts((prev) => ({ ...prev, [caseId]: '' }));
+      await loadAdminData();
+      await loadAdminAlerts(false);
+      alert('✅ Reply sent successfully');
+    } catch {
+      alert('❌ Failed to send reply');
+    }
+  };
+
+  const handleApproveWithdrawal = async (withdrawalId: string) => {
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/approve-withdrawal`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ withdrawalId }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to approve withdrawal${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminWithdrawals();
+      await loadAdminAlerts(false);
+      await loadAdminData();
+      alert('✅ Withdrawal approved successfully');
+    } catch {
+      alert('❌ Failed to approve withdrawal');
+    }
+  };
+
+  const handleDenyWithdrawal = (withdrawalId: string) => {
+    setDenyWithdrawalId(withdrawalId);
+    setDenyReasonInput('Insufficient verification details');
+    setShowDenyWithdrawalModal(true);
+  };
+
+  const submitDenyWithdrawal = async () => {
+    const denialReason = String(denyReasonInput || '').trim();
+    if (!denyWithdrawalId) return;
+    if (!denialReason) {
+      alert('❌ Denial reason is required');
+      return;
+    }
+
+    try {
+      setSubmittingAction(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/deny-withdrawal`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ withdrawalId: denyWithdrawalId, denialReason }),
+        }
+      );
+
+      if (!response || !response.ok) {
+        const errorData = response ? await response.json().catch(() => ({})) : {};
+        alert(`❌ Failed to deny withdrawal${errorData?.error ? `: ${errorData.error}` : ''}`);
+        return;
+      }
+
+      await loadAdminWithdrawals();
+      await loadAdminAlerts(false);
+      setShowDenyWithdrawalModal(false);
+      setDenyWithdrawalId('');
+      alert('✅ Withdrawal denied successfully');
+    } catch {
+      alert('❌ Failed to deny withdrawal');
+    } finally {
+      setSubmittingAction(false);
+    }
   };
 
   const activeInvitationCount = invitationCodes.filter(item => item.status === 'active').length;
   const openSupportCount = supportCases.filter(item => item.status !== 'resolved').length;
+  const filteredSupportCases = supportCases.filter((item) => {
+    if (supportStatusFilter === 'all') return true;
+    return item.status === supportStatusFilter;
+  });
+  const pendingWithdrawalCount = withdrawals.filter(item => item.status === 'pending').length;
+  const pendingWithdrawalTotal = withdrawals
+    .filter(item => item.status === 'pending')
+    .reduce((total, item) => total + item.amount, 0);
+  const filteredTransactions = transactions.filter((transaction) => {
+    if (transactionStatusFilter === 'all') return true;
+    return transaction.status.toLowerCase() === transactionStatusFilter;
+  });
+  const alertBadgeCount = alertsSummary.actionRequired;
+
+  const getAlertSeverityStyles = (severity: AdminAlert['severity']) => {
+    if (severity === 'critical') return 'bg-red-100 text-red-800 border-red-300';
+    if (severity === 'high') return 'bg-orange-100 text-orange-800 border-orange-300';
+    if (severity === 'medium') return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+    return 'bg-blue-100 text-blue-800 border-blue-300';
+  };
+
+  const formatAlertTime = (createdAt: string) => {
+    const diffMs = Date.now() - new Date(createdAt).getTime();
+    const diffMin = Math.max(1, Math.floor(diffMs / 60000));
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
 
   if (isLoading) {
     return (
@@ -599,12 +1326,50 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {demoMode && (
-                <div className="px-3 py-1 bg-yellow-100 border border-yellow-300 rounded-full">
-                  <p className="text-xs font-medium text-yellow-800">Demo Mode</p>
+            <div className="flex items-center gap-3 relative">
+              <button
+                type="button"
+                onClick={() => setShowAlertsPanel((prev) => !prev)}
+                className="relative h-10 w-10 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center"
+                aria-label="Admin notifications"
+              >
+                <Bell className="w-5 h-5 text-gray-700" />
+                {alertBadgeCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                    {alertBadgeCount > 99 ? '99+' : alertBadgeCount}
+                  </span>
+                )}
+              </button>
+
+              {showAlertsPanel && (
+                <div className="absolute right-0 top-12 w-[26rem] max-w-[90vw] bg-white border border-gray-200 rounded-xl shadow-2xl z-50">
+                  <div className="p-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-gray-900">Critical Alerts</h3>
+                      <span className="text-xs text-gray-500">Action required: {alertsSummary.actionRequired}</span>
+                    </div>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto divide-y divide-gray-100">
+                    {adminAlerts.length === 0 ? (
+                      <div className="p-4 text-sm text-gray-500">No active alerts.</div>
+                    ) : (
+                      adminAlerts.slice(0, 12).map((alert) => (
+                        <div key={alert.id} className="p-4 hover:bg-gray-50">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-semibold text-sm text-gray-900">{alert.title}</p>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${getAlertSeverityStyles(alert.severity)}`}>
+                              {alert.severity}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{alert.message}</p>
+                          <p className="text-xs text-gray-400 mt-1">{formatAlertTime(alert.createdAt)}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
+
               <Button
                 onClick={onLogout}
                 variant="outline"
@@ -625,9 +1390,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {[
               { id: 'overview', label: 'Overview', icon: BarChart3 },
               { id: 'users', label: 'Users', icon: Users },
+              { id: 'withdrawals', label: 'Withdrawals', icon: DollarSign },
               { id: 'transactions', label: 'Transactions', icon: Activity },
               { id: 'premium', label: 'Premium Products', icon: Gift },
-              { id: 'invitations', label: 'Invitations', icon: UserPlus },
+              ...(canManageInvitations ? [{ id: 'invitations', label: 'Invitations', icon: UserPlus }] : []),
               { id: 'customer-service', label: 'Customer Service', icon: MessageSquare },
               { id: 'settings', label: 'Settings', icon: Settings },
             ].map((tab) => (
@@ -786,7 +1552,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6">
                   <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                     <Button
                       onClick={() => setActiveTab('users')}
                       className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white"
@@ -794,19 +1560,30 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       <Users className="w-4 h-4 mr-2" />
                       Manage Users
                     </Button>
+                    {canAssignPremium && (
+                      <Button
+                        onClick={() => setActiveTab('premium')}
+                        className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white"
+                      >
+                        <Gift className="w-4 h-4 mr-2" />
+                        Assign Premium
+                      </Button>
+                    )}
+                    {canManageInvitations && (
+                      <Button
+                        onClick={() => setActiveTab('invitations')}
+                        className="bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white"
+                      >
+                        <Link2 className="w-4 h-4 mr-2" />
+                        Invitation Codes
+                      </Button>
+                    )}
                     <Button
-                      onClick={() => setActiveTab('premium')}
-                      className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white"
+                      onClick={() => setActiveTab('withdrawals')}
+                      className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white"
                     >
-                      <Gift className="w-4 h-4 mr-2" />
-                      Assign Premium
-                    </Button>
-                    <Button
-                      onClick={() => setActiveTab('invitations')}
-                      className="bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white"
-                    >
-                      <Link2 className="w-4 h-4 mr-2" />
-                      Invitation Codes
+                      <DollarSign className="w-4 h-4 mr-2" />
+                      Review Withdrawals
                     </Button>
                     <Button
                       onClick={() => setActiveTab('customer-service')}
@@ -865,100 +1642,216 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-6"
             >
-              {/* Search Bar */}
-              <Card className="border-0 shadow-lg">
-                <CardContent className="p-4">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <Input
-                      type="text"
-                      placeholder="Search users by name or email..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-10"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+              {canViewUsers ? (
+                <>
+                  {/* Search Bar */}
+                  <Card className="border-0 shadow-lg">
+                    <CardContent className="p-4">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                        <Input
+                          type="text"
+                          placeholder="Search users by name or email..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              {/* Users Table */}
+                  {/* Users Table */}
+                  <Card className="border-0 shadow-lg">
+                    <CardContent className="p-0">
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">VIP Tier</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Products</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {filteredUsers.map((user) => (
+                              <tr key={user.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div>
+                                    <p className="font-medium text-gray-900">{user.name}</p>
+                                    <p className="text-sm text-gray-500">{user.email}</p>
+                                    <p className="text-xs text-gray-500">Location: {formatLocationLabel(user.lastLoginCountry)}</p>
+                                    <p className="text-xs text-gray-500">IP: {formatIpLabel(user.lastLoginIp)}</p>
+                                    {isResetRequired(user) && (
+                                      <p className="text-xs font-semibold text-amber-700">⚠ Reset Required: Task set complete</p>
+                                    )}
+                                    <p className="text-xs text-gray-500">
+                                      Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'N/A'}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getTierColor(user.vipTier)}`}>
+                                    {user.vipTier}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <span className={`font-bold ${user.balance < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    ${user.balance.toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <span className="text-gray-900">{user.productsSubmitted}</span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  {user.accountFrozen ? (
+                                    <span className="flex items-center gap-1 text-red-600">
+                                      <XCircle className="w-4 h-4" />
+                                      <span className="text-sm font-medium">Frozen</span>
+                                    </span>
+                                  ) : (
+                                    <span className="flex items-center gap-1 text-green-600">
+                                      <CheckCircle className="w-4 h-4" />
+                                      <span className="text-sm font-medium">Active</span>
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="flex items-center gap-2">
+                                    {canUnfreezeUsers && user.accountFrozen && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleUnfreezeAccount(user.id)}
+                                        className="bg-green-600 hover:bg-green-700 text-white"
+                                      >
+                                        Unfreeze
+                                      </Button>
+                                    )}
+                                    {canAssignPremium && (
+                                      <Button
+                                        size="sm"
+                                        className="bg-purple-600 hover:bg-purple-700 text-white"
+                                        onClick={() => openAssignPremiumModal(user.id)}
+                                      >
+                                        Premium
+                                      </Button>
+                                    )}
+                                    {canAdjustBalance && (
+                                      <Button
+                                        size="sm"
+                                        className="bg-green-600 hover:bg-green-700 text-white"
+                                        onClick={() => openAdjustBalanceModal(user.id)}
+                                      >
+                                        Adjust
+                                      </Button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setSelectedUser(user);
+                                        setShowUserDetails(true);
+                                      }}
+                                    >
+                                      Details
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <Card className="border-0 shadow-lg">
+                  <CardContent className="p-6">
+                    <p className="text-sm text-gray-600">You do not have permission to view users.</p>
+                  </CardContent>
+                </Card>
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === 'withdrawals' && (
+            <motion.div
+              key="withdrawals"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-500 to-blue-600">
+                  <CardContent className="p-6">
+                    <p className="text-blue-100 text-sm font-medium">Pending Requests</p>
+                    <p className="text-3xl font-bold text-white mt-1">{pendingWithdrawalCount}</p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-lg bg-gradient-to-br from-green-500 to-green-600">
+                  <CardContent className="p-6">
+                    <p className="text-green-100 text-sm font-medium">Pending Amount</p>
+                    <p className="text-3xl font-bold text-white mt-1">${pendingWithdrawalTotal.toLocaleString()}</p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-lg bg-gradient-to-br from-purple-500 to-purple-600">
+                  <CardContent className="p-6">
+                    <p className="text-purple-100 text-sm font-medium">Mode</p>
+                    <p className="text-3xl font-bold text-white mt-1">Live</p>
+                  </CardContent>
+                </Card>
+              </div>
+
               <Card className="border-0 shadow-lg">
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50 border-b border-gray-200">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">VIP Tier</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Products</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {filteredUsers.map((user) => (
-                          <tr key={user.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div>
-                                <p className="font-medium text-gray-900">{user.name}</p>
-                                <p className="text-sm text-gray-500">{user.email}</p>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getTierColor(user.vipTier)}`}>
-                                {user.vipTier}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`font-bold ${user.balance < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                ${user.balance.toLocaleString()}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className="text-gray-900">{user.productsSubmitted}</span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              {user.accountFrozen ? (
-                                <span className="flex items-center gap-1 text-red-600">
-                                  <XCircle className="w-4 h-4" />
-                                  <span className="text-sm font-medium">Frozen</span>
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1 text-green-600">
-                                  <CheckCircle className="w-4 h-4" />
-                                  <span className="text-sm font-medium">Active</span>
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex items-center gap-2">
-                                {user.accountFrozen && (
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleUnfreezeAccount(user.id)}
-                                    className="bg-green-600 hover:bg-green-700 text-white"
-                                  >
-                                    Unfreeze
-                                  </Button>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setSelectedUser(user);
-                                    setShowUserDetails(true);
-                                  }}
-                                >
-                                  Details
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Pending Withdrawals</h3>
+                    <Button variant="outline" onClick={loadAdminWithdrawals}>
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Refresh
+                    </Button>
                   </div>
+
+                  {withdrawals.filter((item) => item.status === 'pending').length === 0 ? (
+                    <div className="p-8 text-center text-gray-500 border border-dashed border-gray-300 rounded-lg">
+                      No pending withdrawals.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {withdrawals
+                        .filter((item) => item.status === 'pending')
+                        .map((item) => (
+                          <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <div>
+                              <p className="font-semibold text-gray-900">{item.userName}</p>
+                              <p className="text-sm text-gray-600">{item.userEmail || 'No contact email'}</p>
+                              <p className="text-xs text-gray-500 mt-1">Requested: {new Date(item.requestedAt).toLocaleString()}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <p className="font-bold text-lg text-gray-900 min-w-[120px] text-right">${item.amount.toLocaleString()}</p>
+                              <Button
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700 text-white"
+                                onClick={() => handleApproveWithdrawal(item.id)}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="bg-red-600 hover:bg-red-700 text-white"
+                                onClick={() => handleDenyWithdrawal(item.id)}
+                              >
+                                Deny
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -974,9 +1867,34 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
             >
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">All Transactions</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">All Transactions</h3>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant={transactionStatusFilter === 'all' ? 'default' : 'outline'}
+                        onClick={() => setTransactionStatusFilter('all')}
+                      >
+                        All
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={transactionStatusFilter === 'approved' ? 'default' : 'outline'}
+                        onClick={() => setTransactionStatusFilter('approved')}
+                      >
+                        Approved
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={transactionStatusFilter === 'pending' ? 'default' : 'outline'}
+                        onClick={() => setTransactionStatusFilter('pending')}
+                      >
+                        Pending
+                      </Button>
+                    </div>
+                  </div>
                   <div className="space-y-3">
-                    {transactions.map((transaction) => (
+                    {filteredTransactions.map((transaction) => (
                       <div
                         key={transaction.id}
                         className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-purple-300 transition-colors"
@@ -1015,7 +1933,10 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-6"
             >
-              <PremiumManagementPanel />
+              <PremiumManagementPanel
+                adminToken={adminAccessToken}
+                isSuperAdmin={adminIsSuperAdmin}
+              />
             </motion.div>
           )}
 
@@ -1031,19 +1952,24 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">Invitation Code Management</h3>
-                    <Button onClick={handleAddInvitationCode} className="bg-indigo-600 hover:bg-indigo-700 text-white">
-                      <UserPlus className="w-4 h-4 mr-2" />
-                      Generate Code
-                    </Button>
+                    {canManageInvitations && (
+                      <Button onClick={handleAddInvitationCode} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                        <UserPlus className="w-4 h-4 mr-2" />
+                        Generate Code
+                      </Button>
+                    )}
                   </div>
-                  {demoMode && (
-                    <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-md px-3 py-2 mb-4">
-                      ⚠️ Training mode: invitation data is simulated when backend data is unavailable.
+                  {!canManageInvitations && (
+                    <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-md px-3 py-2 mb-4">
+                      You do not have permission to manage invitation codes. Ask super admin to grant <span className="font-mono">invitations.manage</span>.
                     </p>
                   )}
-
                   <div className="space-y-3">
-                    {invitationCodes.map((item) => (
+                    {invitationCodes.length === 0 ? (
+                      <div className="p-6 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg">
+                        No invitation codes available for this admin account.
+                      </div>
+                    ) : invitationCodes.map((item) => (
                       <div key={item.code} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
                         <div>
                           <p className="font-semibold text-gray-900">{item.code}</p>
@@ -1062,6 +1988,7 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                           <Button
                             size="sm"
                             onClick={() => handleToggleInvitationCode(item.code)}
+                            disabled={!canManageInvitations}
                             className={item.status === 'active' ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}
                           >
                             {item.status === 'active' ? 'Disable' : 'Enable'}
@@ -1094,37 +2021,117 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">Customer Service Cases</h3>
-                    <div className="text-sm font-medium text-gray-600">
-                      Open: <span className="text-red-600">{openSupportCount}</span>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant={supportStatusFilter === 'all' ? 'default' : 'outline'} onClick={() => setSupportStatusFilter('all')}>
+                        All ({supportCases.length})
+                      </Button>
+                      <Button size="sm" variant={supportStatusFilter === 'open' ? 'default' : 'outline'} onClick={() => setSupportStatusFilter('open')}>
+                        Open ({supportCases.filter((item) => item.status === 'open').length})
+                      </Button>
+                      <Button size="sm" variant={supportStatusFilter === 'in_progress' ? 'default' : 'outline'} onClick={() => setSupportStatusFilter('in_progress')}>
+                        In Progress ({supportCases.filter((item) => item.status === 'in_progress').length})
+                      </Button>
+                      <Button size="sm" variant={supportStatusFilter === 'resolved' ? 'default' : 'outline'} onClick={() => setSupportStatusFilter('resolved')}>
+                        Resolved ({supportCases.filter((item) => item.status === 'resolved').length})
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={loadAdminData}>
+                        Refresh
+                      </Button>
                     </div>
                   </div>
-                  {demoMode && (
-                    <p className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-md px-3 py-2 mb-4">
-                      ⚠️ Training mode: support cases are simulated when backend data is unavailable.
-                    </p>
-                  )}
+
+                  <div className="mb-5 p-4 rounded-lg border border-blue-200 bg-blue-50 space-y-3">
+                    <h4 className="font-semibold text-blue-900">Customer Service Contact Links</h4>
+                    <p className="text-xs text-blue-800">Configure WhatsApp and Telegram links shown to users in customer service chat.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <Input
+                        value={supportLinks.whatsapp}
+                        onChange={(e) => setSupportLinks((prev) => ({ ...prev, whatsapp: e.target.value }))}
+                        placeholder="https://wa.me/..."
+                        disabled={!canManageSupport}
+                      />
+                      <Input
+                        value={supportLinks.telegram}
+                        onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
+                        placeholder="https://t.me/..."
+                        disabled={!canManageSupport}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={handleSaveSupportLinks}
+                        disabled={!canManageSupport || savingSupportLinks}
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        {savingSupportLinks ? 'Saving...' : 'Save CS Links'}
+                      </Button>
+                      {!canManageSupport && (
+                        <span className="text-xs text-gray-600">Permission required: support.manage</span>
+                      )}
+                    </div>
+                  </div>
 
                   <div className="space-y-3">
-                    {supportCases.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <div>
+                    {filteredSupportCases.length === 0 && (
+                      <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-sm text-gray-600">
+                        {supportCases.length === 0
+                          ? 'No customer service cases yet. Once users create tickets, they will appear here.'
+                          : 'No cases in this filter.'}
+                      </div>
+                    )}
+                    {filteredSupportCases.map((item) => (
+                      <div key={item.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
                           <p className="font-semibold text-gray-900">{item.id} • {item.userName}</p>
                           <p className="text-sm text-gray-600">{item.category}</p>
                           <p className={`text-xs mt-1 font-semibold ${getPriorityColor(item.priority)}`}>
                             Priority: {item.priority}
                           </p>
-                          <p className="text-xs text-gray-500">Updated: {item.updatedAt}</p>
+                            <p className="text-xs text-gray-500">Updated: {item.updatedAt} • Replies: {item.repliesCount || 0}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'in_progress')}>
+                              In Progress
+                            </Button>
+                            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'resolved')}>
+                              Resolve
+                            </Button>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getCaseStatusColor(item.status)}`}>
+                              {item.status}
+                            </span>
+                          </div>
                         </div>
+
                         <div className="flex items-center gap-2">
-                          <Button size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'in_progress')}>
-                            In Progress
+                          <Input
+                            value={supportReplyDrafts[item.id] || ''}
+                            onChange={(e) => setSupportReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="Type immediate response to user..."
+                          />
+                          <Button
+                            size="sm"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                            onClick={() => handleReplySupportCase(item.id)}
+                          >
+                            Send Reply
                           </Button>
-                          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'resolved')}>
-                            Resolve
-                          </Button>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getCaseStatusColor(item.status)}`}>
-                            {item.status}
-                          </span>
+                        </div>
+
+                        <div className="max-h-48 overflow-y-auto space-y-2 rounded-md border border-gray-200 bg-white p-3">
+                          {(item.messages || []).length > 0 ? (
+                            (item.messages || []).map((message) => (
+                              <div key={message.id} className={`flex ${message.role === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[85%] px-3 py-2 rounded-lg ${message.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
+                                  <p className="text-xs font-semibold opacity-90">{message.sender}</p>
+                                  <p className="text-sm">{message.message}</p>
+                                  <p className="text-[10px] mt-1 opacity-70">{message.createdAt}</p>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-gray-500">No chat messages yet for this case.</p>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1147,18 +2154,6 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   <h3 className="text-lg font-bold text-gray-900 mb-4">Platform Settings</h3>
                   
                   <div className="space-y-4">
-                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <h4 className="font-semibold text-blue-900 mb-2">Backend Status</h4>
-                      <p className="text-sm text-blue-800 mb-2">
-                        {demoMode ? '⚠️ Running in Demo Mode' : '✅ Connected to Supabase Backend'}
-                      </p>
-                      {demoMode && (
-                        <p className="text-xs text-blue-700">
-                          Deploy the Edge Function to Supabase to enable full backend functionality.
-                        </p>
-                      )}
-                    </div>
-
                     <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
                       <h4 className="font-semibold text-purple-900 mb-2">VIP Tiers Configuration</h4>
                       <div className="space-y-2 text-sm text-purple-800">
@@ -1170,13 +2165,121 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       </div>
                     </div>
 
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                      <h4 className="font-semibold text-green-900 mb-2">API Endpoints</h4>
-                      <div className="space-y-1 text-xs text-green-800 font-mono">
-                        <p>/make-server-44a642d3/admin/users - Get all users</p>
-                        <p>/make-server-44a642d3/admin/unfreeze - Unfreeze account</p>
-                        <p>/make-server-44a642d3/admin/premium - Assign premium</p>
-                        <p>/make-server-44a642d3/admin/metrics - Get metrics</p>
+                    {adminIsSuperAdmin ? (
+                      <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-lg space-y-3">
+                        <h4 className="font-semibold text-indigo-900">Create Limited Admin</h4>
+                        <Input
+                          value={superAdminKey}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setSuperAdminKey(value);
+                            if (typeof window !== 'undefined') {
+                              window.sessionStorage.setItem('superAdminKey', value);
+                            }
+                          }}
+                          type="password"
+                          placeholder="Super admin key (required)"
+                        />
+                        <p className="text-xs text-indigo-700">
+                          Required only for limited-admin account management actions.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <Input value={newAdminUsername} onChange={(e) => setNewAdminUsername(e.target.value)} placeholder="Username" />
+                          <Input value={newAdminName} onChange={(e) => setNewAdminName(e.target.value)} placeholder="Display name" />
+                          <Input value={newAdminPassword} onChange={(e) => setNewAdminPassword(e.target.value)} type="password" placeholder="Password" />
+                          <Input value={newAdminPermissions} onChange={(e) => setNewAdminPermissions(e.target.value)} placeholder="permissions comma-separated" />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setNewAdminPermissions('users.view,invitations.manage,support.manage')}
+                          >
+                            Apply Invite+Support Preset
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setNewAdminPermissions('users.view,users.adjust_balance,users.assign_premium,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,withdrawals.manage,support.manage,invitations.manage')}
+                          >
+                            Apply Ops Preset
+                          </Button>
+                        </div>
+                        <p className="text-xs text-indigo-700">
+                          Allowed permissions: {LIMITED_ADMIN_PERMISSION_OPTIONS.join(', ')}
+                        </p>
+                        <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleCreateLimitedAdmin}>
+                          Create Limited Admin
+                        </Button>
+
+                        <div className="space-y-2 mt-3">
+                          {adminAccounts.length === 0 ? (
+                            <p className="text-xs text-indigo-700">No limited admin accounts loaded.</p>
+                          ) : (
+                            adminAccounts.map((account) => (
+                              <div key={account.userId} className="flex items-center justify-between p-2 rounded border border-indigo-200 bg-white">
+                                <div>
+                                  <p className="text-sm font-semibold text-indigo-900">{account.displayName} ({account.username})</p>
+                                  <p className="text-xs text-indigo-700">{account.permissions.join(', ')}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleEditAdminPermissions(account)}
+                                  >
+                                    Edit Access
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleToggleAdminActive(account)}
+                                    className={account.active ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'}
+                                  >
+                                    {account.active ? 'Disable' : 'Enable'}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                        <p className="text-sm text-gray-700 font-medium">Limited admin account</p>
+                        <p className="text-xs text-gray-600 mt-1">User and account-management controls are restricted to super admin.</p>
+                      </div>
+                    )}
+
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                      <h4 className="font-semibold text-blue-900">Customer Service Contact Links</h4>
+                      <p className="text-xs text-blue-800">These links are shown to users in Customer Service chat (WhatsApp/Telegram).</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <Input
+                          value={supportLinks.whatsapp}
+                          onChange={(e) => setSupportLinks((prev) => ({ ...prev, whatsapp: e.target.value }))}
+                          placeholder="https://wa.me/..."
+                          disabled={!canManageSupport}
+                        />
+                        <Input
+                          value={supportLinks.telegram}
+                          onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
+                          placeholder="https://t.me/..."
+                          disabled={!canManageSupport}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={handleSaveSupportLinks}
+                          disabled={!canManageSupport || savingSupportLinks}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          {savingSupportLinks ? 'Saving...' : 'Save CS Links'}
+                        </Button>
+                        {!canManageSupport && (
+                          <span className="text-xs text-gray-600 self-center">Permission required: support.manage</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1241,25 +2344,91 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       {selectedUser.accountFrozen ? 'Frozen' : 'Active'}
                     </p>
                   </div>
-                </div>
-
-                {/* VIP Tier Management */}
-                <div className="border-t border-gray-200 pt-6">
-                  <h4 className="font-semibold text-gray-900 mb-3">Change VIP Tier</h4>
-                  <div className="grid grid-cols-5 gap-2">
-                    {['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'].map((tier) => (
-                      <Button
-                        key={tier}
-                        size="sm"
-                        onClick={() => handleUpdateVIPTier(selectedUser.id, tier)}
-                        className={selectedUser.vipTier === tier ? 'bg-purple-600 text-white' : ''}
-                        variant={selectedUser.vipTier === tier ? 'default' : 'outline'}
-                      >
-                        {tier}
-                      </Button>
-                    ))}
+                  <div>
+                    <p className="text-sm text-gray-500">Last Login Location</p>
+                    <p className="font-semibold text-gray-900">{formatLocationLabel(selectedUser.lastLoginCountry)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Last Login IP</p>
+                    <p className="font-semibold text-gray-900">{formatIpLabel(selectedUser.lastLoginIp)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Task Set Progress</p>
+                    <p className="font-semibold text-gray-900">
+                      {selectedUser.currentSetTasksCompleted || 0} / {getTasksPerSetForTier(selectedUser.vipTier || 'Normal')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Daily Sets Used</p>
+                    <p className="font-semibold text-gray-900">
+                      {selectedUser.taskSetsCompletedToday || 0} / {(selectedUser.dailyTaskSetLimit || 3) + (selectedUser.extraTaskSets || 0)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Reset Alert</p>
+                    <p className={`font-semibold ${isResetRequired(selectedUser) ? 'text-amber-700' : 'text-green-700'}`}>
+                      {isResetRequired(selectedUser) ? 'Reset required - task set complete' : 'No reset required'}
+                    </p>
                   </div>
                 </div>
+
+                {(canManageUsers || canAssignPremium) && (
+                  <>
+                    {canUpdateVip && (
+                      <div className="border-t border-gray-200 pt-6">
+                        <h4 className="font-semibold text-gray-900 mb-3">Change VIP Tier</h4>
+                        <div className="grid grid-cols-5 gap-2">
+                          {['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'].map((tier) => (
+                            <Button
+                              key={tier}
+                              size="sm"
+                              onClick={() => handleUpdateVIPTier(selectedUser.id, tier)}
+                              className={selectedUser.vipTier === tier ? 'bg-purple-600 text-white' : ''}
+                              variant={selectedUser.vipTier === tier ? 'default' : 'outline'}
+                            >
+                              {tier}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border-t border-gray-200 pt-6 space-y-3">
+                      <h4 className="font-semibold text-gray-900">Account & Task Actions</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        {canAdjustBalance && (
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => openAdjustBalanceModal(selectedUser.id)}>
+                            Bonus/Topup
+                          </Button>
+                        )}
+                        {canAssignPremium && (
+                          <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white" onClick={() => openAssignPremiumModal(selectedUser.id)}>
+                            Assign Premium
+                          </Button>
+                        )}
+                        {canResetTasks && (
+                          <Button
+                            size="sm"
+                            className="bg-orange-600 hover:bg-orange-700 text-white"
+                            onClick={() =>
+                              handleResetTaskSetForUser(
+                                selectedUser.id,
+                                isResetRequired(selectedUser) ? 'complete_set' : 'manual',
+                              )
+                            }
+                          >
+                            Reset Task Set
+                          </Button>
+                        )}
+                        {canManageTaskLimits && (
+                          <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleUpdateTaskLimitsForUser(selectedUser.id, selectedUser)}>
+                            Set Limits
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="p-6 border-t border-gray-200 flex justify-end">
@@ -1271,6 +2440,263 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {showTaskLimitsModal && taskLimitsTargetUser && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white">
+              <h3 className="text-lg font-bold">Update Task Limits</h3>
+              <p className="text-xs opacity-90">User: {taskLimitsTargetUser.name}</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Daily Task Set Limit</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={taskLimitDailyInput}
+                  onChange={(e) => setTaskLimitDailyInput(e.target.value)}
+                  placeholder="e.g. 3"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Extra Task Sets (Provision)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={taskLimitExtraInput}
+                  onChange={(e) => setTaskLimitExtraInput(e.target.value)}
+                  placeholder="e.g. 0"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowTaskLimitsModal(false);
+                    setTaskLimitsTargetUser(null);
+                  }}
+                  disabled={submittingAction}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={submitTaskLimitsForUser}
+                  disabled={submittingAction}
+                >
+                  {submittingAction ? 'Saving...' : 'Save Limits'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditPermissionsModal && permissionsTargetAdmin && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-indigo-600 to-violet-600 text-white">
+              <h3 className="text-lg font-bold">Edit Admin Access</h3>
+              <p className="text-xs opacity-90">Admin: {permissionsTargetAdmin.username}</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Permissions (comma-separated)</label>
+                <textarea
+                  value={permissionsInput}
+                  onChange={(e) => setPermissionsInput(e.target.value)}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 min-h-[90px]"
+                  placeholder="users.view,users.adjust_balance"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Allowed: {LIMITED_ADMIN_PERMISSION_OPTIONS.join(', ')}
+              </p>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowEditPermissionsModal(false);
+                    setPermissionsTargetAdmin(null);
+                  }}
+                  disabled={submittingAction}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                  onClick={submitEditAdminPermissions}
+                  disabled={submittingAction}
+                >
+                  {submittingAction ? 'Saving...' : 'Update Access'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDenyWithdrawalModal && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-red-600 to-rose-600 text-white">
+              <h3 className="text-lg font-bold">Deny Withdrawal</h3>
+              <p className="text-xs opacity-90">Provide a reason for this action</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Denial Reason</label>
+                <Input
+                  type="text"
+                  value={denyReasonInput}
+                  onChange={(e) => setDenyReasonInput(e.target.value)}
+                  placeholder="Required"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowDenyWithdrawalModal(false);
+                    setDenyWithdrawalId('');
+                  }}
+                  disabled={submittingAction}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="w-full bg-red-600 hover:bg-red-700 text-white"
+                  onClick={submitDenyWithdrawal}
+                  disabled={submittingAction}
+                >
+                  {submittingAction ? 'Saving...' : 'Confirm Deny'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdjustBalanceModal && actionTargetUser && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+              <h3 className="text-lg font-bold">Adjust Balance</h3>
+              <p className="text-xs opacity-90">User: {actionTargetUser.name}</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (+/-)</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={adjustBalanceAmount}
+                  onChange={(e) => setAdjustBalanceAmount(e.target.value)}
+                  placeholder="e.g. 100 or -50"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={adjustBalanceCategory}
+                  onChange={(e) => setAdjustBalanceCategory(e.target.value)}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2"
+                >
+                  <option value="bonus">bonus</option>
+                  <option value="reward">reward</option>
+                  <option value="topup">topup</option>
+                  <option value="adjustment">adjustment</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Note (optional)</label>
+                <Input
+                  type="text"
+                  value={adjustBalanceNote}
+                  onChange={(e) => setAdjustBalanceNote(e.target.value)}
+                  placeholder="Reason"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowAdjustBalanceModal(false);
+                    setActionTargetUser(null);
+                  }}
+                  disabled={submittingAction}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="w-full bg-green-600 hover:bg-green-700 text-white"
+                  onClick={submitAdjustBalance}
+                  disabled={submittingAction}
+                >
+                  {submittingAction ? 'Saving...' : 'Submit'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAssignPremiumModal && actionTargetUser && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white">
+              <h3 className="text-lg font-bold">Assign Premium</h3>
+              <p className="text-xs opacity-90">User: {actionTargetUser.name}</p>
+            </div>
+            <div className="p-6 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Premium Amount</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={premiumAmountInput}
+                  onChange={(e) => setPremiumAmountInput(e.target.value)}
+                  placeholder="Required"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Encounter Position (optional)</label>
+                <Input
+                  type="number"
+                  value={premiumPositionInput}
+                  onChange={(e) => setPremiumPositionInput(e.target.value)}
+                  placeholder="Leave blank for global default"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setShowAssignPremiumModal(false);
+                    setActionTargetUser(null);
+                  }}
+                  disabled={submittingAction}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+                  onClick={submitAssignPremium}
+                  disabled={submittingAction}
+                >
+                  {submittingAction ? 'Saving...' : 'Assign'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

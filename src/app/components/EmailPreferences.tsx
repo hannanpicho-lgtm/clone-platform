@@ -67,7 +67,7 @@ export function EmailPreferences({ profile, onUpdate }: EmailPreferencesProps) {
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError('Failed to save preferences');
+      setError('Unable to save preferences right now');
       console.error('Error saving preferences:', err);
     } finally {
       setLoading(false);
@@ -87,9 +87,9 @@ export function EmailPreferences({ profile, onUpdate }: EmailPreferencesProps) {
 
       {/* Messages */}
       {error && (
-        <Alert className="border-red-300 bg-red-50">
-          <AlertCircle className="h-4 w-4 text-red-600" />
-          <AlertDescription className="text-red-700">{error}</AlertDescription>
+        <Alert className="border-gray-300 bg-gray-50">
+          <AlertCircle className="h-4 w-4 text-gray-600" />
+          <AlertDescription className="text-gray-700">{error}</AlertDescription>
         </Alert>
       )}
 

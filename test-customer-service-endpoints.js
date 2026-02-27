@@ -34,7 +34,9 @@ function printResult(name, ok, details = "") {
 async function main() {
   console.log("\n🧪 Customer Service API Smoke Test\n");
 
-  const testEmail = `cs_user_${Date.now()}@tank.local`;
+  const runId = Date.now();
+  const testEmail = `cs_user_${runId}@tank.local`;
+  const testUsername = `cs_user_${runId}`;
   const password = "Password123";
 
   let passed = 0;
@@ -47,6 +49,7 @@ async function main() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: testEmail,
+        username: testUsername,
         password,
         name: 'CS Smoke User',
         withdrawalPassword: 'Withdraw123',
@@ -67,7 +70,7 @@ async function main() {
     const signin = await request('/signin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testEmail, password }),
+      body: JSON.stringify({ username: testUsername, password }),
     });
 
     const accessToken = signin.data?.session?.access_token;

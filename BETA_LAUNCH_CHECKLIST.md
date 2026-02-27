@@ -47,10 +47,10 @@
 
 ### Day 1 (Feb 23)
 - **Time:** 5:00 PM EST
-- **Participants:** [Add names]
-- **Key Findings:** [Add notes]
-- **Issues Identified:** [Add issues]
-- **Next Steps:** [Add action items]
+- **Participants:** hp, hansen, admin
+- **Key Findings:** [Add notes using format: `Area - PASS/FAIL - short note`]
+- **Issues Identified:** [Add issues using format: `Severity - Area - issue summary - owner`]
+- **Next Steps:** Run `BETA_DAY1_SMOKE_TEST_10MIN.md` and log results below
 
 ### Day 2 (Feb 24)
 - **Time:** 5:00 PM EST

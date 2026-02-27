@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { getSupabaseClient } from '/utils/supabase/client';
-import { BackendStatusIndicator } from './BackendStatusIndicator';
 import { Loader2 } from 'lucide-react';
 
 interface AuthPageProps {
@@ -30,6 +29,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [isSignup, setIsSignup] = useState(false);
 
   // Sign up state
@@ -46,10 +46,31 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
   const supabase = getSupabaseClient();
 
+  const signInViaBackend = async (username: string, password: string): Promise<string> => {
+    const { projectId, publicAnonKey } = await import('/utils/supabase/info');
+
+    const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/signin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${publicAnonKey}`,
+      },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.session?.access_token) {
+      throw new Error(data?.error || 'Sign in failed');
+    }
+
+    return String(data.session.access_token);
+  };
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setInfo('');
 
     // Validation
     if (signupPassword !== signupConfirmPassword) {
@@ -102,8 +123,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           setIsSignup(false);
           setSigninUsername(signupUsername);
           setError('');
+          setInfo('Account already exists. Please sign in instead.');
           setIsLoading(false);
-          alert('✅ Account already exists. Please sign in instead.');
           return;
         }
         throw new Error(data.error || 'Signup failed');
@@ -111,18 +132,13 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
       let autoSigninToken = '';
       for (let attempt = 1; attempt <= 3; attempt++) {
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-          email: authEmail,
-          password: signupPassword,
-        });
-
-        if (!signInError && signInData.session?.access_token) {
-          autoSigninToken = signInData.session.access_token;
+        try {
+          autoSigninToken = await signInViaBackend(signupUsername, signupPassword);
           break;
-        }
-
-        if (attempt < 3) {
-          await sleep(700);
+        } catch {
+          if (attempt < 3) {
+            await sleep(700);
+          }
         }
       }
 
@@ -153,6 +169,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setInfo('');
 
     const normalizedUsername = normalizeUsername(signinUsername);
     if (!normalizedUsername) {
@@ -162,41 +179,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
     }
 
     try {
-      const authEmail = buildAuthEmailFromUsername(signinUsername);
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password: signinPassword,
-      });
-
-      if (signInError) {
-        const { projectId, publicAnonKey } = await import('/utils/supabase/info');
-        const backendSigninResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/signin`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({
-            username: signinUsername,
-            password: signinPassword,
-          }),
-        });
-
-        const backendSigninData = await backendSigninResponse.json().catch(() => ({}));
-        if (backendSigninResponse.ok && backendSigninData?.session?.access_token) {
-          onAuthSuccess(backendSigninData.session.access_token);
-          return;
-        }
-
-        if (signInError.message.includes('Invalid login credentials')) {
-          throw new Error('Invalid username or password');
-        }
-        throw new Error(signInError.message);
-      }
-
-      if (data.session?.access_token) {
-        onAuthSuccess(data.session.access_token);
-      }
+      const token = await signInViaBackend(signinUsername, signinPassword);
+      onAuthSuccess(token);
     } catch (err: any) {
       console.error('Signin error:', err);
       setError(err.message || 'An error occurred during signin');
@@ -212,11 +196,6 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       <div className="absolute inset-0 opacity-10">
         <div className="absolute top-0 left-0 w-96 h-96 bg-white rounded-full -translate-x-1/2 -translate-y-1/2"></div>
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-white rounded-full translate-x-1/2 translate-y-1/2"></div>
-      </div>
-
-      {/* Backend Status Indicator - Top Right */}
-      <div className="fixed top-4 right-4 z-50">
-        <BackendStatusIndicator />
       </div>
 
       {/* Logo and Title */}
@@ -335,6 +314,12 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </div>
               )}
 
+              {info && (
+                <div className="text-sm text-emerald-300 bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/30">
+                  {info}
+                </div>
+              )}
+
               <Button
                 type="submit"
                 disabled={isLoading}
@@ -385,6 +370,12 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               {error && (
                 <div className="text-sm text-red-400 bg-red-500/10 p-3 rounded-lg border border-red-500/30">
                   {error}
+                </div>
+              )}
+
+              {info && (
+                <div className="text-sm text-emerald-300 bg-emerald-500/10 p-3 rounded-lg border border-emerald-500/30">
+                  {info}
                 </div>
               )}
 
