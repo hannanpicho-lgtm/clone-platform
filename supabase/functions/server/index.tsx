@@ -161,7 +161,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "apikey"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -172,7 +172,14 @@ app.use(
 app.get("/health", (c) => {
   return c.json({ status: "ok" });
 });
-
+app.get("/products", async (c) => {
+  try {
+    const products = await getTaskProductCatalog();
+    return c.json({ products });
+  } catch (error) {
+    return c.json({ error: error.message || "Failed to fetch products" }, 500);
+  }
+});
 // Generate a unique invitation code
 const generateInvitationCode = async (): Promise<string> => {
   const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -246,7 +253,7 @@ const verifyWithdrawalPassword = async (
 
 const DEFAULT_CONTACT_LINKS = {
   whatsapp: 'https://wa.me/1234567890',
-  telegram: 'https://t.me/tanknewmedia_support',
+  telegram: 'https://t.me/murphy_00754_support',
 };
 
 const getContactLinksConfig = async () => {
@@ -429,6 +436,11 @@ const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
 const DEFAULT_DAILY_TASK_SET_LIMIT = 3;
 
 const getTasksPerSetByTier = (vipTier: string): number => {
+  const tier = String(vipTier || 'Normal');
+  if (tier === 'Silver') return 4;
+  if (tier === 'Gold') return 5;
+  if (tier === 'Platinum') return 6;
+  if (tier === 'Diamond') return 7;
   return 3;
 };
 
@@ -3561,9 +3573,10 @@ app.get('/records', async (c) => {
         };
       });
 
-    // Get assigned products for current set (simulate/generate for now, 3 per set)
-    // Use same logic as frontend for now
-    const setSize = 3;
+    const userProfile = await kv.get(`user:${userId}`) || {};
+    // Get assigned products for current set (simulate/generate for now)
+    // Keep in sync with VIP-tier tasks-per-set logic.
+    const setSize = getTasksPerSetByTier(String(userProfile?.vipTier || 'Normal'));
     const productNames = [
       'stainless steel black sink waterfall faucet',
       'wireless bluetooth noise cancelling headphones',
@@ -5814,6 +5827,15 @@ app.all("*", async (c) => {
   }
 
   return app.fetch(new Request(rewrittenUrl, init));
+});
+
+// Add explicit CORS preflight handler for all routes
+app.options('/*', (c) => {
+  return c.text('', 204, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  });
 });
 
 Deno.serve(app.fetch);

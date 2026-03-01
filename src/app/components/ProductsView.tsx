@@ -44,8 +44,22 @@ export function ProductsView({
 }: ProductsViewProps) {
   const [uiMessage, setUiMessage] = useState('');
   
-  // Standard task set size for all VIP tiers
-  const maxProducts = 3;
+  const getTasksPerSet = () => {
+    switch (vipTier) {
+      case 'Diamond':
+        return 7;
+      case 'Platinum':
+        return 6;
+      case 'Gold':
+        return 5;
+      case 'Silver':
+        return 4;
+      default:
+        return 3;
+    }
+  };
+
+  const maxProducts = getTasksPerSet();
   const commissionRate = vipTier === 'Diamond' ? 0.015 : vipTier === 'Platinum' ? 0.0125 : vipTier === 'Gold' ? 0.01 : vipTier === 'Silver' ? 0.0075 : 0.005;
   
   // Minimum balance required to start tasks based on VIP tier price
