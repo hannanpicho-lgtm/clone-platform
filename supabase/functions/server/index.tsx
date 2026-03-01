@@ -1374,6 +1374,7 @@ app.post("/signup", async (c) => {
       welcomeBonusGranted: false,
       dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
       extraTaskSets: 0,
+      withdrawalLimit: 0,
       taskSetsCompletedToday: 0,
       totalTaskSetsCompleted: 0,
       tierSetProgress: 0,
@@ -2032,6 +2033,7 @@ app.get("/profile", async (c) => {
         welcomeBonusGranted: false,
         dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
         extraTaskSets: 0,
+        withdrawalLimit: 0,
         taskSetsCompletedToday: 0,
         totalTaskSetsCompleted: 0,
         tierSetProgress: 0,
@@ -2237,6 +2239,7 @@ app.get("/admin/users", async (c) => {
       freezeAmount: Number(user?.freezeAmount ?? 0),
       dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
       extraTaskSets: Number(user?.extraTaskSets ?? 0),
+      withdrawalLimit: Number(user?.withdrawalLimit ?? 0),
       taskSetsCompletedToday: Number(user?.taskSetsCompletedToday ?? 0),
       currentSetTasksCompleted: Number(user?.currentSetTasksCompleted ?? 0),
       currentSetDate: user?.currentSetDate ?? null,
@@ -3084,6 +3087,17 @@ app.post("/submit-product", async (c) => {
         };
 
         await kv.set(`user:${userId}`, frozenProfile);
+        await kv.set(`product:${userId}:${Date.now()}`, {
+          id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          userId,
+          productName: normalizedName,
+          productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
+          productValue: normalizedValue,
+          userEarned: 0,
+          commissionsCascade: [],
+          status: 'frozen',
+          submittedAt: encounteredAt,
+        });
 
         return c.json({
           error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
@@ -3590,90 +3604,13 @@ app.get('/records', async (c) => {
         };
       });
 
-    const userProfile = await kv.get(`user:${userId}`) || {};
-    // Get assigned products for current set (simulate/generate for now)
-    // Keep in sync with VIP-tier tasks-per-set logic.
-    const setSize = getTasksPerSetByTier(String(userProfile?.vipTier || 'Normal'));
-    const productNames = [
-      'stainless steel black sink waterfall faucet',
-      'wireless bluetooth noise cancelling headphones',
-      'smart home security camera system',
-      'portable solar power bank charger',
-      'ergonomic mesh office chair',
-      'led desk lamp with wireless charging',
-      'stainless steel cookware set',
-      'digital air fryer with touch screen',
-      'robot vacuum cleaner with mapping',
-      'electric standing desk converter',
-      'waterproof fitness tracker watch',
-      'ceramic non-stick frying pan',
-      'bamboo kitchen utensil set',
-      'glass meal prep containers',
-      'electric milk frother and steamer',
-    ];
-    const productImages = [
-      'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
-      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
-      'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
-      'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
-      'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-      'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
-      'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
-      'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
-      'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
-      'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
-      'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
-      'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
-      'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
-      'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
-    ];
-    // Default to Silver tier logic for now
-    const commissionRate = 0.0075;
-    const productRange = { min: 399, max: 598 };
-    const assigned = [];
-    for (let i = 0; i < setSize; i++) {
-      const randomIndex = Math.floor(Math.random() * productNames.length);
-      const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
-      const profit = Math.round(totalAmount * commissionRate * 100) / 100;
-      const now = new Date();
-      const creationDate = new Date(now);
-      creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
-      creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
-      const year = creationDate.getFullYear();
-      const month = String(creationDate.getMonth() + 1).padStart(2, '0');
-      const day = String(creationDate.getDate()).padStart(2, '0');
-      const hours = String(creationDate.getHours()).padStart(2, '0');
-      const minutes = String(creationDate.getMinutes()).padStart(2, '0');
-      const seconds = String(creationDate.getSeconds()).padStart(2, '0');
-      const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-      assigned.push({
-        id: `assigned-${i}`,
-        timestamp: creationTime,
-        productName: productNames[randomIndex],
-        productImage: productImages[randomIndex],
-        totalAmount,
-        profit,
-        status: 'pending',
-      });
-    }
-
-    // Merge: if assigned product exists in backendRecords (by name and totalAmount), use backend status; else pending
-    const mergedRecords = assigned.map((ap) => {
-      const found = backendRecords.find(
-        (br) => br.productName === ap.productName && br.totalAmount === ap.totalAmount
-      );
-      if (found) return found;
-      return ap;
-    });
-    // Add any backend records not in assigned (e.g., frozen/approved from previous sets)
-    backendRecords.forEach((br) => {
-      if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
-        mergedRecords.push(br);
-      }
+    const sortedRecords = backendRecords.sort((a: any, b: any) => {
+      const aTime = new Date(String(a?.submittedAt || a?.timestamp || 0)).getTime();
+      const bTime = new Date(String(b?.submittedAt || b?.timestamp || 0)).getTime();
+      return bTime - aTime;
     });
 
-    return c.json({ success: true, records: mergedRecords });
+    return c.json({ success: true, records: sortedRecords });
   } catch (error) {
     console.error(`Error fetching records: ${error}`);
     return c.json({ error: 'Internal server error while fetching records' }, 500);
@@ -3893,6 +3830,11 @@ app.post("/request-withdrawal", async (c) => {
     if (passwordCheck.upgradedHash) {
       userProfile.withdrawalPassword = passwordCheck.upgradedHash;
       await kv.set(`user:${userId}`, userProfile);
+    }
+
+    const approvedWithdrawalLimit = Number(userProfile?.withdrawalLimit ?? 0);
+    if (approvedWithdrawalLimit > 0 && amount > approvedWithdrawalLimit) {
+      return c.json({ error: `Amount exceeds approved withdrawal limit of $${approvedWithdrawalLimit.toFixed(2)}` }, 400);
     }
 
     // Check sufficient balance
@@ -4485,7 +4427,7 @@ app.put('/admin/users/task-limits', async (c) => {
       return adminAccess.response;
     }
 
-    const { userId, dailyTaskSetLimit, extraTaskSets } = await c.req.json();
+    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit } = await c.req.json();
     if (!userId) {
       return c.json({ error: 'userId is required' }, 400);
     }
@@ -4499,6 +4441,11 @@ app.put('/admin/users/task-limits', async (c) => {
 
     if (!Number.isInteger(extraSets) || extraSets < 0) {
       return c.json({ error: 'extraTaskSets must be a non-negative integer' }, 400);
+    }
+
+    const parsedWithdrawalLimit = Number(withdrawalLimit ?? 0);
+    if (!Number.isFinite(parsedWithdrawalLimit) || parsedWithdrawalLimit < 0) {
+      return c.json({ error: 'withdrawalLimit must be a non-negative number' }, 400);
     }
 
     const profileKey = `user:${userId}`;
@@ -4516,6 +4463,7 @@ app.put('/admin/users/task-limits', async (c) => {
       ...userProfile,
       dailyTaskSetLimit: baseLimit,
       extraTaskSets: extraSets,
+      withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
       updatedAt: new Date().toISOString(),
     };
 
@@ -4527,6 +4475,7 @@ app.put('/admin/users/task-limits', async (c) => {
       taskLimits: {
         dailyTaskSetLimit: baseLimit,
         extraTaskSets: extraSets,
+        withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
         maxSetsPerDay: baseLimit + extraSets,
       },
     });

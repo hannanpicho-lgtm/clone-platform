@@ -9,6 +9,7 @@ import { AlertCircle, CheckCircle, Clock, X } from 'lucide-react';
 interface WithdrawalFormProps {
   accessToken: string;
   currentBalance?: number;
+  withdrawalLimit?: number;
   onSuccess?: () => void;
 }
 
@@ -26,9 +27,10 @@ interface WithdrawalRequest {
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
 const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
-export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: WithdrawalFormProps) {
+export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimit = 0, onSuccess }: WithdrawalFormProps) {
   const [amount, setAmount] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVerified, setPasswordVerified] = useState(false);
   const [withdrawalHistory, setWithdrawalHistory] = useState<WithdrawalRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -62,6 +64,19 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
     return () => clearInterval(interval);
   }, [accessToken]);
 
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!password) {
+      setError('Please enter your withdrawal password');
+      return;
+    }
+
+    setPasswordVerified(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -76,6 +91,12 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
 
     if (withdrawAmount > currentBalance) {
       setError(`Insufficient balance. Available: $${currentBalance.toFixed(2)}`);
+      return;
+    }
+
+    const effectiveLimit = Number(withdrawalLimit || 0);
+    if (effectiveLimit > 0 && withdrawAmount > effectiveLimit) {
+      setError(`Amount exceeds your approved limit of $${effectiveLimit.toFixed(2)}`);
       return;
     }
 
@@ -107,7 +128,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
 
       setSuccess(`Withdrawal of $${withdrawAmount.toFixed(2)} requested successfully! Admin approval required.`);
       setAmount('');
-      setPassword('');
+      setPasswordVerified(false);
       
       // Refresh history after successful request
       await fetchWithdrawalHistory();
@@ -192,50 +213,79 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, onSuccess }: W
           </Alert>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="amount" className="text-gray-700 font-medium">
-              Withdrawal Amount ($)
-            </Label>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm text-gray-500">Balance: ${currentBalance.toFixed(2)}</span>
+        {!passwordVerified ? (
+          <form onSubmit={handlePasswordSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="password" className="text-gray-700 font-medium">
+                Withdrawal Password
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your withdrawal password"
+                className="mt-2 border-orange-200 focus:border-orange-400"
+              />
+              <p className="text-xs text-gray-500 mt-1">You set this when you signed up</p>
             </div>
-            <Input
-              id="amount"
-              type="number"
-              step="0.01"
-              min="0"
-              max={currentBalance}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="Enter amount to withdraw"
-              className="mt-2 border-orange-200 focus:border-orange-400"
-            />
-          </div>
 
-          <div>
-            <Label htmlFor="password" className="text-gray-700 font-medium">
-              Withdrawal Password
-            </Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your withdrawal password"
-              className="mt-2 border-orange-200 focus:border-orange-400"
-            />
-            <p className="text-xs text-gray-500 mt-1">You set this when you signed up</p>
-          </div>
+            <Button
+              type="submit"
+              className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
+            >
+              Continue
+            </Button>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="amount" className="text-gray-700 font-medium">
+                Withdrawal Amount ($)
+              </Label>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm text-gray-500">Balance: ${currentBalance.toFixed(2)}</span>
+                {Number(withdrawalLimit || 0) > 0 && (
+                  <span className="text-sm text-gray-500">· Limit: ${Number(withdrawalLimit).toFixed(2)}</span>
+                )}
+              </div>
+              <Input
+                id="amount"
+                type="number"
+                step="0.01"
+                min="0"
+                max={currentBalance}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="Enter amount to withdraw"
+                className="mt-2 border-orange-200 focus:border-orange-400"
+              />
+            </div>
 
-          <Button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
-          >
-            {loading ? 'Processing...' : 'Request Withdrawal'}
-          </Button>
-        </form>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setPasswordVerified(false);
+                  setAmount('');
+                  setError('');
+                }}
+                disabled={loading}
+              >
+                Back
+              </Button>
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
+              >
+                {loading ? 'Processing...' : 'Request Withdrawal'}
+              </Button>
+            </div>
+          </form>
+        )}
       </Card>
 
       {/* Stats */}

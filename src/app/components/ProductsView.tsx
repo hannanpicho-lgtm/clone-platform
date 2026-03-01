@@ -14,6 +14,15 @@ interface ProductsViewProps {
   onStartProduct: (product: ProductData) => void;
   todaysProfit: number;
   accountFrozen?: boolean;
+  freezeAmount?: number;
+  activePremiumAssignment?: {
+    orderId?: string;
+    topUpRequired?: number;
+    assignedAt?: string;
+    encounteredAt?: string | null;
+    encounteredTaskNumber?: number | null;
+  } | null;
+  onContactSupport?: () => void;
   actionNotice?: string | null;
   onClearActionNotice?: () => void;
 }
@@ -39,6 +48,9 @@ export function ProductsView({
   onStartProduct,
   todaysProfit,
   accountFrozen,
+  freezeAmount,
+  activePremiumAssignment,
+  onContactSupport,
   actionNotice,
   onClearActionNotice,
 }: ProductsViewProps) {
@@ -361,6 +373,40 @@ export function ProductsView({
             )}
 
             {/* Start Button */}
+            {accountFrozen && (
+              <div className="mb-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-2 py-1 shadow-lg rounded-md">
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                  </svg>
+                  <div className="flex-1">
+                    <h3 className="text-[10px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
+                    <p className="text-[9px] opacity-90 leading-tight">
+                      Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount ?? 0)).toFixed(2)}
+                    </p>
+                    {activePremiumAssignment?.orderId && (
+                      <p className="text-[9px] opacity-90 leading-tight mt-0.5">
+                        Order: {activePremiumAssignment.orderId}
+                        {activePremiumAssignment?.encounteredAt
+                          ? ` · ${new Date(activePremiumAssignment.encounteredAt).toLocaleString()}`
+                          : (activePremiumAssignment?.assignedAt ? ` · ${new Date(activePremiumAssignment.assignedAt).toLocaleString()}` : '')}
+                      </p>
+                    )}
+                    {activePremiumAssignment?.encounteredTaskNumber && (
+                      <p className="text-[9px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onContactSupport?.()}
+                    className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[9px] px-1.5 py-0.5 h-auto rounded"
+                  >
+                    📞 Contact Customer Service
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-center mb-8">
               <button
                 onClick={handleStart}

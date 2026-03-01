@@ -78,6 +78,7 @@ interface UserProfile {
   balance?: number;
   accountFrozen?: boolean;
   freezeAmount?: number;
+  withdrawalLimit?: number;
   productsSubmitted?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
@@ -598,135 +599,36 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setError(message);
         }
 
-        // Fetch backend product records
-        let recordsData = null;
+        // Fetch backend records only (approved/frozen submissions)
         try {
           const { projectId } = await import('~/utils/supabase/info');
-          const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/products`, {
+          const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/records`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${accessToken}`,
               'Content-Type': 'application/json',
             },
           });
-          recordsData = await response.json();
-        } catch (err) {
-          recordsData = { records: [] };
+          const recordsData = await response.json().catch(() => ({}));
+          const backendRecords = Array.isArray(recordsData?.records)
+            ? recordsData.records.map((record: any) => ({
+                id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+                timestamp: String(record?.timestamp || ''),
+                productName: String(record?.productName || 'Product Task'),
+                productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
+                totalAmount: Number(record?.totalAmount || 0),
+                profit: Number(record?.profit || 0),
+                status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
+                  ? String(record?.status || '').toLowerCase()
+                  : 'approved') as 'approved' | 'pending' | 'frozen',
+              }))
+            : [];
+          setProductRecords(backendRecords);
+          setAssignedProducts([]);
+        } catch {
+          setProductRecords([]);
+          setAssignedProducts([]);
         }
-
-        // --- Merge assigned products with backend records for records page ---
-        const assigned: ProductData[] = [];
-        const setSize = profile?.vipTier === 'Diamond'
-          ? 55
-          : profile?.vipTier === 'Platinum'
-            ? 50
-            : profile?.vipTier === 'Gold'
-              ? 45
-              : profile?.vipTier === 'Silver'
-                ? 40
-                : 35;
-        for (let i = 0; i < setSize; i++) {
-          // Use ProductsView's generateProduct logic (copy here for now)
-          const productNames = [
-            'stainless steel black sink waterfall faucet',
-            'wireless bluetooth noise cancelling headphones',
-            'smart home security camera system',
-            'portable solar power bank charger',
-            'ergonomic mesh office chair',
-            'led desk lamp with wireless charging',
-            'stainless steel cookware set',
-            'digital air fryer with touch screen',
-            'robot vacuum cleaner with mapping',
-            'electric standing desk converter',
-            'waterproof fitness tracker watch',
-            'ceramic non-stick frying pan',
-            'bamboo kitchen utensil set',
-            'glass meal prep containers',
-            'electric milk frother and steamer',
-          ];
-          const productImages = [
-            'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
-            'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
-            'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
-            'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
-            'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
-            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-            'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
-            'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
-            'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
-            'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
-            'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
-            'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
-            'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
-            'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
-            'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
-          ];
-          const commissionRate = profile?.vipTier === 'Diamond' ? 0.015 : profile?.vipTier === 'Platinum' ? 0.0125 : profile?.vipTier === 'Gold' ? 0.01 : profile?.vipTier === 'Silver' ? 0.0075 : 0.005;
-          const productRange = profile?.vipTier === 'Diamond' ? { min: 9999, max: 19998 } : profile?.vipTier === 'Platinum' ? { min: 1999, max: 9998 } : profile?.vipTier === 'Gold' ? { min: 599, max: 1998 } : profile?.vipTier === 'Silver' ? { min: 399, max: 598 } : { min: 99, max: 398 };
-          const randomIndex = Math.floor(Math.random() * productNames.length);
-          const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
-          const profit = parseFloat((totalAmount * commissionRate).toFixed(2));
-          const now = new Date();
-          const creationDate = new Date(now);
-          creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
-          creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
-          const year = creationDate.getFullYear();
-          const month = String(creationDate.getMonth() + 1).padStart(2, '0');
-          const day = String(creationDate.getDate()).padStart(2, '0');
-          const hours = String(creationDate.getHours()).padStart(2, '0');
-          const minutes = String(creationDate.getMinutes()).padStart(2, '0');
-          const seconds = String(creationDate.getSeconds()).padStart(2, '0');
-          const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-          const ratingNo = Math.random().toString(36).substring(2, 15);
-          assigned.push({
-            name: productNames[randomIndex],
-            image: productImages[randomIndex],
-            totalAmount,
-            profit,
-            creationTime,
-            ratingNo,
-          });
-        }
-        setAssignedProducts(assigned);
-
-        // Merge logic: for each assigned product, if it exists in backend records, use backend status; else mark as pending
-        const backendRecords = Array.isArray(recordsData?.records)
-          ? recordsData.records.map((record: any) => ({
-              id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
-              timestamp: String(record?.timestamp || ''),
-              productName: String(record?.productName || 'Product Task'),
-              productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
-              totalAmount: Number(record?.totalAmount || 0),
-              profit: Number(record?.profit || 0),
-              status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
-                ? String(record?.status || '').toLowerCase()
-                : 'approved') as 'approved' | 'pending' | 'frozen',
-            }))
-          : [];
-
-        // For each assigned product, find if it exists in backendRecords (by name and totalAmount)
-        const mergedRecords: RecordItem[] = assigned.map((ap, idx) => {
-          const found = backendRecords.find(
-            (br) => br.productName === ap.name && br.totalAmount === ap.totalAmount
-          );
-          if (found) return found;
-          return {
-            id: `assigned-${idx}`,
-            timestamp: ap.creationTime,
-            productName: ap.name,
-            productImage: ap.image,
-            totalAmount: ap.totalAmount,
-            profit: ap.profit,
-            status: 'pending',
-          };
-        });
-        // Add any backend records that are not in assigned (e.g., frozen/approved from previous sets)
-        backendRecords.forEach((br) => {
-          if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
-            mergedRecords.push(br);
-          }
-        });
-        setProductRecords(mergedRecords);
     };
     fetchData().finally(() => {
       setIsLoading(false);
@@ -1378,42 +1280,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       </header>
       
-      {/* Account Frozen Banner */}
-      {accountFrozen && (
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-2 py-1 sticky top-[60px] z-40 shadow-lg">
-          <div className="max-w-lg mx-auto">
-            <div className="flex items-center gap-1.5">
-              <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-              </svg>
-              <div className="flex-1">
-                <h3 className="text-[10px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
-                <p className="text-[9px] opacity-90 leading-tight">
-                  Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount)).toFixed(2)}
-                </p>
-                {activePremiumAssignment?.orderId && (
-                  <p className="text-[9px] opacity-90 leading-tight mt-0.5">
-                    Order: {activePremiumAssignment.orderId}
-                    {activePremiumAssignment?.encounteredAt
-                      ? ` · ${new Date(activePremiumAssignment.encounteredAt).toLocaleString()}`
-                      : (activePremiumAssignment?.assignedAt ? ` · ${new Date(activePremiumAssignment.assignedAt).toLocaleString()}` : '')}
-                  </p>
-                )}
-                {activePremiumAssignment?.encounteredTaskNumber && (
-                  <p className="text-[9px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
-                )}
-              </div>
-              <Button
-                onClick={() => setShowChat(true)}
-                className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[9px] px-1.5 py-0.5 h-auto"
-              >
-                📞 Contact Customer Service
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Hero Section with Background Image */}
       {activeNav === 'home' && (
         <div className="relative h-64 overflow-hidden bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500">
@@ -1467,6 +1333,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             onStartProduct={handleStartProduct}
             todaysProfit={todaysProfit}
             accountFrozen={accountFrozen}
+            freezeAmount={freezeAmount}
+            activePremiumAssignment={activePremiumAssignment}
+            onContactSupport={() => setShowChat(true)}
             actionNotice={taskActionNotice}
             onClearActionNotice={() => setTaskActionNotice(null)}
           />
@@ -2511,6 +2380,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 <WithdrawalForm
                   accessToken={accessToken}
                   currentBalance={profile?.balance || 0}
+                  withdrawalLimit={Number(profile?.withdrawalLimit ?? 0)}
                   onSuccess={() => {
                     setRefreshCounter(refreshCounter + 1);
                     // Could trigger refresh of earnings here

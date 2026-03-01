@@ -52,6 +52,7 @@ interface User {
   freezeAmount?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
+  withdrawalLimit?: number;
   taskSetsCompletedToday?: number;
   currentSetTasksCompleted?: number;
   currentSetDate?: string | null;
@@ -221,6 +222,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [premiumPositionInput, setPremiumPositionInput] = useState('');
   const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
   const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
+  const [withdrawalLimitInput, setWithdrawalLimitInput] = useState('0');
   const [permissionsInput, setPermissionsInput] = useState('');
   const [denyWithdrawalId, setDenyWithdrawalId] = useState('');
   const [denyReasonInput, setDenyReasonInput] = useState('Insufficient verification details');
@@ -803,6 +805,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setTaskLimitsTargetUser({ id: userId, name: targetUser?.name || user.name || 'User' });
     setTaskLimitDailyInput(String(user.dailyTaskSetLimit ?? 3));
     setTaskLimitExtraInput(String(user.extraTaskSets ?? 0));
+    setWithdrawalLimitInput(String(user.withdrawalLimit ?? 0));
     setShowTaskLimitsModal(true);
   };
 
@@ -811,6 +814,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
     const dailyTaskSetLimit = Number(taskLimitDailyInput);
     const extraTaskSets = Number(taskLimitExtraInput);
+    const withdrawalLimit = Number(withdrawalLimitInput);
 
     if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
       alert('❌ Daily task set limit must be at least 1');
@@ -819,6 +823,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
     if (!Number.isFinite(extraTaskSets) || extraTaskSets < 0) {
       alert('❌ Extra task sets cannot be negative');
+      return;
+    }
+
+    if (!Number.isFinite(withdrawalLimit) || withdrawalLimit < 0) {
+      alert('❌ Withdrawal limit cannot be negative');
       return;
     }
 
@@ -832,7 +841,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             Authorization: `Bearer ${getAdminAuthToken()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets }),
+          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit }),
         }
       );
 
@@ -2472,6 +2481,17 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   value={taskLimitExtraInput}
                   onChange={(e) => setTaskLimitExtraInput(e.target.value)}
                   placeholder="e.g. 0"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Withdrawal Limit (0 = no cap)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={withdrawalLimitInput}
+                  onChange={(e) => setWithdrawalLimitInput(e.target.value)}
+                  placeholder="e.g. 500"
                 />
               </div>
               <div className="flex gap-2 pt-2">
