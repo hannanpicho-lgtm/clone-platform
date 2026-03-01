@@ -542,122 +542,134 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   };
 
   useEffect(() => {
+    setIsLoading(true);
+
     const fetchData = async () => {
-      // ...existing code...
-      // (same as before, up to and including setProductRecords(normalizedRecords);)
-      // After setting productRecords, also generate assigned products for the current set
-      // and merge them for the records page
-
-      // ...existing code for fetching profile, metrics, deposit config, and records...
-
-      // --- Merge assigned products with backend records for records page ---
-      // Generate assigned products for the current set (simulate for now)
-      const assigned: ProductData[] = [];
-      const setSize = 3; // Use maxProducts from ProductsView logic
-      for (let i = 0; i < setSize; i++) {
-        // Use ProductsView's generateProduct logic (copy here for now)
-        const productNames = [
-          'stainless steel black sink waterfall faucet',
-          'wireless bluetooth noise cancelling headphones',
-          'smart home security camera system',
-          'portable solar power bank charger',
-          'ergonomic mesh office chair',
-          'led desk lamp with wireless charging',
-          'stainless steel cookware set',
-          'digital air fryer with touch screen',
-          'robot vacuum cleaner with mapping',
-          'electric standing desk converter',
-          'waterproof fitness tracker watch',
-          'ceramic non-stick frying pan',
-          'bamboo kitchen utensil set',
-          'glass meal prep containers',
-          'electric milk frother and steamer',
-        ];
-        const productImages = [
-          'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
-          'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
-          'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
-          'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
-          'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-          'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
-          'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
-          'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
-          'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
-          'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
-          'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
-          'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
-          'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
-          'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
-        ];
-        const commissionRate = profile?.vipTier === 'Diamond' ? 0.015 : profile?.vipTier === 'Platinum' ? 0.0125 : profile?.vipTier === 'Gold' ? 0.01 : profile?.vipTier === 'Silver' ? 0.0075 : 0.005;
-        const productRange = profile?.vipTier === 'Diamond' ? { min: 9999, max: 19998 } : profile?.vipTier === 'Platinum' ? { min: 1999, max: 9998 } : profile?.vipTier === 'Gold' ? { min: 599, max: 1998 } : profile?.vipTier === 'Silver' ? { min: 399, max: 598 } : { min: 99, max: 398 };
-        const randomIndex = Math.floor(Math.random() * productNames.length);
-        const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
-        const profit = parseFloat((totalAmount * commissionRate).toFixed(2));
-        const now = new Date();
-        const creationDate = new Date(now);
-        creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
-        creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
-        const year = creationDate.getFullYear();
-        const month = String(creationDate.getMonth() + 1).padStart(2, '0');
-        const day = String(creationDate.getDate()).padStart(2, '0');
-        const hours = String(creationDate.getHours()).padStart(2, '0');
-        const minutes = String(creationDate.getMinutes()).padStart(2, '0');
-        const seconds = String(creationDate.getSeconds()).padStart(2, '0');
-        const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-        const ratingNo = Math.random().toString(36).substring(2, 15);
-        assigned.push({
-          name: productNames[randomIndex],
-          image: productImages[randomIndex],
-          totalAmount,
-          profit,
-          creationTime,
-          ratingNo,
-        });
-      }
-      setAssignedProducts(assigned);
-
-      // Merge logic: for each assigned product, if it exists in backend records, use backend status; else mark as pending
-      const backendRecords = Array.isArray(recordsData?.records)
-        ? recordsData.records.map((record: any) => ({
-            id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
-            timestamp: String(record?.timestamp || ''),
-            productName: String(record?.productName || 'Product Task'),
-            productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
-            totalAmount: Number(record?.totalAmount || 0),
-            profit: Number(record?.profit || 0),
-            status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
-              ? String(record?.status || '').toLowerCase()
-              : 'approved') as 'approved' | 'pending' | 'frozen',
-          }))
-        : [];
-
-      // For each assigned product, find if it exists in backendRecords (by name and totalAmount)
-      const mergedRecords: RecordItem[] = assigned.map((ap, idx) => {
-        const found = backendRecords.find(
-          (br) => br.productName === ap.name && br.totalAmount === ap.totalAmount
-        );
-        if (found) return found;
-        return {
-          id: `assigned-${idx}`,
-          timestamp: ap.creationTime,
-          productName: ap.name,
-          productImage: ap.image,
-          totalAmount: ap.totalAmount,
-          profit: ap.profit,
-          status: 'pending',
-        };
-      });
-      // Add any backend records that are not in assigned (e.g., frozen/approved from previous sets)
-      backendRecords.forEach((br) => {
-        if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
-          mergedRecords.push(br);
+        // Fetch backend product records
+        let recordsData = null;
+        try {
+          const { projectId } = await import('~/utils/supabase/info');
+          const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/products`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+          });
+          recordsData = await response.json();
+        } catch (err) {
+          recordsData = { records: [] };
         }
-      });
-      setProductRecords(mergedRecords);
+
+        // --- Merge assigned products with backend records for records page ---
+        const assigned: ProductData[] = [];
+        const setSize = 3; // Use maxProducts from ProductsView logic
+        for (let i = 0; i < setSize; i++) {
+          // Use ProductsView's generateProduct logic (copy here for now)
+          const productNames = [
+            'stainless steel black sink waterfall faucet',
+            'wireless bluetooth noise cancelling headphones',
+            'smart home security camera system',
+            'portable solar power bank charger',
+            'ergonomic mesh office chair',
+            'led desk lamp with wireless charging',
+            'stainless steel cookware set',
+            'digital air fryer with touch screen',
+            'robot vacuum cleaner with mapping',
+            'electric standing desk converter',
+            'waterproof fitness tracker watch',
+            'ceramic non-stick frying pan',
+            'bamboo kitchen utensil set',
+            'glass meal prep containers',
+            'electric milk frother and steamer',
+          ];
+          const productImages = [
+            'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
+            'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
+            'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
+            'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
+            'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
+            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+            'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
+            'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
+            'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+            'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
+            'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
+            'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+            'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
+            'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
+            'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
+          ];
+          const commissionRate = profile?.vipTier === 'Diamond' ? 0.015 : profile?.vipTier === 'Platinum' ? 0.0125 : profile?.vipTier === 'Gold' ? 0.01 : profile?.vipTier === 'Silver' ? 0.0075 : 0.005;
+          const productRange = profile?.vipTier === 'Diamond' ? { min: 9999, max: 19998 } : profile?.vipTier === 'Platinum' ? { min: 1999, max: 9998 } : profile?.vipTier === 'Gold' ? { min: 599, max: 1998 } : profile?.vipTier === 'Silver' ? { min: 399, max: 598 } : { min: 99, max: 398 };
+          const randomIndex = Math.floor(Math.random() * productNames.length);
+          const totalAmount = Math.floor(productRange.min + Math.random() * (productRange.max - productRange.min));
+          const profit = parseFloat((totalAmount * commissionRate).toFixed(2));
+          const now = new Date();
+          const creationDate = new Date(now);
+          creationDate.setDate(creationDate.getDate() - Math.floor(Math.random() * 30));
+          creationDate.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
+          const year = creationDate.getFullYear();
+          const month = String(creationDate.getMonth() + 1).padStart(2, '0');
+          const day = String(creationDate.getDate()).padStart(2, '0');
+          const hours = String(creationDate.getHours()).padStart(2, '0');
+          const minutes = String(creationDate.getMinutes()).padStart(2, '0');
+          const seconds = String(creationDate.getSeconds()).padStart(2, '0');
+          const creationTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+          const ratingNo = Math.random().toString(36).substring(2, 15);
+          assigned.push({
+            name: productNames[randomIndex],
+            image: productImages[randomIndex],
+            totalAmount,
+            profit,
+            creationTime,
+            ratingNo,
+          });
+        }
+        setAssignedProducts(assigned);
+
+        // Merge logic: for each assigned product, if it exists in backend records, use backend status; else mark as pending
+        const backendRecords = Array.isArray(recordsData?.records)
+          ? recordsData.records.map((record: any) => ({
+              id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+              timestamp: String(record?.timestamp || ''),
+              productName: String(record?.productName || 'Product Task'),
+              productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
+              totalAmount: Number(record?.totalAmount || 0),
+              profit: Number(record?.profit || 0),
+              status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
+                ? String(record?.status || '').toLowerCase()
+                : 'approved') as 'approved' | 'pending' | 'frozen',
+            }))
+          : [];
+
+        // For each assigned product, find if it exists in backendRecords (by name and totalAmount)
+        const mergedRecords: RecordItem[] = assigned.map((ap, idx) => {
+          const found = backendRecords.find(
+            (br) => br.productName === ap.name && br.totalAmount === ap.totalAmount
+          );
+          if (found) return found;
+          return {
+            id: `assigned-${idx}`,
+            timestamp: ap.creationTime,
+            productName: ap.name,
+            productImage: ap.image,
+            totalAmount: ap.totalAmount,
+            profit: ap.profit,
+            status: 'pending',
+          };
+        });
+        // Add any backend records that are not in assigned (e.g., frozen/approved from previous sets)
+        backendRecords.forEach((br) => {
+          if (!mergedRecords.find((mr) => mr.productName === br.productName && mr.totalAmount === br.totalAmount)) {
+            mergedRecords.push(br);
+          }
+        });
+        setProductRecords(mergedRecords);
     };
-    fetchData();
+    fetchData().finally(() => {
+      setIsLoading(false);
+    });
   }, [accessToken]);
 
   useEffect(() => {
