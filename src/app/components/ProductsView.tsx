@@ -60,7 +60,7 @@ export function ProductsView({
       case 'Silver':
         return 399;
       default:
-        return 99; // Normal tier
+        return 0; // Normal tier starts at zero balance
     }
   };
   

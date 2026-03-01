@@ -595,8 +595,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       loadAdminAlerts(false);
     }, 30000);
 
+    // Debug: Log users and selectedUser state whenever they change
+    console.log('DEBUG: users state', users);
+    console.log('DEBUG: selectedUser state', selectedUser);
+    console.log('DEBUG: supportCases state', supportCases);
     return () => clearInterval(interval);
-  }, [users, supportCases]);
+  }, [users, supportCases, selectedUser]);
 
   const handleUnfreezeAccount = async (userId: string) => {
     try {
@@ -1331,7 +1335,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                 type="button"
                 onClick={() => setShowAlertsPanel((prev) => !prev)}
                 className="relative h-10 w-10 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center"
-                aria-label="Admin notifications"
               >
                 <Bell className="w-5 h-5 text-gray-700" />
                 {alertBadgeCount > 0 && (
@@ -2313,6 +2316,8 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
               <div className="p-6 space-y-6">
                 {/* User Info */}
+                {/* Debug: Log selectedUser in modal render */}
+                {console.log('DEBUG: Rendering User Details Modal for', selectedUser)}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-500">Name</p>
