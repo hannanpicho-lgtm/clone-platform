@@ -86,19 +86,24 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
         const baseUrl = window.location.hostname.includes('localhost')
           ? 'http://localhost:54321'
           : 'https://iridescent-basbousa-b72341.netlify.app';
+        console.log('Fetching products from:', `${baseUrl}/functions/v1/make-server-44a642d3/products`);
         const response = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/products`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
         });
+        console.log('Product fetch response status:', response.status);
         if (response.ok) {
           const data = await response.json();
+          console.log('Product fetch data:', data);
           setProducts(Array.isArray(data.products) ? data.products : []);
         } else {
           setProducts([]);
+          console.error('Product fetch failed with status:', response.status);
         }
       } catch (e) {
         setProducts([]);
+        console.error('Product fetch error:', e);
       } finally {
         setIsLoadingProducts(false);
       }
