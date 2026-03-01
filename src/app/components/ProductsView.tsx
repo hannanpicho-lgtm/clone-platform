@@ -47,15 +47,15 @@ export function ProductsView({
   const getTasksPerSet = () => {
     switch (vipTier) {
       case 'Diamond':
-        return 7;
+        return 55;
       case 'Platinum':
-        return 6;
+        return 50;
       case 'Gold':
-        return 5;
+        return 45;
       case 'Silver':
-        return 4;
+        return 40;
       default:
-        return 3;
+        return 35;
     }
   };
 

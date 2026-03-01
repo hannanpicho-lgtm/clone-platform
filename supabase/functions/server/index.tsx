@@ -437,11 +437,11 @@ const DEFAULT_DAILY_TASK_SET_LIMIT = 3;
 
 const getTasksPerSetByTier = (vipTier: string): number => {
   const tier = String(vipTier || 'Normal');
-  if (tier === 'Silver') return 4;
-  if (tier === 'Gold') return 5;
-  if (tier === 'Platinum') return 6;
-  if (tier === 'Diamond') return 7;
-  return 3;
+  if (tier === 'Silver') return 40;
+  if (tier === 'Gold') return 45;
+  if (tier === 'Platinum') return 50;
+  if (tier === 'Diamond') return 55;
+  return 35;
 };
 
 const PREMIUM_BUNDLE_PRODUCT_NAMES = [

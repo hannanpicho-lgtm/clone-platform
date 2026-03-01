@@ -617,14 +617,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         // --- Merge assigned products with backend records for records page ---
         const assigned: ProductData[] = [];
         const setSize = profile?.vipTier === 'Diamond'
-          ? 7
+          ? 55
           : profile?.vipTier === 'Platinum'
-            ? 6
+            ? 50
             : profile?.vipTier === 'Gold'
-              ? 5
+              ? 45
               : profile?.vipTier === 'Silver'
-                ? 4
-                : 3;
+                ? 40
+                : 35;
         for (let i = 0; i < setSize; i++) {
           // Use ProductsView's generateProduct logic (copy here for now)
           const productNames = [
