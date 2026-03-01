@@ -2409,13 +2409,13 @@ app.post("/admin/premium", async (c) => {
     }
 
     const premiumAmount = Number(amount);
-    const premiumPosition = Number(position);
+    const requestedPremiumPosition = Number(position);
 
     if (!Number.isFinite(premiumAmount) || premiumAmount <= 0) {
       return c.json({ error: 'amount must be a positive number' }, 400);
     }
 
-    if (!Number.isInteger(premiumPosition) || premiumPosition <= 0) {
+    if (!Number.isInteger(requestedPremiumPosition) || requestedPremiumPosition <= 0) {
       return c.json({ error: 'position must be a positive integer' }, 400);
     }
 
@@ -2426,6 +2426,21 @@ app.post("/admin/premium", async (c) => {
     }
 
     const normalizedProductId = String(productId || '').trim();
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const currentTaskState = buildTaskState(user);
+    const normalizedTaskState = currentTaskState.currentSetDate === todayDate
+      ? currentTaskState
+      : {
+          ...currentTaskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+    const tasksPerSet = normalizedTaskState.tasksPerSet;
+    const currentProgress = normalizedTaskState.currentSetTasksCompleted;
+    const effectivePremiumPosition = currentProgress >= tasksPerSet
+      ? 1
+      : Math.min(tasksPerSet, Math.max(currentProgress + 1, requestedPremiumPosition));
     const catalog = await getTaskProductCatalog();
     const assignedProduct = normalizedProductId
       ? catalog.find((item: any) => String(item?.id || '') === normalizedProductId)
@@ -2450,7 +2465,7 @@ app.post("/admin/premium", async (c) => {
         orderId: premiumOrderId,
         amount: bundleTotal,
         enteredAmount: premiumAmount,
-        position: premiumPosition,
+        position: effectivePremiumPosition,
         productId: assignedProduct?.id || null,
         productName: assignedProduct?.name || null,
         productImage: assignedProduct?.image || null,
@@ -2486,6 +2501,8 @@ app.post("/admin/premium", async (c) => {
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
+        requestedPosition: requestedPremiumPosition,
+        effectivePosition: effectivePremiumPosition,
       },
     });
   } catch (error) {
@@ -4250,13 +4267,13 @@ app.post('/admin/users/assign-premium', async (c) => {
       return c.json({ error: 'position is required for premium assignment' }, 400);
     }
     const amount = Number(body.amount);
-    const position = Number(body.position);
+    const requestedPosition = Number(body.position);
 
     if (!Number.isFinite(amount) || amount <= 0) {
       return c.json({ error: 'amount must be a positive number' }, 400);
     }
 
-    if (!Number.isInteger(position) || position <= 0) {
+    if (!Number.isInteger(requestedPosition) || requestedPosition <= 0) {
       return c.json({ error: 'position must be a positive integer' }, 400);
     }
 
@@ -4280,6 +4297,22 @@ app.post('/admin/users/assign-premium', async (c) => {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const currentTaskState = buildTaskState(user);
+    const normalizedTaskState = currentTaskState.currentSetDate === todayDate
+      ? currentTaskState
+      : {
+          ...currentTaskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+    const tasksPerSet = normalizedTaskState.tasksPerSet;
+    const currentProgress = normalizedTaskState.currentSetTasksCompleted;
+    const effectivePosition = currentProgress >= tasksPerSet
+      ? 1
+      : Math.min(tasksPerSet, Math.max(currentProgress + 1, requestedPosition));
+
     const currentBalance = Number(user?.balance ?? 0);
     const bundleDetails = buildPremiumBundleDetails(amount);
     const bundleTotal = Number(bundleDetails.bundleTotal || 0);
@@ -4294,7 +4327,7 @@ app.post('/admin/users/assign-premium', async (c) => {
         orderId: premiumOrderId,
         amount: bundleTotal,
         enteredAmount: amount,
-        position,
+        position: effectivePosition,
         productId: assignedProduct?.id || null,
         productName: assignedProduct?.name || null,
         productImage: assignedProduct?.image || null,
@@ -4331,6 +4364,8 @@ app.post('/admin/users/assign-premium', async (c) => {
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
+        requestedPosition,
+        effectivePosition,
       },
     });
   } catch (error) {
