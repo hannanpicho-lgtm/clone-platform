@@ -545,6 +545,59 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     setIsLoading(true);
 
     const fetchData = async () => {
+        try {
+          const { projectId } = await import('~/utils/supabase/info');
+
+          const [profileResponse, metricsResponse] = await Promise.all([
+            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+            }),
+            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/metrics`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+            }),
+          ]);
+
+          const profilePayload = await profileResponse.json().catch(() => ({}));
+          const metricsPayload = await metricsResponse.json().catch(() => ({}));
+
+          if (!profileResponse.ok) {
+            throw new Error(String(profilePayload?.error || 'Failed to load profile'));
+          }
+
+          if (!metricsResponse.ok) {
+            throw new Error(String(metricsPayload?.error || 'Failed to load metrics'));
+          }
+
+          const loadedProfile = (profilePayload?.profile || profilePayload?.user || profilePayload || {}) as any;
+          const loadedMetrics = (metricsPayload?.metrics || metricsPayload || {}) as any;
+
+          setProfile(loadedProfile as UserProfile);
+          setMetrics({
+            alertCompressionRatio: Number(loadedMetrics?.alertCompressionRatio ?? 0),
+            ticketReductionRate: Number(loadedMetrics?.ticketReductionRate ?? 0),
+            mttrImprovement: Number(loadedMetrics?.mttrImprovement ?? 0),
+            automationCoverage: Number(loadedMetrics?.automationCoverage ?? 0),
+          });
+
+          setBalance(Number(loadedProfile?.balance ?? 0));
+          setProductsSubmitted(Number(loadedProfile?.productsSubmitted ?? 0));
+          setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
+          setFreezeAmount(Number(loadedProfile?.freezeAmount ?? 0));
+          setActivePremiumAssignment(loadedProfile?.premiumAssignment ?? null);
+          setError('');
+        } catch (err: any) {
+          const message = String(err?.message || 'Please try again in a moment.');
+          setError(message);
+        }
+
         // Fetch backend product records
         let recordsData = null;
         try {
