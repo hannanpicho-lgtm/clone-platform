@@ -1380,19 +1380,19 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       
       {/* Account Frozen Banner */}
       {accountFrozen && (
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-3 py-1.5 sticky top-[60px] z-40 shadow-lg">
-          <div className="max-w-2xl mx-auto">
-            <div className="flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-2 py-1 sticky top-[60px] z-40 shadow-lg">
+          <div className="max-w-lg mx-auto">
+            <div className="flex items-center gap-1.5">
+              <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
               </svg>
               <div className="flex-1">
-                <h3 className="text-xs font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
-                <p className="text-[10px] opacity-90 leading-tight">
+                <h3 className="text-[10px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
+                <p className="text-[9px] opacity-90 leading-tight">
                   Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount)).toFixed(2)}
                 </p>
                 {activePremiumAssignment?.orderId && (
-                  <p className="text-[10px] opacity-90 leading-tight mt-0.5">
+                  <p className="text-[9px] opacity-90 leading-tight mt-0.5">
                     Order: {activePremiumAssignment.orderId}
                     {activePremiumAssignment?.encounteredAt
                       ? ` · ${new Date(activePremiumAssignment.encounteredAt).toLocaleString()}`
@@ -1400,12 +1400,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   </p>
                 )}
                 {activePremiumAssignment?.encounteredTaskNumber && (
-                  <p className="text-[10px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
+                  <p className="text-[9px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
                 )}
               </div>
               <Button
                 onClick={() => setShowChat(true)}
-                className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[10px] px-2 py-1 h-auto"
+                className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[9px] px-1.5 py-0.5 h-auto"
               >
                 📞 Contact Customer Service
               </Button>
