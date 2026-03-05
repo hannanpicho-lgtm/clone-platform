@@ -21,6 +21,45 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
   const [reviewType, setReviewType] = useState('');
   const [reviewText, setReviewText] = useState('');
 
+  // Assign a unique image based on product name
+  const productImages = [
+    'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
+    'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
+    'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
+    'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
+    'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+    'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
+    'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
+    'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
+    'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
+    'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
+    'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+    'https://images.unsplash.com/photo-1617343267882-2c441b6c3cd2?w=400',
+    'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=400',
+    'https://images.unsplash.com/photo-1609501676725-7186f017a4b7?w=400',
+  ];
+  const productNames = [
+    'stainless steel black sink waterfall faucet',
+    'wireless bluetooth noise cancelling headphones',
+    'smart home security camera system',
+    'portable solar power bank charger',
+    'ergonomic mesh office chair',
+    'led desk lamp with wireless charging',
+    'stainless steel cookware set',
+    'digital air fryer with touch screen',
+    'robot vacuum cleaner with mapping',
+    'electric standing desk converter',
+    'waterproof fitness tracker watch',
+    'ceramic non-stick frying pan',
+    'bamboo kitchen utensil set',
+    'glass meal prep containers',
+    'electric milk frother and steamer',
+  ];
+  // Find index by product name
+  const productIndex = productNames.findIndex(n => n === product.name);
+  const uniqueImage = productIndex !== -1 ? productImages[productIndex] : product.image;
+
   const handleSubmit = () => {
     onSubmit(rating, reviewText, reviewType);
   };
@@ -53,7 +92,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           <div className="mb-4 flex justify-center">
             <div className="w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden">
               <img 
-                src={product.image} 
+                src={uniqueImage} 
                 alt={product.name}
                 className="w-full h-full object-cover"
               />
