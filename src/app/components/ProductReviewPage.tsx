@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { Menu, Bell, Star } from 'lucide-react';
-
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
   onCancel: () => void;
@@ -268,7 +267,6 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           >
             Submit
           </button>
-        </div>
       </div>
     </div>
   );
