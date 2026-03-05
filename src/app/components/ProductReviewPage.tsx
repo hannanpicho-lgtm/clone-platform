@@ -58,7 +58,39 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
   ];
   // Find index by product name
   const productIndex = productNames.findIndex(n => n === product.name);
-  const uniqueImage = productIndex !== -1 ? productImages[productIndex] : product.image;
+  let uniqueImage = productIndex !== -1 ? productImages[productIndex] : product.image;
+  // Fallback to category image if mismatch
+  const categoryImages: Record<string, string> = {
+    electronics: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=400',
+    furniture: 'https://images.unsplash.com/photo-1519710164239-da123dc03ef4?w=400',
+    kitchen: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400',
+    default: 'https://images.unsplash.com/photo-1465101046530-73398c7f28ca?w=400',
+  };
+  // Simple category detection
+  function getCategory(name: string) {
+    if (/desk|lamp|charger|headphones|camera|tracker|vacuum|air fryer|security/i.test(name)) return 'electronics';
+    if (/chair|office|sofa|table/i.test(name)) return 'furniture';
+    if (/cookware|pan|utensil|kitchen|container|milk frother/i.test(name)) return 'kitchen';
+    return 'default';
+  }
+  let imageMismatch = false;
+  if (productIndex !== -1 && product.image !== productImages[productIndex]) {
+    imageMismatch = true;
+    uniqueImage = categoryImages[getCategory(product.name)];
+  }
+
+  // Manual image upload state
+  const [manualImage, setManualImage] = useState<string | null>(null);
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setManualImage(ev.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSubmit = () => {
     onSubmit(rating, reviewText, reviewType);
@@ -89,14 +121,27 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
         {/* Product Info */}
         <div className="text-center mb-6">
           {/* Product Image */}
-          <div className="mb-4 flex justify-center">
-            <div className="w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden">
-              <img 
-                src={uniqueImage} 
-                alt={product.name}
-                className="w-full h-full object-cover"
-              />
-            </div>
+          <div className="mb-4 flex flex-col items-center justify-center gap-2">
+            {/* Show manual image if uploaded, else unique or fallback image */}
+            {(manualImage || uniqueImage) && (
+              <div className={`w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden border-4 ${imageMismatch && !manualImage ? 'border-yellow-400' : 'border-transparent'}`}>
+                <img 
+                  src={manualImage || uniqueImage || ''}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+            {/* Highlight mismatch */}
+            {imageMismatch && !manualImage && (
+              <div className="text-xs text-yellow-700 bg-yellow-100 px-2 py-1 rounded mt-1">Image mismatch detected. Please upload a correct image.</div>
+            )}
+            {/* Manual upload */}
+            <label className="block mt-2 text-xs text-blue-900 font-semibold cursor-pointer">
+              Upload Image
+              <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+            </label>
+          </div>
           </div>
 
           {/* Product Name */}
