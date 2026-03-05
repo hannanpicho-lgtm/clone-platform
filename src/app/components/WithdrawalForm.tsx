@@ -262,28 +262,27 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
               />
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => {
-                  setPasswordVerified(false);
-                  setAmount('');
-                  setError('');
-                }}
-                disabled={loading}
-              >
-                Back
-              </Button>
-              <Button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
-              >
-                {loading ? 'Processing...' : 'Request Withdrawal'}
-              </Button>
-            </div>
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium mt-4"
+            >
+              {loading ? 'Processing...' : 'Request Withdrawal'}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full mt-2"
+              onClick={() => {
+                setPasswordVerified(false);
+                setAmount('');
+                setError('');
+              }}
+              disabled={loading}
+            >
+              Back
+            </Button>
           </form>
         )}
       </Card>

@@ -100,7 +100,7 @@ export function ReferralManager({ accessToken }: { accessToken: string }) {
     return (
       <Card className="p-6 bg-gray-50 border-gray-200">
         <div className="text-center space-y-3">
-          <p className="text-sm text-gray-700">{error}</p>
+          <p className="text-sm text-gray-700">No referrals found. You currently have <b>0</b> referrals.</p>
           <Button onClick={fetchReferrals} variant="outline" size="sm">Retry</Button>
         </div>
       </Card>

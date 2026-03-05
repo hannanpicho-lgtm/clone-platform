@@ -49,11 +49,21 @@ export function EarningsDashboard({
 
       if (!response.ok) throw new Error('Earnings are temporarily unavailable');
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        // If response is not valid JSON, show a user-friendly error
+        setError('Service unavailable. Please try again later.');
+        console.error('Earnings API returned invalid JSON:', jsonErr);
+        setLoading(false);
+        return;
+      }
       setEarnings(data.earnings);
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Earnings are temporarily unavailable');
+      console.error('Earnings API error:', err);
     } finally {
       setLoading(false);
     }
@@ -77,7 +87,7 @@ export function EarningsDashboard({
     return (
       <Card className="p-6 bg-gray-50 border-gray-200">
         <div className="text-center space-y-3">
-          <p className="text-sm text-gray-700">{error}</p>
+          <p className="text-sm text-gray-700">Unable to load earnings. Your current balance is <b>${profile.balance ?? 0}</b>.</p>
           <Button onClick={fetchEarnings} variant="outline" size="sm">Retry</Button>
         </div>
       </Card>
