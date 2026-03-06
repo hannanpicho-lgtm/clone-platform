@@ -652,6 +652,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     const networks = Array.isArray(selectedAsset.networks) && selectedAsset.networks.length > 0
       ? selectedAsset.networks
       : [selectedAsset.network].filter(Boolean) as string[];
+    const cryptoNetworkToSubmit = selectedAsset.networks.includes(depositCryptoNetwork)
+      ? depositCryptoNetwork
+      : (selectedAsset.networks[0] || selectedAsset.network || depositConfig?.crypto?.network || null);
 
     if (networks.length > 0 && !networks.includes(depositCryptoNetwork)) {
       setDepositCryptoNetwork(networks[0]);
@@ -660,7 +663,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 relative overflow-hidden">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading...</p>
@@ -696,7 +699,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     }
     
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 relative overflow-hidden">
         <Card className="max-w-md w-full">
           <CardContent className="pt-6 space-y-4">
             <h2 className="text-xl font-bold text-gray-900">Data is temporarily unavailable</h2>
@@ -831,7 +834,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     : (availableCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || cryptoWallet.walletType);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 relative overflow-hidden">
       {uiNotice && (
         <div className="fixed top-4 right-4 z-[80] max-w-md w-[calc(100%-2rem)]">
           <div className={`rounded-lg border px-4 py-3 shadow-lg ${uiNotice.type === 'success' ? 'bg-green-50 border-green-300 text-green-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
@@ -1740,13 +1743,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                               setUiNotice({ type: 'success', text: 'Account settings updated successfully' });
                               setEditingSettings(false);
                             }}
-                            className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+                            className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
                           >
                             Save Changes
                           </button>
                           <button
                             onClick={() => setEditingSettings(false)}
-                            className="flex-1 px-4 py-2 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 transition-colors"
+                            className="flex-1 px-4 py-2 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700"
                           >
                             Cancel
                           </button>

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"path": "../../../../../Downloads/trampoline-workbench"
+		}
+	],
+	"settings": {
+		"powershell.cwd": "TankPlatform"
+	}
+}

@@ -20,7 +20,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
   const [reviewType, setReviewType] = useState('');
   const [reviewText, setReviewText] = useState('');
 
-  // Assign a unique image based on product name
+  // Original layout and logic restored
   const productImages = [
     'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
     'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
@@ -96,177 +96,28 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-gradient-to-br from-blue-700 via-blue-600 to-cyan-500 overflow-y-auto">
-      {/* Header */}
-      <header className="bg-[#1a1d2e] text-white sticky top-0 z-50">
-        <div className="flex items-center justify-between px-4 py-3">
-          <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-            <Menu className="h-6 w-6" />
-          </button>
-          <h1 className="text-2xl font-bold tracking-wider">TANK</h1>
-          <div className="flex items-center space-x-3">
-            <button className="p-2 relative hover:bg-white/10 rounded-lg transition-colors">
-              <Bell className="h-6 w-6" />
-              <span className="absolute top-1 right-1 bg-white text-[#1a1d2e] text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                0
-              </span>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        {/* Product Info */}
-        <div className="text-center mb-6">
-          {/* Product Image */}
-          <div className="mb-4 flex flex-col items-center justify-center gap-2">
-            {/* Show manual image if uploaded, else unique or fallback image */}
-            {(manualImage || uniqueImage) && (
-              <div className={`w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden border-4 ${imageMismatch && !manualImage ? 'border-yellow-400' : 'border-transparent'}`}>
-                <img 
-                  src={manualImage || uniqueImage || ''}
-                  alt={product.name}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            )}
-            {/* Highlight mismatch */}
-            {imageMismatch && !manualImage && (
-              <div className="text-xs text-yellow-700 bg-yellow-100 px-2 py-1 rounded mt-1">Image mismatch detected. Please upload a correct image.</div>
-            )}
-            {/* Manual upload */}
-            <label className="block mt-2 text-xs text-blue-900 font-semibold cursor-pointer">
-              Upload Image
-              <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-            </label>
-          </div>
-          </div>
-
-          {/* Product Name */}
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
+    <div className="flex flex-col items-center justify-center w-full min-h-screen">
+      <div className="relative w-full flex flex-col items-center">
+        {/* Product image and name centered */}
+        <div className="flex flex-col items-center mt-8">
+          <img src={product.image} alt="Product" className="w-32 h-32 rounded-lg object-cover mb-2" />
+          <div className="font-bold text-2xl text-gray-900 mb-2 text-center" style={{margin: 0}}>
             {product.name}
-          </h2>
-
-          {/* Total Amount and Profit */}
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <p className="text-sm text-gray-700 mb-1">Total amount</p>
-              <p className="text-2xl font-bold text-red-600">
-                $ {product.totalAmount.toFixed(0)}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-700 mb-1">Profit</p>
-              <p className="text-2xl font-bold text-red-600">
-                ${product.profit.toFixed(2)}
-              </p>
-            </div>
-          </div>
-
-          {/* Creation Time */}
-          <div className="mb-2">
-            <p className="text-sm text-gray-700">Creation Time</p>
-            <p className="text-gray-900 font-semibold">{product.creationTime}</p>
-          </div>
-
-          {/* Rating Number */}
-          <div>
-            <p className="text-sm text-gray-700">Rating No.</p>
-            <p className="text-gray-900 font-semibold">{product.ratingNo}</p>
           </div>
         </div>
-
-        {/* Rating Card */}
-        <div className="bg-cyan-400 rounded-lg p-6 shadow-xl border-4 border-cyan-300">
-          <h3 className="text-center text-xl font-bold text-gray-900 mb-4">
-            Rate Us Now
-          </h3>
-
-          {/* Star Rating */}
-          <div className="flex justify-center gap-3 mb-6">
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button
-                key={star}
-                onClick={() => setRating(star)}
-                onMouseEnter={() => setHoveredRating(star)}
-                onMouseLeave={() => setHoveredRating(0)}
-                className="transition-transform hover:scale-110 active:scale-95"
-              >
-                <Star
-                  className={`h-10 w-10 ${
-                    star <= (hoveredRating || rating)
-                      ? 'fill-gray-900 text-gray-900'
-                      : 'fill-white text-gray-900'
-                  }`}
-                />
-              </button>
-            ))}
+        {/* Product details centered */}
+        <div className="flex flex-row justify-center items-center gap-8 mb-4">
+          <div className="text-lg text-gray-700 text-center">
+            <div>Total amount</div>
+            <div className="text-red-600 text-2xl font-bold">${product.totalAmount}</div>
           </div>
-
-          {/* Review Options */}
-          <div className="mb-6">
-            <p className="text-center font-semibold text-gray-900 mb-4">
-              Describe your Review (optional)
-            </p>
-            <div className="space-y-3">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="reviewType"
-                  value="excellent"
-                  checked={reviewType === 'excellent'}
-                  onChange={(e) => setReviewType(e.target.value)}
-                  className="w-4 h-4"
-                />
-                <span className="text-white text-sm">
-                  Excellent! I personally used it too, very Applicable
-                </span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="reviewType"
-                  value="normal"
-                  checked={reviewType === 'normal'}
-                  onChange={(e) => setReviewType(e.target.value)}
-                  className="w-4 h-4"
-                />
-                <span className="text-white text-sm">
-                  Normal! Not used often but know the Product
-                </span>
-              </label>
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="reviewType"
-                  value="opps"
-                  checked={reviewType === 'opps'}
-                  onChange={(e) => setReviewType(e.target.value)}
-                  className="w-4 h-4"
-                />
-                <span className="text-white text-sm">
-                  Opps! Not used or heard it before
-                </span>
-              </label>
-            </div>
+          <div className="text-lg text-gray-700 text-center">
+            <div>Profit</div>
+            <div className="text-red-600 text-2xl font-bold">${product.profit}</div>
           </div>
-
-          {/* Text Input */}
-          <textarea
-            value={reviewText}
-            onChange={(e) => setReviewText(e.target.value)}
-            placeholder="type here"
-            className="w-full h-24 px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:outline-none resize-none mb-4"
-          />
-
-          {/* Submit Button */}
-          <button
-            onClick={handleSubmit}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
-          >
-            Submit
-          </button>
+        </div>
+        <div className="text-center text-gray-700 mb-2">Creation Time<br />{product.creationTime}</div>
+        <div className="text-center text-gray-700 mb-6">Rating No.<br />{product.ratingNo}</div>
       </div>
     </div>
   );
