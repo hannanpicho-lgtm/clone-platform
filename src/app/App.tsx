@@ -11,7 +11,7 @@ console.log("App.tsx loaded");
 export default function App() {
   const envAdminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').toLowerCase() === 'true';
   const isAdminPortalHost = typeof window !== 'undefined'
-    ? window.location.hostname.includes('tank-admin-portal')
+    ? (window.location.hostname.includes('tank-admin-portal') || window.location.hostname.includes('tank-admin-live'))
     : false;
   const adminPortalOnly = envAdminPortalOnly && isAdminPortalHost;
   const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
