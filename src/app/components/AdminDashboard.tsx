@@ -213,6 +213,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [superAdminKey, setSuperAdminKey] = useState('');
   const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
   const [supportStatusFilter, setSupportStatusFilter] = useState<'all' | 'open' | 'in_progress' | 'resolved'>('all');
+  const [selectedSupportCaseId, setSelectedSupportCaseId] = useState<string | null>(null);
   const [supportLinks, setSupportLinks] = useState({ whatsapp: '', telegram: '' });
   const [savingSupportLinks, setSavingSupportLinks] = useState(false);
   const [resetUserId, setResetUserId] = useState('');
@@ -1170,6 +1171,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     if (supportStatusFilter === 'all') return true;
     return item.status === supportStatusFilter;
   });
+  const selectedSupportCase = filteredSupportCases.find((item) => item.id === selectedSupportCaseId)
+    || filteredSupportCases[0]
+    || null;
   const pendingWithdrawalCount = withdrawals.filter(item => item.status === 'pending').length;
   const pendingWithdrawalTotal = withdrawals
     .filter(item => item.status === 'pending')
@@ -1196,6 +1200,17 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
+
+  useEffect(() => {
+    if (filteredSupportCases.length === 0) {
+      setSelectedSupportCaseId(null);
+      return;
+    }
+
+    if (!selectedSupportCaseId || !filteredSupportCases.some((item) => item.id === selectedSupportCaseId)) {
+      setSelectedSupportCaseId(filteredSupportCases[0].id);
+    }
+  }, [filteredSupportCases, selectedSupportCaseId]);
 
   if (isLoading) {
     return (
@@ -1947,71 +1962,98 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    {filteredSupportCases.length === 0 && (
-                      <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-sm text-gray-600">
-                        {supportCases.length === 0
-                          ? 'No customer service cases yet. Once users create tickets, they will appear here.'
-                          : 'No cases in this filter.'}
-                      </div>
-                    )}
-                    {filteredSupportCases.map((item) => (
-                      <div key={item.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                          <p className="font-semibold text-gray-900">{item.id} • {item.userName}</p>
-                          <p className="text-sm text-gray-600">{item.category}</p>
-                          <p className={`text-xs mt-1 font-semibold ${getPriorityColor(item.priority)}`}>
-                            Priority: {item.priority}
-                          </p>
-                            <p className="text-xs text-gray-500">Updated: {item.updatedAt} • Replies: {item.repliesCount || 0}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'in_progress')}>
-                              In Progress
-                            </Button>
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleUpdateCaseStatus(item.id, 'resolved')}>
-                              Resolve
-                            </Button>
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getCaseStatusColor(item.status)}`}>
-                              {item.status}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Input
-                            value={supportReplyDrafts[item.id] || ''}
-                            onChange={(e) => setSupportReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                            placeholder="Type immediate response to user..."
-                          />
-                          <Button
-                            size="sm"
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white"
-                            onClick={() => handleReplySupportCase(item.id)}
-                          >
-                            Send Reply
-                          </Button>
-                        </div>
-
-                        <div className="max-h-48 overflow-y-auto space-y-2 rounded-md border border-gray-200 bg-white p-3">
-                          {(item.messages || []).length > 0 ? (
-                            (item.messages || []).map((message) => (
-                              <div key={message.id} className={`flex ${message.role === 'admin' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-[85%] px-3 py-2 rounded-lg ${message.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                                  <p className="text-xs font-semibold opacity-90">{message.sender}</p>
-                                  <p className="text-sm">{message.message}</p>
-                                  <p className="text-[10px] mt-1 opacity-70">{message.createdAt}</p>
+                  {filteredSupportCases.length === 0 ? (
+                    <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-sm text-gray-600">
+                      {supportCases.length === 0
+                        ? 'No customer service cases yet. Once users create tickets, they will appear here.'
+                        : 'No cases in this filter.'}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      <div className="lg:col-span-1 rounded-lg border border-gray-200 bg-white max-h-[30rem] overflow-y-auto">
+                        {filteredSupportCases.map((item) => {
+                          const isSelected = selectedSupportCase?.id === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setSelectedSupportCaseId(item.id)}
+                              className={`w-full text-left p-4 border-b border-gray-100 transition-colors ${isSelected ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-semibold text-gray-900 text-sm">{item.userName || 'Unknown User'}</p>
+                                  <p className="text-xs text-gray-500">{item.id}</p>
+                                  <p className="text-xs text-gray-600 mt-1">{item.category || 'General'}</p>
                                 </div>
+                                <span className={`px-2 py-1 rounded-full text-[10px] font-medium border ${getCaseStatusColor(item.status)}`}>
+                                  {item.status}
+                                </span>
                               </div>
-                            ))
-                          ) : (
-                            <p className="text-xs text-gray-500">No chat messages yet for this case.</p>
-                          )}
-                        </div>
+                              <p className={`text-xs mt-2 font-semibold ${getPriorityColor(item.priority)}`}>
+                                Priority: {item.priority}
+                              </p>
+                              <p className="text-[11px] text-gray-500 mt-1">Updated: {item.updatedAt} • Replies: {item.repliesCount || 0}</p>
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
-                  </div>
+
+                      <div className="lg:col-span-2 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                        {!selectedSupportCase ? (
+                          <div className="text-sm text-gray-600">Select a case to open the chat thread.</div>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-semibold text-gray-900">{selectedSupportCase.userName || 'Unknown User'}</p>
+                                <p className="text-xs text-gray-500">{selectedSupportCase.id} • {selectedSupportCase.category || 'General'}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={() => handleUpdateCaseStatus(selectedSupportCase.id, 'in_progress')}>
+                                  In Progress
+                                </Button>
+                                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleUpdateCaseStatus(selectedSupportCase.id, 'resolved')}>
+                                  Resolve
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="max-h-[20rem] overflow-y-auto space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                              {(selectedSupportCase.messages || []).length > 0 ? (
+                                (selectedSupportCase.messages || []).map((message) => (
+                                  <div key={message.id} className={`flex ${message.role === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] px-3 py-2 rounded-lg ${message.role === 'admin' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-900'}`}>
+                                      <p className="text-xs font-semibold opacity-90">{message.sender}</p>
+                                      <p className="text-sm">{message.message}</p>
+                                      <p className="text-[10px] mt-1 opacity-70">{message.createdAt}</p>
+                                    </div>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="text-xs text-gray-500">No chat messages yet for this case.</p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={supportReplyDrafts[selectedSupportCase.id] || ''}
+                                onChange={(e) => setSupportReplyDrafts((prev) => ({ ...prev, [selectedSupportCase.id]: e.target.value }))}
+                                placeholder="Type response to this user..."
+                              />
+                              <Button
+                                size="sm"
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                                onClick={() => handleReplySupportCase(selectedSupportCase.id)}
+                              >
+                                Send Reply
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
