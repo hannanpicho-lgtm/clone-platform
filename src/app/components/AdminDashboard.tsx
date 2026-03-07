@@ -3,6 +3,8 @@ import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
+import { safeFetch } from '/src/utils/safeFetch';
+import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 // Import all required types
 
@@ -154,9 +156,20 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [denyReasonInput, setDenyReasonInput] = useState('');
     // --- TEMP STUBS FOR BUILD ---
     // Replace these with real implementations as needed
-    const projectId = 'your-project-id';
-    const safeFetch = (...args: [RequestInfo, RequestInit?]) => fetch(...args);
-    const getAdminAuthToken = () => '';
+    const getAdminAuthToken = () => {
+      if (adminAccessToken && String(adminAccessToken).trim()) {
+        return String(adminAccessToken).trim();
+      }
+
+      if (typeof window !== 'undefined') {
+        const storedSuperAdminKey = String(window.sessionStorage.getItem('superAdminKey') || '').trim();
+        if (storedSuperAdminKey) {
+          return storedSuperAdminKey;
+        }
+      }
+
+      return publicAnonKey;
+    };
     const setWithdrawalLimitInput = (v: string) => {};
     const withdrawalLimitInput = '0';
     const reloadInvitationCodes = async (_?: any) => {};
@@ -459,6 +472,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       setAdminAccounts([]);
     }
   };
+
+  useEffect(() => {
+    loadAdminData();
+  }, [adminAccessToken]);
 
   useEffect(() => {
     const interval = setInterval(() => {
