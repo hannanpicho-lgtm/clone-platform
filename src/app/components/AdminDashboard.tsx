@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -131,12 +130,6 @@ const AdminProductManager = (props: any) => null;
 const Copy = (props: any) => null;
 const PremiumManagementPanel = (props: any) => null;
 
-
-
-
-
-
-
 export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin = true, adminPermissions = ['*'] }: AdminDashboardProps) {
     // Utility functions and permission variables (must be inside the component)
     function formatLocationLabel(val: any) { return String(val || 'Unknown'); }
@@ -209,6 +202,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [supportStatusFilter, setSupportStatusFilter] = useState<'all' | 'open' | 'in_progress' | 'resolved'>('all');
   const [supportLinks, setSupportLinks] = useState({ whatsapp: '', telegram: '' });
   const [savingSupportLinks, setSavingSupportLinks] = useState(false);
+  const [resetUserId, setResetUserId] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetStatus, setResetStatus] = useState('');
   const [showAdjustBalanceModal, setShowAdjustBalanceModal] = useState(false);
   const [showAssignPremiumModal, setShowAssignPremiumModal] = useState(false);
   const [showTaskLimitsModal, setShowTaskLimitsModal] = useState(false);
@@ -224,6 +220,27 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [premiumPositionInput, setPremiumPositionInput] = useState('');
   const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
   const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
+
+  async function handleAdminReset(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setResetStatus('');
+
+    try {
+      const response = await fetch('/api/admin-reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: resetUserId, newPassword: resetPassword }),
+      });
+
+      if (response.ok) {
+        setResetStatus('Password reset successfully.');
+      } else {
+        setResetStatus('Failed to reset password. Please check user ID and try again.');
+      }
+    } catch {
+      setResetStatus('Error occurred. Please try again.');
+    }
+  }
 
 
 
@@ -1887,19 +1904,19 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                     <p className="text-xs text-blue-800">Configure WhatsApp and Telegram links shown to users in customer service chat.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       <Input
-                        value={supportLinks.whatsapp}
-                        onChange={(e) => setSupportLinks((prev) => ({ ...prev, whatsapp: e.target.value }))}
-                        placeholder="https://wa.me/..."
-                        disabled={!canManageSupport}
+                      value={supportLinks.whatsapp}
+                      onChange={(e) => setSupportLinks((prev) => ({ ...prev, whatsapp: e.target.value }))}
+                      placeholder="https://wa.me/..."
+                      disabled={!canManageSupport}
                       />
                       <Input
-                        value={supportLinks.telegram}
-                        onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
-                        placeholder="https://t.me/..."
-                        disabled={!canManageSupport}
+                      value={supportLinks.telegram}
+                      onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
+                      placeholder="https://t.me/..."
+                      disabled={!canManageSupport}
                       />
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex gap-2">
                       <Button
                         onClick={handleSaveSupportLinks}
                         disabled={!canManageSupport || savingSupportLinks}
@@ -2107,7 +2124,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         <Input
                           value={supportLinks.telegram}
                           onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
-                          placeholder="https://t.me/..."
+                          placeholder="https://t.me/TanknewMedia01"
                           disabled={!canManageSupport}
                         />
                       </div>
@@ -2553,6 +2570,31 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
           </div>
         </div>
       )}
+
+      {/* Admin password reset form */}
+      <div className="admin-reset-form mt-8">
+        <h2 className="text-xl font-bold mb-4">Admin Password Reset</h2>
+        <form onSubmit={handleAdminReset} className="flex flex-col gap-4 max-w-md mx-auto">
+          <input
+            type="text"
+            placeholder="Username or User ID"
+            value={resetUserId}
+            onChange={e => setResetUserId(e.target.value)}
+            className="border rounded px-3 py-2"
+            required
+          />
+          <input
+            type="password"
+            placeholder="New Password"
+            value={resetPassword}
+            onChange={e => setResetPassword(e.target.value)}
+            className="border rounded px-3 py-2"
+            required
+          />
+          <button type="submit" className="bg-blue-600 text-white font-bold py-2 rounded">Reset Password</button>
+        </form>
+        {resetStatus && <div className="mt-2 text-sm text-green-600">{resetStatus}</div>}
+      </div>
     </div>
   );
 }
