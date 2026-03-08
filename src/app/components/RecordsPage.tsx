@@ -20,10 +20,20 @@ interface RecordsPageProps {
 export function RecordsPage({ records, onClose }: RecordsPageProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'frozen' | 'approved'>('all');
 
+  const classifyRecord = (record: RecordItem): 'approved' | 'pending' | 'frozen' => {
+    const normalizedStatus = String(record.status || '').toLowerCase();
+    const normalizedName = String(record.productName || '').toLowerCase();
+    const looksFrozen = normalizedStatus === 'frozen' || normalizedName.includes('frozen') || normalizedName.includes('freeze');
+
+    if (looksFrozen) return 'frozen';
+    if (normalizedStatus === 'pending') return 'pending';
+    return 'approved';
+  };
+
   // Filter records based on active tab
   const filteredRecords = records.filter(record => {
     if (activeTab === 'all') return true;
-    return record.status === activeTab;
+    return classifyRecord(record) === activeTab;
   });
 
   const getStatusColor = (status: string) => {
@@ -54,6 +64,9 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
 
       {/* Tabs */}
       <div className="bg-blue-600 px-4 pt-4 pb-2 sticky top-[60px] z-10">
+        <p className="text-[11px] text-blue-100 mb-2">
+          Pending = started but not submitted. Frozen = orders that triggered account freeze.
+        </p>
         <div className="flex space-x-2 overflow-x-auto pb-2">
           <button
             onClick={() => setActiveTab('all')}
@@ -107,12 +120,12 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
                 <div className="text-4xl mb-3">📋</div>
                 <p className="text-gray-600 font-medium">
                   {activeTab === 'all' && 'No records yet'}
-                  {activeTab === 'pending' && 'No pending items'}
-                  {activeTab === 'frozen' && 'No frozen items'}
+                  {activeTab === 'pending' && 'No pending submissions'}
+                  {activeTab === 'frozen' && 'No freeze-triggered records'}
                   {activeTab === 'approved' && 'No approved items'}
                 </p>
                 <p className="text-gray-500 text-sm mt-2">
-                  Start submitting products to see records here
+                  Start a product task to create pending records, then submit to move them to approved.
                 </p>
               </div>
             </CardContent>
@@ -123,8 +136,8 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
               {/* Timestamp and Status */}
               <div className="flex items-center justify-between">
                 <p className="text-white text-sm font-medium">{record.timestamp}</p>
-                <span className={`${getStatusColor(record.status)} text-white px-4 py-1 rounded-full text-xs font-semibold`}>
-                  {record.status}
+                <span className={`${getStatusColor(classifyRecord(record))} text-white px-4 py-1 rounded-full text-xs font-semibold`}>
+                  {classifyRecord(record)}
                 </span>
               </div>
 

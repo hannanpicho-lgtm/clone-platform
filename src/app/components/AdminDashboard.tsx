@@ -3,8 +3,34 @@ import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
-import { safeFetch } from '/src/utils/safeFetch';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { safeFetch } from '../../utils/safeFetch';
+import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import {
+  Users,
+  DollarSign,
+  Activity,
+  Gift,
+  UserPlus,
+  MessageSquare,
+  Settings,
+  BarChart3,
+  XCircle,
+  CheckCircle,
+  RefreshCw,
+  Search,
+  Shield,
+  Bell,
+  LogOut,
+  TrendingUp,
+  AlertTriangle,
+  Zap,
+  Link2,
+  Ticket,
+  Copy,
+} from 'lucide-react';
+import { PremiumManagementPanel } from './PremiumManagementPanel';
+import { LiveChat } from './LiveChat';
+import { getVipTierConfig, VIP_TIER_ORDER } from './vipConfig';
 
 // Import all required types
 
@@ -104,39 +130,11 @@ interface AdminDashboardProps {
   adminIsSuperAdmin?: boolean;
   adminPermissions?: string[];
 }
-
-
-
-// Stub imports for icons and components (accept props, return null)
-const Users = (props: any) => null;
-const DollarSign = (props: any) => null;
-const Activity = (props: any) => null;
-const Gift = (props: any) => null;
-const UserPlus = (props: any) => null;
-const MessageSquare = (props: any) => null;
-const Settings = (props: any) => null;
-const BarChart3 = (props: any) => null;
-const XCircle = (props: any) => null;
-const CheckCircle = (props: any) => null;
-const RefreshCw = (props: any) => null;
-const Search = (props: any) => null;
-const Shield = (props: any) => null;
-const Bell = (props: any) => null;
-const LogOut = (props: any) => null;
-const TrendingUp = (props: any) => null;
-const AlertTriangle = (props: any) => null;
-const Zap = (props: any) => null;
-const Link2 = (props: any) => null;
-const Ticket = (props: any) => null;
-const AdminProductManager = (props: any) => null;
-const Copy = (props: any) => null;
-const PremiumManagementPanel = (props: any) => null;
-
 export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin = true, adminPermissions = ['*'] }: AdminDashboardProps) {
     // Utility functions and permission variables (must be inside the component)
     function formatLocationLabel(val: any) { return String(val || 'Unknown'); }
     function formatIpLabel(val: any) { return String(val || ''); }
-    function getTasksPerSetForTier(tier: string) { return 3; }
+    function getTasksPerSetForTier(tier: string) { return getVipTierConfig(tier).productsPerSet; }
     function isResetRequired(user: User) { return false; }
     const canViewUsers = true;
     const canManageUsers = true;
@@ -240,16 +238,22 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setResetStatus('');
 
     try {
-      const response = await fetch('/api/admin-reset-password', {
+      const token = getAdminAuthToken();
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/reset-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({ userId: resetUserId, newPassword: resetPassword }),
       });
+
+      const payload = await response.json().catch(() => ({} as any));
 
       if (response.ok) {
         setResetStatus('Password reset successfully.');
       } else {
-        setResetStatus('Failed to reset password. Please check user ID and try again.');
+        setResetStatus(`Failed to reset password${payload?.error ? `: ${payload.error}` : '. Please check user ID and try again.'}`);
       }
     } catch {
       setResetStatus('Error occurred. Please try again.');
@@ -338,7 +342,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         }
       );
 
-      if (usersResponse.ok) {
+      if (usersResponse?.ok) {
         const data = await usersResponse.json();
         const backendUsers = data.users || [];
         setUsers(backendUsers);
@@ -358,7 +362,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             }
           );
 
-          if (linksResponse.ok) {
+          if (linksResponse?.ok) {
             const linksData = await linksResponse.json();
             const config = linksData?.config || {};
             setSupportLinks({
@@ -380,7 +384,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             }
           );
 
-          if (supportResponse.ok) {
+          if (supportResponse?.ok) {
             const supportData = await supportResponse.json();
             if (supportData.tickets && Array.isArray(supportData.tickets)) {
               setSupportCases(
@@ -504,7 +508,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         }
       );
 
-      if (response.ok) {
+      if (response?.ok) {
         loadAdminData();
         loadAdminAlerts(false);
         alert('✅ Account unfrozen successfully');
@@ -530,12 +534,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         }
       );
 
-      if (response.ok) {
+      if (response?.ok) {
         loadAdminData();
         setSelectedUser(prev => prev ? { ...prev, vipTier: newTier } : prev);
         alert(`✅ VIP tier updated to ${newTier}`);
       } else {
-        const errorData = await response.json().catch(() => ({}));
+        const errorData = await response?.json().catch(() => ({}));
         alert(`❌ Failed to update VIP tier${errorData?.error ? `: ${errorData.error}` : ''}`);
       }
     } catch (err) {
@@ -924,8 +928,8 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         }
       );
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
+      const data = await response?.json().catch(() => ({}));
+      if (!response?.ok) {
         alert(`❌ Failed to save links${data?.error ? `: ${data.error}` : ''}`);
         return;
       }
@@ -998,7 +1002,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         body: JSON.stringify({ code: normalizedCode, status: nextStatus }),
       }
     )
-      .then(async (response) => {
+      .then(async (response: Response | null) => {
         if (!response) {
           alert('❌ Backend not reachable. Please try again.');
           return;
@@ -1029,7 +1033,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         body: JSON.stringify({ ownerUserId }),
       }
     )
-      .then(async (response) => {
+      .then(async (response: Response | null) => {
         if (!response) {
           alert('❌ Backend not reachable. Please try again.');
           return;
@@ -1338,7 +1342,22 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         exit={{ opacity: 0, y: -20 }}
                         className="space-y-6"
                       >
-                        <AdminProductManager />
+                          <Card className="border-0 shadow-lg">
+                            <CardContent className="p-6 space-y-3">
+                              <h3 className="text-lg font-bold text-gray-900">Product Catalog and Image Setup</h3>
+                              <p className="text-sm text-gray-600">
+                                Add products in the catalog, set image URL, and mark premium templates when needed.
+                              </p>
+                              <div className="text-xs text-gray-500 space-y-1">
+                                <p>Tip: use Task Products in Premium Products to add image URLs and toggle active/archived status.</p>
+                                <p>User-side task cards and review pages read product image URLs from this catalog.</p>
+                              </div>
+                            </CardContent>
+                          </Card>
+                          <PremiumManagementPanel
+                            adminToken={adminAccessToken}
+                            isSuperAdmin={adminIsSuperAdmin}
+                          />
                       </motion.div>
                     )}
           {activeTab === 'overview' && (
@@ -1539,6 +1558,21 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                       </div>
                     ))}
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-0 shadow-lg">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Live Chat Console</h3>
+                    <Button size="sm" variant="outline" onClick={loadAdminData}>
+                      Refresh
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-600 mb-4">
+                    Use this panel for real-time chat alongside support tickets.
+                  </p>
+                  <LiveChat accessToken={getAdminAuthToken()} />
                 </CardContent>
               </Card>
             </motion.div>
@@ -2074,12 +2108,32 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   <div className="space-y-4">
                     <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
                       <h4 className="font-semibold text-purple-900 mb-2">VIP Tiers Configuration</h4>
-                      <div className="space-y-2 text-sm text-purple-800">
-                        <p>• Normal: 0.5% commission, 35 products, $99</p>
-                        <p>• Silver: 0.8% commission, 40 products, $999</p>
-                        <p>• Gold: 1.0% commission, 45 products, $2,999</p>
-                        <p>• Platinum: 1.2% commission, 50 products, $4,999</p>
-                        <p>• Diamond: 1.5% commission, 55 products, $9,999</p>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm text-purple-900">
+                          <thead>
+                            <tr className="text-left border-b border-purple-200">
+                              <th className="py-2 pr-4">Tier</th>
+                              <th className="py-2 pr-4">Commission</th>
+                              <th className="py-2 pr-4">Products/Set</th>
+                              <th className="py-2 pr-4">Min Balance</th>
+                              <th className="py-2">Order Range</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {VIP_TIER_ORDER.map((tier) => {
+                              const cfg = getVipTierConfig(tier);
+                              return (
+                                <tr key={tier} className="border-b border-purple-100">
+                                  <td className="py-2 pr-4 font-semibold">{tier}</td>
+                                  <td className="py-2 pr-4">{(cfg.commissionRate * 100).toFixed(2)}%</td>
+                                  <td className="py-2 pr-4">{cfg.productsPerSet}</td>
+                                  <td className="py-2 pr-4">${cfg.minimumBalance.toLocaleString()}</td>
+                                  <td className="py-2">${cfg.productMin.toLocaleString()} - ${cfg.productMax.toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
 
@@ -2633,6 +2687,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       {/* Admin password reset form */}
       <div className="admin-reset-form mt-8">
         <h2 className="text-xl font-bold mb-4">Admin Password Reset</h2>
+        <p className="text-sm text-gray-600 mb-3 text-center">
+          Use the exact user ID from Users tab for reliable password reset.
+        </p>
         <form onSubmit={handleAdminReset} className="flex flex-col gap-4 max-w-md mx-auto">
           <input
             type="text"
@@ -2652,7 +2709,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
           />
           <button type="submit" className="bg-blue-600 text-white font-bold py-2 rounded">Reset Password</button>
         </form>
-        {resetStatus && <div className="mt-2 text-sm text-green-600">{resetStatus}</div>}
+        {resetStatus && (
+          <div className={`mt-2 text-sm text-center ${resetStatus.toLowerCase().includes('success') ? 'text-green-600' : 'text-red-600'}`}>
+            {resetStatus}
+          </div>
+        )}
       </div>
     </div>
   );

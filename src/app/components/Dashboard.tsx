@@ -64,7 +64,6 @@ import { RecordsPage, RecordItem } from './RecordsPage';
 import { ProductSubmissionLoader } from './ProductSubmissionLoader';
 import { CustomerServiceChat } from './CustomerServiceChat';
 import { UnfreezeSuccessModal } from './UnfreezeSuccessModal';
-import { AccountFreezeModal } from './AccountFreezeModal';
 
 interface UserProfile {
   id: string;
@@ -221,6 +220,11 @@ const getDepositCryptoAssets = (config: DepositConfig | null) => {
   return Array.from(mergedByAsset.values());
 };
 
+const HOMEPAGE_BACKGROUND_VIDEOS = [
+  'https://assets.mixkit.co/videos/preview/mixkit-woman-using-smartphone-for-online-shopping-4767-large.mp4',
+  'https://assets.mixkit.co/videos/preview/mixkit-close-up-of-a-woman-shopping-online-4885-large.mp4',
+];
+
 interface DashboardProps {
   accessToken: string;
   onLogout: () => void;
@@ -236,6 +240,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [activeNav, setActiveNav] = useState('home');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [menuLanguage, setMenuLanguage] = useState<'en' | 'zh'>('en');
   const [avatarError, setAvatarError] = useState(false);
   const [balance, setBalance] = useState(0);
   const [productsSubmitted, setProductsSubmitted] = useState(0);
@@ -253,6 +258,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [productRecords, setProductRecords] = useState<RecordItem[]>([]);
   // Assigned products for current set (simulate/generate for now)
   const [assignedProducts, setAssignedProducts] = useState<ProductData[]>([]);
+  const [activePendingRecordId, setActivePendingRecordId] = useState<string | null>(null);
   const [showSubmissionLoader, setShowSubmissionLoader] = useState(false);
   const [submissionData, setSubmissionData] = useState<{
     productName: string;
@@ -271,10 +277,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   // Account frozen state
   const [accountFrozen, setAccountFrozen] = useState(false);
   const [freezeAmount, setFreezeAmount] = useState(0);
-  const [showFreezeModal, setShowFreezeModal] = useState(false);
-  const [freezePremiumAmount, setFreezePremiumAmount] = useState(0);
-  const [originalBalanceBeforeFreeze, setOriginalBalanceBeforeFreeze] = useState(0);
-  const [premiumProfitBeforeFreeze, setPremiumProfitBeforeFreeze] = useState(0);
   const [activePremiumAssignment, setActivePremiumAssignment] = useState<UserProfile['premiumAssignment'] | null>(null);
   
   // Chat state
@@ -291,6 +293,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showSupportTickets, setShowSupportTickets] = useState(false);
   const [showLiveChat, setShowLiveChat] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
+  const [homeHeroVideoIndex, setHomeHeroVideoIndex] = useState(0);
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -337,6 +340,35 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [depositConfig, setDepositConfig] = useState<DepositConfig | null>(null);
   const [taskActionNotice, setTaskActionNotice] = useState<string | null>(null);
 
+  const menuText = {
+    en: {
+      liveChat: 'Live Chat Box',
+      supportTickets: 'Support Tickets',
+      contactUs: 'Customer Service Chat',
+      bonus: 'Bonus Payouts',
+      analytics: 'Analytics Dashboard',
+      leaderboard: 'Top Referrers',
+      emailPrefs: 'Email Preferences',
+      notifications: 'Notification',
+      translate: 'Translate',
+      signOut: 'Sign Out',
+    },
+    zh: {
+      liveChat: '在线聊天窗口',
+      supportTickets: '工单支持',
+      contactUs: '客服聊天',
+      bonus: '奖金发放',
+      analytics: '数据分析面板',
+      leaderboard: '推荐排行榜',
+      emailPrefs: '邮件偏好',
+      notifications: '通知',
+      translate: '切换语言',
+      signOut: '退出登录',
+    },
+  } as const;
+
+  const t = menuText[menuLanguage];
+
   const isTaskSubmissionLimitMessage = (message: string) => {
     const normalized = String(message || '').toLowerCase();
     return (
@@ -370,6 +402,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     };
   }, [showMenu]);
 
+  const createPendingRecord = (product: ProductData) => {
+    const pendingId = `pending-${Date.now()}`;
+    const pendingTimestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    setProductRecords((prev) => ([
+      {
+        id: pendingId,
+        timestamp: pendingTimestamp,
+        productName: product.name,
+        productImage: product.image,
+        totalAmount: product.totalAmount,
+        profit: 0,
+        status: 'pending',
+      },
+      ...prev,
+    ]));
+    setActivePendingRecordId(pendingId);
+  };
+
   const handleStartProduct = async (fallbackProduct: ProductData) => {
     try {
       const { projectId } = await import('~/utils/supabase/info');
@@ -389,6 +439,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           return;
         }
         setCurrentProduct(fallbackProduct);
+        createPendingRecord(fallbackProduct);
         setShowReviewPage(true);
         return;
       }
@@ -404,9 +455,18 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         creationTime: String(serverProduct?.creationTime || fallbackProduct.creationTime),
         ratingNo: String(serverProduct?.ratingNo || fallbackProduct.ratingNo),
       });
+      createPendingRecord({
+        name: String(serverProduct?.name || fallbackProduct.name),
+        image: String(serverProduct?.image || fallbackProduct.image),
+        totalAmount: Number(serverProduct?.totalAmount || fallbackProduct.totalAmount || 0),
+        profit: Number(serverProduct?.profit || fallbackProduct.profit || 0),
+        creationTime: String(serverProduct?.creationTime || fallbackProduct.creationTime),
+        ratingNo: String(serverProduct?.ratingNo || fallbackProduct.ratingNo),
+      });
       setShowReviewPage(true);
     } catch {
       setCurrentProduct(fallbackProduct);
+      createPendingRecord(fallbackProduct);
       setShowReviewPage(true);
     }
   };
@@ -464,18 +524,33 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     const now = new Date();
     const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     
-    // Add record
-    const newRecord: RecordItem = {
-      id: `record-${Date.now()}`,
-      timestamp: timestamp,
-      productName: currentProduct.name,
-      productImage: currentProduct.image,
-      totalAmount: currentProduct.totalAmount,
-      profit: currentProduct.profit,
-      status: 'approved',
-    };
-    
-    setProductRecords(prev => [newRecord, ...prev]); // Add to beginning
+    if (activePendingRecordId) {
+      setProductRecords((prev) => prev.map((record) => (
+        record.id === activePendingRecordId
+          ? {
+              ...record,
+              timestamp,
+              productName: currentProduct.name,
+              productImage: currentProduct.image,
+              totalAmount: currentProduct.totalAmount,
+              profit: appliedProfit,
+              status: 'approved',
+            }
+          : record
+      )));
+      setActivePendingRecordId(null);
+    } else {
+      const newRecord: RecordItem = {
+        id: `record-${Date.now()}`,
+        timestamp,
+        productName: currentProduct.name,
+        productImage: currentProduct.image,
+        totalAmount: currentProduct.totalAmount,
+        profit: appliedProfit,
+        status: 'approved',
+      };
+      setProductRecords(prev => [newRecord, ...prev]);
+    }
     
     // Set submission data and show loader instead of alert
     setSubmissionData({
@@ -494,52 +569,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     setShowSubmissionLoader(false);
     setSubmissionData(null);
     setCurrentProduct(null);
-  };
-
-  const handlePremiumSubmit = (mergedValue: number, profit: number, bundleCount: number) => {
-    // FREEZE LOGIC:
-    // Example: Premium = $10,000, Current Balance = $3,000
-    // Deficit = $10,000 - $3,000 = $7,000
-    // New Balance = -$7,000 (showing deficit)
-    // Top-up Required = $10,000 (full premium amount)
-    // After Unfreeze: $3,000 (original) + $10,000 (top-up) = $13,000
-    
-    const originalBalance = balance; // Store original balance (e.g., $3,000)
-    const deficit = mergedValue - balance; // Calculate deficit (e.g., $7,000)
-    
-    // Store original balance and profit before freezing
-    setOriginalBalanceBeforeFreeze(originalBalance);
-    setPremiumProfitBeforeFreeze(profit); // Store potential premium profit for display
-    
-    // Set balance to negative (showing the deficit)
-    setBalance(-deficit);
-    
-    // Freeze the account
-    setAccountFrozen(true);
-    setFreezeAmount(mergedValue); // Store the PREMIUM AMOUNT (e.g., $10,000)
-    setFreezePremiumAmount(mergedValue); // Store for modal display
-    
-    // Create timestamp
-    const now = new Date();
-    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    
-    // Add record for premium merged product (shows as pending/frozen)
-    const newRecord: RecordItem = {
-      id: `record-${Date.now()}`,
-      timestamp: timestamp,
-      productName: `🌟 Premium Bundle (${bundleCount} Products) (FROZEN)`,
-      productImage: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400',
-      totalAmount: mergedValue,
-      profit: 0, // No profit until unfrozen
-      status: 'pending',
-    };
-    
-    setProductRecords(prev => [newRecord, ...prev]);
-    
-    // Show beautiful freeze modal
-    setTimeout(() => {
-      setShowFreezeModal(true);
-    }, 100);
   };
 
   useEffect(() => {
@@ -834,7 +863,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     : (availableCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || cryptoWallet.walletType);
 
   return (
-    <div className="min-h-screen bg-gray-50 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-100 relative overflow-hidden">
       {uiNotice && (
         <div className="fixed top-4 right-4 z-[80] max-w-md w-[calc(100%-2rem)]">
           <div className={`rounded-lg border px-4 py-3 shadow-lg ${uiNotice.type === 'success' ? 'bg-green-50 border-green-300 text-green-800' : 'bg-red-50 border-red-300 text-red-800'}`}>
@@ -955,9 +984,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             </div>
 
             {/* Menu Items - Light Background */}
-            <div ref={menuScrollRef} className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-5">
+            <div ref={menuScrollRef} className="flex-1 overflow-y-auto bg-gray-100 px-4 py-4 space-y-5">
               {/* Sticky Quick Actions */}
-              <div className="sticky top-0 z-10 bg-gray-50 pb-3 border-b border-gray-200">
+              <div className="sticky top-0 z-10 bg-gray-100 pb-3 border-b border-gray-200">
                 <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Quick Actions</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <button 
@@ -965,14 +994,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setActiveNav('analytics');
                     }}
-                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
                   >
                     <span className="text-lg">📤</span>
                     <span className="text-gray-900 font-semibold text-sm">Upload</span>
                   </button>
                   <button 
                     onClick={() => setShowWithdrawalModal(true)}
-                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
                   >
                     <span className="text-lg">💵</span>
                     <span className="text-gray-900 font-semibold text-sm">Cash Out</span>
@@ -987,7 +1016,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowMemberID(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🆔</span>
@@ -999,7 +1028,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowActivity(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🎟️</span>
@@ -1011,7 +1040,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowAboutUs(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">ℹ️</span>
@@ -1023,7 +1052,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowCertificate(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                    className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">📜</span>
@@ -1116,12 +1145,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowChat(true);
+                      setShowLiveChat(true);
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">💬</span>
-                    <span className="text-gray-900 font-medium">Live Chat Support</span>
+                    <span className="text-gray-900 font-medium">{t.liveChat}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1131,7 +1160,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">🎫</span>
-                    <span className="text-gray-900 font-medium">Support Tickets</span>
+                    <span className="text-gray-900 font-medium">{t.supportTickets}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -1141,7 +1170,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">📞</span>
-                    <span className="text-gray-900 font-medium">Contact Us</span>
+                    <span className="text-gray-900 font-medium">{t.contactUs}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1151,7 +1180,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">🎁</span>
-                    <span className="text-gray-900 font-medium">Bonus Payouts</span>
+                    <span className="text-gray-900 font-medium">{t.bonus}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1161,7 +1190,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">📊</span>
-                    <span className="text-gray-900 font-medium">Analytics Dashboard</span>
+                    <span className="text-gray-900 font-medium">{t.analytics}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1171,7 +1200,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">🏆</span>
-                    <span className="text-gray-900 font-medium">Top Referrers</span>
+                    <span className="text-gray-900 font-medium">{t.leaderboard}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1181,7 +1210,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">📧</span>
-                    <span className="text-gray-900 font-medium">Email Preferences</span>
+                    <span className="text-gray-900 font-medium">{t.emailPrefs}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1191,18 +1220,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">🔔</span>
-                    <span className="text-gray-900 font-medium">Notification</span>
+                    <span className="text-gray-900 font-medium">{t.notifications}</span>
                   </button>
                 </div>
               </div>
 
               {/* Language Selector */}
               <div className="flex items-center space-x-2 pt-4 border-t border-gray-200">
-                <button className="flex items-center space-x-2 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors">
-                  <span className="text-sm">🌐 Translate</span>
+                <button
+                  className="flex items-center space-x-2 bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors"
+                  onClick={() => setMenuLanguage((prev) => (prev === 'en' ? 'zh' : 'en'))}
+                >
+                  <span className="text-sm">🌐 {t.translate}</span>
                 </button>
-                <button className="bg-gray-200 text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors">
-                  <span className="text-sm font-medium">EN</span>
+                <button
+                  className="bg-gray-200 text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                  onClick={() => setMenuLanguage((prev) => (prev === 'en' ? 'zh' : 'en'))}
+                >
+                  <span className="text-sm font-medium">{menuLanguage.toUpperCase()}</span>
                 </button>
               </div>
 
@@ -1211,7 +1246,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 onClick={onLogout}
                 className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
               >
-                Sign Out
+                {t.signOut}
               </button>
             </div>
           </div>
@@ -1222,7 +1257,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showNotifications && (
         <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)}>
           <div 
-            className="absolute right-4 top-16 w-80 bg-white rounded-lg shadow-xl border border-gray-200 p-4"
+            className="absolute right-4 top-16 w-80 bg-gray-100 rounded-lg shadow-xl border border-gray-200 p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-bold text-gray-900 mb-3">Notifications</h3>
@@ -1286,10 +1321,21 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       
       {/* Hero Section with Background Image */}
       {activeNav === 'home' && (
-        <div className="relative h-64 overflow-hidden bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500">
+        <div className="relative h-64 overflow-hidden bg-gradient-to-br from-slate-700 via-slate-600 to-cyan-700">
+          <video
+            className="absolute inset-0 h-full w-full object-cover"
+            autoPlay
+            muted
+            loop
+            playsInline
+            onEnded={() => setHomeHeroVideoIndex((prev) => (prev + 1) % HOMEPAGE_BACKGROUND_VIDEOS.length)}
+          >
+            <source src={HOMEPAGE_BACKGROUND_VIDEOS[homeHeroVideoIndex]} type="video/mp4" />
+            <source src={HOMEPAGE_BACKGROUND_VIDEOS[(homeHeroVideoIndex + 1) % HOMEPAGE_BACKGROUND_VIDEOS.length]} type="video/mp4" />
+          </video>
           {/* User Refresh Button */}
           <button
-            className="absolute top-4 right-4 z-20 flex items-center bg-white/80 hover:bg-white text-blue-700 font-semibold px-4 py-2 rounded-lg shadow transition-colors"
+            className="absolute top-4 right-4 z-20 flex items-center bg-slate-100/85 hover:bg-slate-100 text-blue-700 font-semibold px-4 py-2 rounded-lg shadow transition-colors"
             onClick={() => window.location.reload()}
             aria-label="Refresh dashboard"
           >
@@ -1298,8 +1344,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             </svg>
             Refresh
           </button>
-          <div className="absolute inset-0 opacity-20">
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-gray-900"></div>
+          <div className="absolute inset-0 opacity-70">
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-900/30 via-slate-900/40 to-slate-100"></div>
           </div>
           <motion.div 
             className="absolute inset-0"
@@ -1359,7 +1405,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         {activeNav === 'home' && (
           <>
             {/* Open and Extensible Card */}
-            <Card className="mb-6 shadow-lg">
+            <Card className="mb-6 shadow-lg bg-gray-100">
               <CardContent className="pt-6">
                 <h2 className="text-2xl font-bold text-gray-900 mb-3 text-center">
                   Open and extensible
@@ -1503,25 +1549,25 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
             {/* Metrics Section */}
             <div className="grid grid-cols-2 gap-4 mb-6">
-              <Card className="shadow-sm">
+              <Card className="shadow-sm bg-gray-100">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Compress alerts by</p>
                   <p className="text-5xl font-bold text-[#00bfff]">{displayMetrics.alertCompressionRatio}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm bg-gray-100">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Identify critical alerts in</p>
                   <p className="text-5xl font-bold text-[#ff2e9f]">{displayMetrics.mttrImprovement}s</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm bg-gray-100">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Reduce ServiceNow tickets by</p>
                   <p className="text-3xl font-bold text-gray-900">{displayMetrics.ticketReductionRate}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm bg-gray-100">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Save up to</p>
                   <p className="text-3xl font-bold text-gray-900">{displayMetrics.automationCoverage}%</p>
@@ -2100,18 +2146,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         isOpen={showUnfreezeModal}
         onClose={() => setShowUnfreezeModal(false)}
         newBalance={unfreezeBalance}
-      />
-
-      {/* Account Freeze Modal */}
-      <AccountFreezeModal
-        isOpen={showFreezeModal}
-        onClose={() => {
-          setShowFreezeModal(false);
-          setShowChat(true); // Auto-open customer service chat
-        }}
-        premiumAmount={freezePremiumAmount}
-        currentBalance={balance}
-        potentialProfit={premiumProfitBeforeFreeze}
       />
 
       {/* Withdrawal Password Modal */}

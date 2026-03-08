@@ -387,6 +387,7 @@ const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
   const increment = Number.isInteger(Number(completedSetIncrement)) && Number(completedSetIncrement) > 0
     ? Number(completedSetIncrement)
     : 0;
+  const currentBalance = roundCurrency(Number(user?.balance ?? 0));
 
   const currentTier = normalizeVipTier(user?.vipTier || 'Normal');
   const currentTierSetProgress = Number.isInteger(Number(user?.tierSetProgress)) && Number(user?.tierSetProgress) >= 0
@@ -406,6 +407,10 @@ const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
     const requiredSets = getRequiredSetsForTierUpgrade(nextTier);
     const candidateNextTier = getNextVipTier(nextTier);
     if (!candidateNextTier || !Number.isFinite(requiredSets) || nextTierSetProgress < requiredSets) {
+      break;
+    }
+    const candidateTierMinBalance = getMinimumBalanceByTier(candidateNextTier);
+    if (currentBalance < candidateTierMinBalance) {
       break;
     }
 
@@ -488,6 +493,15 @@ const getTaskAmountRangeByTier = (vipTier: string): { min: number; max: number }
   if (tier === 'Gold') return { min: 599, max: 1998 };
   if (tier === 'Silver') return { min: 399, max: 598 };
   return { min: 99, max: 398 };
+};
+
+const getMinimumBalanceByTier = (vipTier: string): number => {
+  const tier = String(vipTier || 'Normal');
+  if (tier === 'Diamond') return 9999;
+  if (tier === 'Platinum') return 1999;
+  if (tier === 'Gold') return 599;
+  if (tier === 'Silver') return 399;
+  return 99;
 };
 
 const formatTaskTimestamp = (value: Date): string => {
@@ -1370,7 +1384,7 @@ app.post("/signup", async (c) => {
       parentUserId: parentUserId || null,
       childCount: 0,
       totalProfitFromChildren: 0,
-      balance: 0,
+      balance: getMinimumBalanceByTier('Normal'),
       welcomeBonusGranted: false,
       dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
       extraTaskSets: 0,
@@ -2029,7 +2043,7 @@ app.get("/profile", async (c) => {
         name: metadataName || metadataUsername || 'User',
         username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
         vipTier: 'Normal',
-        balance: 0,
+        balance: getMinimumBalanceByTier('Normal'),
         welcomeBonusGranted: false,
         dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
         extraTaskSets: 0,
@@ -2918,6 +2932,16 @@ app.get('/tasks/next-product', async (c) => {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
     }
 
+    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+    if (currentBalance < requiredMinimumBalance) {
+      return c.json({
+        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
+        requiredMinimumBalance,
+        currentBalance,
+      }, 403);
+    }
+
     const todayDate = new Date().toISOString().slice(0, 10);
     const taskState = buildTaskState(userProfile);
     const normalizedTaskState = taskState.currentSetDate === todayDate
@@ -3042,6 +3066,16 @@ app.post("/submit-product", async (c) => {
 
     if (userProfile?.accountFrozen) {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
+    }
+
+    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+    if (currentBalance < requiredMinimumBalance) {
+      return c.json({
+        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
+        requiredMinimumBalance,
+        currentBalance,
+      }, 403);
     }
 
     const activePremiumAssignment = userProfile?.premiumAssignment || null;
@@ -3279,6 +3313,16 @@ app.post('/tasks/complete-product', async (c) => {
 
     if (userProfile?.accountFrozen) {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
+    }
+
+    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+    if (currentBalance < requiredMinimumBalance) {
+      return c.json({
+        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
+        requiredMinimumBalance,
+        currentBalance,
+      }, 403);
     }
 
     const todayDate = new Date().toISOString().slice(0, 10);

@@ -52,7 +52,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
       <div className="max-w-2xl mx-auto px-4 py-8">
         <div className="text-center mb-6">
           <div className="mb-4 flex justify-center">
-            <div className="w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="w-32 h-32 bg-gray-100 rounded-lg shadow-lg overflow-hidden">
               <img
                 src={product.image}
                 alt={product.name}
@@ -109,7 +109,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
                   className={`h-10 w-10 ${
                     star <= (hoveredRating || rating)
                       ? 'fill-gray-900 text-gray-900'
-                      : 'fill-white text-gray-900'
+                      : 'fill-gray-100 text-gray-900'
                   }`}
                 />
               </button>
@@ -167,7 +167,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
             value={reviewText}
             onChange={(e) => setReviewText(e.target.value)}
             placeholder="type here"
-            className="w-full h-24 px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:outline-none resize-none mb-4"
+            className="w-full h-24 px-4 py-3 rounded-lg border-2 border-gray-300 bg-gray-100 focus:border-blue-500 focus:outline-none resize-none mb-4"
           />
 
           <button
@@ -178,7 +178,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           </button>
           <button
             onClick={onCancel}
-            className="w-full mt-3 bg-white/90 hover:bg-white text-gray-900 font-semibold py-3 rounded-lg transition-colors"
+            className="w-full mt-3 bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-3 rounded-lg transition-colors"
           >
             Cancel
           </button>
