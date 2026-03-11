@@ -13,10 +13,13 @@ export default function App() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
   const adminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').trim().toLowerCase() === 'true';
   const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
+  const isAdminPortalHost = hostname.includes('tank-admin-portal')
+    || hostname.includes('tank-admin-live')
+    || hostname.includes('clone-platform-admin.pages.dev');
   const isAdminRoute = typeof window !== 'undefined'
     ? (pathname === '/admin' || pathname.startsWith('/admin/'))
     : false;
-  const shouldRenderAdminPortal = adminPortalOnly || isAdminRoute;
+  const shouldRenderAdminPortal = adminPortalOnly || isAdminPortalHost || isAdminRoute;
   const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
@@ -64,7 +67,7 @@ export default function App() {
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
-    if (!adminPortalOnly && isAdminRoute && adminPortalUrl) {
+    if (!adminPortalOnly && !isAdminPortalHost && isAdminRoute && adminPortalUrl) {
       try {
         const targetUrl = new URL(adminPortalUrl);
         const alreadyOnAdminPortal = targetUrl.hostname === hostname;
