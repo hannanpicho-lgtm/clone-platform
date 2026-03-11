@@ -1,7 +1,0 @@
-# Netlify staging configuration
-[build]
-  command = "npm run build"
-  publish = "dist"
-
-[context.staging]
-  environment = { VITE_API_URL = "https://staging-api.example.com" }
