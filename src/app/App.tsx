@@ -13,6 +13,7 @@ export default function App() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
   const adminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').trim().toLowerCase() === 'true';
   const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
+  const resolvedAdminPortalUrl = adminPortalUrl || 'https://tank-admin-portal.tanknewmedia.work';
   const isAdminPortalHost = hostname.includes('tank-admin-portal')
     || hostname.includes('tank-admin-live')
     || hostname.includes('clone-platform-admin.pages.dev');
@@ -67,13 +68,13 @@ export default function App() {
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
-    if (!adminPortalOnly && !isAdminPortalHost && isAdminRoute && adminPortalUrl) {
+    if (!adminPortalOnly && !isAdminPortalHost && isAdminRoute && resolvedAdminPortalUrl) {
       try {
-        const targetUrl = new URL(adminPortalUrl);
+        const targetUrl = new URL(resolvedAdminPortalUrl);
         const alreadyOnAdminPortal = targetUrl.hostname === hostname;
         if (!alreadyOnAdminPortal) {
           setIsRedirectingToAdminPortal(true);
-          window.location.replace(adminPortalUrl);
+          window.location.replace(resolvedAdminPortalUrl);
           return () => {
             console.error = originalConsoleError;
             window.removeEventListener('unhandledrejection', handleUnhandledRejection);
