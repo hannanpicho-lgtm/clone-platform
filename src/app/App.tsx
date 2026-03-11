@@ -9,11 +9,14 @@ import { getSupabaseClient } from '/utils/supabase/client';
 console.log("App.tsx loaded");
 
 export default function App() {
-  const envAdminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').toLowerCase() === 'true';
-  const isAdminPortalHost = typeof window !== 'undefined'
-    ? (window.location.hostname.includes('tank-admin-portal') || window.location.hostname.includes('tank-admin-live'))
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const adminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').trim().toLowerCase() === 'true';
+  const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
+  const isAdminRoute = typeof window !== 'undefined'
+    ? (pathname === '/admin' || pathname.startsWith('/admin/'))
     : false;
-  const adminPortalOnly = envAdminPortalOnly && isAdminPortalHost;
+  const shouldRenderAdminPortal = adminPortalOnly || isAdminRoute;
   const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
@@ -24,20 +27,12 @@ export default function App() {
   const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
   const [gateInput, setGateInput] = useState('');
   const [gateError, setGateError] = useState('');
+  const [isRedirectingToAdminPortal, setIsRedirectingToAdminPortal] = useState(false);
 
   // Use singleton Supabase client
   const supabase = getSupabaseClient();
 
   useEffect(() => {
-    // Admin portal is hosted separately; redirect admin routes away from the user app.
-    const path = window.location.pathname;
-    if (!adminPortalOnly && (path === '/admin' || path.startsWith('/admin/'))) {
-      const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
-      window.location.replace(adminPortalUrl || '/');
-      setIsCheckingSession(false);
-      return;
-    }
-
     // Suppress "Failed to fetch" errors in console
     const originalConsoleError = console.error;
     console.error = (...args: any[]) => {
@@ -69,7 +64,24 @@ export default function App() {
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
-    if (adminPortalOnly) {
+    if (!adminPortalOnly && isAdminRoute && adminPortalUrl) {
+      try {
+        const targetUrl = new URL(adminPortalUrl);
+        const alreadyOnAdminPortal = targetUrl.hostname === hostname;
+        if (!alreadyOnAdminPortal) {
+          setIsRedirectingToAdminPortal(true);
+          window.location.replace(adminPortalUrl);
+          return () => {
+            console.error = originalConsoleError;
+            window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+          };
+        }
+      } catch (error) {
+        console.error('Invalid admin portal URL:', error);
+      }
+    }
+
+    if (shouldRenderAdminPortal) {
       if (!adminGateKey) {
         setAdminGateUnlocked(true);
       } else {
@@ -128,7 +140,9 @@ export default function App() {
     setAdminAccessToken(null);
     setAdminPermissions([]);
     setIsSuperAdmin(true);
-    if (!adminPortalOnly) {
+    if (isAdminRoute) {
+      window.location.href = '/admin';
+    } else {
       window.location.href = '/';
     }
   };
@@ -172,10 +186,21 @@ export default function App() {
     );
   }
 
+  if (isRedirectingToAdminPortal) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Opening admin portal...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <div className="min-h-screen">
-        {adminPortalOnly ? (
+        {shouldRenderAdminPortal ? (
           !adminGateUnlocked ? (
             <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
               <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 shadow-2xl">
