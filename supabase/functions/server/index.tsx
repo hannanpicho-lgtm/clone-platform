@@ -2885,6 +2885,7 @@ app.get("/admin/users", async (c) => {
       id: user?.id ?? '',
       email: user?.email ?? '',
       name: user?.name ?? 'User',
+      invitationCode: user?.invitationCode ?? '',
       lastLoginAt: user?.lastLoginAt ?? null,
       lastLoginCountry: user?.lastLoginCountry ?? null,
       lastLoginIp: user?.lastLoginIp ?? null,

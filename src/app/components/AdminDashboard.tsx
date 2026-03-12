@@ -37,6 +37,7 @@ interface User {
   id: string;
   name?: string;
   email?: string;
+  invitationCode?: string;
   vipTier?: string;
   currentSetTasksCompleted?: number;
   accountFrozen?: boolean;
@@ -1472,6 +1473,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       || String(user.email || '').toLowerCase().includes(normalizedSearchQuery)
       || String(user.id || '').toLowerCase().includes(normalizedSearchQuery)
       || String(user.vipTier || '').toLowerCase().includes(normalizedSearchQuery)
+      || String(user.invitationCode || '').toLowerCase().includes(normalizedSearchQuery)
     );
   });
 
@@ -2231,7 +2233,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                         <Input
                           type="text"
-                          placeholder="Search users by name, email, user ID, or VIP tier..."
+                          placeholder="Search users by name, email, user ID, invitation code, or VIP tier..."
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           className="pl-10 pr-20"
