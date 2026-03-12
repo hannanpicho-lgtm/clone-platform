@@ -5,6 +5,7 @@ import { AdminLogin } from './components/AdminLogin';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getSupabaseClient } from '/utils/supabase/client';
+import { Toaster } from 'sonner';
 
 console.log("App.tsx loaded");
 
@@ -223,6 +224,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <Toaster position="top-right" richColors closeButton />
       <div className="min-h-screen">
         {shouldRenderAdminPortal ? (
           !adminGateUnlocked ? (

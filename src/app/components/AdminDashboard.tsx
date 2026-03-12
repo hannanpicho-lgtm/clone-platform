@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
 import { safeFetch } from '../../utils/safeFetch';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import { toast } from 'sonner';
 import {
   Users,
   DollarSign,
@@ -317,7 +318,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
         const data = await response.json().catch(() => ({}));
         const rows = Array.isArray(data?.withdrawals) ? data.withdrawals : [];
-        setWithdrawals(rows.map((item: any) => ({
+        const mappedWithdrawals = rows.map((item: any) => ({
           id: String(item?.id || ''),
           userId: String(item?.userId || ''),
           userName: String(item?.userName || 'User'),
@@ -328,7 +329,45 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
           approvedAt: item?.approvedAt || undefined,
           deniedAt: item?.deniedAt || undefined,
           denialReason: item?.denialReason || undefined,
-        })));
+        }));
+
+        const nextPendingIds = mappedWithdrawals
+          .filter((item) => item.status === 'pending')
+          .map((item) => item.id);
+
+        if (hasLoadedWithdrawalsRef.current) {
+          const newPendingWithdrawals = mappedWithdrawals.filter(
+            (item) => item.status === 'pending' && !previousPendingWithdrawalIdsRef.current.includes(item.id)
+          );
+
+          if (newPendingWithdrawals.length > 0) {
+            playWithdrawalAlert();
+
+            newPendingWithdrawals.forEach((item) => {
+              toast.warning(`New withdrawal request from ${item.userName}`, {
+                description: `$${item.amount.toFixed(2)} is awaiting admin approval.`,
+                duration: 12000,
+              });
+
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification('New withdrawal request', {
+                  body: `${item.userName} requested $${item.amount.toFixed(2)}`,
+                  tag: `withdrawal-${item.id}`,
+                  requireInteraction: true,
+                });
+              }
+            });
+          }
+        } else {
+          hasLoadedWithdrawalsRef.current = true;
+
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(() => undefined);
+          }
+        }
+
+        previousPendingWithdrawalIdsRef.current = nextPendingIds;
+        setWithdrawals(mappedWithdrawals);
       } catch {
         setWithdrawals([]);
       }
@@ -409,6 +448,36 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [savingVipCommissionRanges, setSavingVipCommissionRanges] = useState(false);
   const [vipCommissionSetSelection, setVipCommissionSetSelection] = useState<'set1' | 'set2'>('set1');
   const [vipCommissionTierSelection, setVipCommissionTierSelection] = useState<VipTierName>('Normal');
+  const hasLoadedWithdrawalsRef = useRef(false);
+  const previousPendingWithdrawalIdsRef = useRef<string[]>([]);
+
+  const playWithdrawalAlert = () => {
+    if (typeof window === 'undefined') return;
+
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    try {
+      const audioContext = new AudioContextCtor();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0.001, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.45);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.45);
+      oscillator.onended = () => {
+        audioContext.close().catch(() => undefined);
+      };
+    } catch {
+    }
+  };
 
   async function handleAdminReset(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -900,6 +969,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     console.log('DEBUG: supportCases state', supportCases);
     return () => clearInterval(interval);
   }, [users, supportCases, selectedUser]);
+
+  useEffect(() => {
+    if (!adminIsSuperAdmin && !adminPermissions.includes('*') && !adminPermissions.includes('withdrawals.manage')) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadAdminWithdrawals();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [adminAccessToken, adminIsSuperAdmin, adminPermissions]);
 
   // Load admin accounts when super admin key changes
   useEffect(() => {
