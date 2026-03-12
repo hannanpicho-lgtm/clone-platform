@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
 import { safeFetch } from '../../utils/safeFetch';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
+import { getSupabaseClient } from '/utils/supabase/client';
 import { toast } from 'sonner';
 import {
   Users,
@@ -201,6 +203,8 @@ const normalizeVipCommissionRanges = (input: any): VipCommissionRangeMap => {
 };
 
 export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin = true, adminPermissions = ['*'] }: AdminDashboardProps) {
+  const supabase = useMemo(() => getSupabaseClient(), []);
+  const supportRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
     // Utility functions and permission variables (must be inside the component)
     function formatLocationLabel(val: any) { return String(val || 'Unknown'); }
     function formatIpLabel(val: any) { return String(val || ''); }
@@ -959,6 +963,26 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   }, [activeTab]);
 
   useEffect(() => {
+    const channel = supabase
+      .channel('support-chat-realtime')
+      .on('broadcast', { event: 'ticket-update' }, async () => {
+        if (activeTab === 'customer-service' || activeTab === 'overview') {
+          await loadAdminData();
+        } else {
+          await loadAdminAlerts(false);
+        }
+      });
+
+    supportRealtimeChannelRef.current = channel;
+    channel.subscribe();
+
+    return () => {
+      supportRealtimeChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [activeTab, adminAccessToken, supabase]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       loadAdminAlerts(false);
     }, 30000);
@@ -1678,6 +1702,25 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     loadAdminAlerts(false);
   };
 
+  const broadcastSupportRealtimeUpdate = async (ticketId: string) => {
+    const channel = supportRealtimeChannelRef.current;
+    if (!channel) return;
+
+    try {
+      await channel.send({
+        type: 'broadcast',
+        event: 'ticket-update',
+        payload: {
+          ticketId,
+          action: 'reply',
+          sender: 'admin',
+          at: new Date().toISOString(),
+        },
+      });
+    } catch {
+    }
+  };
+
   const handleReplySupportCase = async (caseId: string) => {
     const message = (supportReplyDrafts[caseId] || '').trim();
     if (!message) {
@@ -1703,6 +1746,8 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         alert(`❌ Failed to reply${errorData?.error ? `: ${errorData.error}` : ''}`);
         return;
       }
+
+      await broadcastSupportRealtimeUpdate(caseId);
 
       setSupportReplyDrafts((prev) => ({ ...prev, [caseId]: '' }));
       await loadAdminData();

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { X, Send } from 'lucide-react';
 import { Button } from './ui/button';
 import { supabaseUrl } from '/utils/supabase/info';
+import { getSupabaseClient } from '/utils/supabase/client';
 import { safeFetch } from '../../utils/safeFetch';
 
 interface Message {
@@ -32,8 +34,10 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     whatsapp: 'https://wa.me/1234567890',
     telegram: 'https://t.me/tanknewmedia_support',
   });
+  const supportRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
 
   const baseUrl = useMemo(() => `${supabaseUrl.replace(/\/$/, '')}/functions/v1/make-server-44a642d3`, []);
+  const supabase = useMemo(() => getSupabaseClient(), []);
 
   const mapTicketToMessages = (ticket: any): Message[] => {
     const mapped: Message[] = [];
@@ -70,7 +74,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     return mapped;
   };
 
-  const loadTicketState = async () => {
+  const loadTicketState = useCallback(async () => {
     try {
       setIsLoading(true);
       setErrorMessage('');
@@ -124,13 +128,48 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [accessToken, baseUrl, accountFrozen, userName]);
+
+  const broadcastSupportUpdate = useCallback(async (ticketId: string, action: 'created' | 'reply') => {
+    const channel = supportRealtimeChannelRef.current;
+    if (!channel) return;
+
+    try {
+      await channel.send({
+        type: 'broadcast',
+        event: 'ticket-update',
+        payload: {
+          ticketId,
+          action,
+          sender: 'user',
+          at: new Date().toISOString(),
+        },
+      });
+    } catch {
+    }
+  }, []);
 
   useEffect(() => {
     loadTicketState();
     const interval = setInterval(loadTicketState, 3000);
     return () => clearInterval(interval);
-  }, [accessToken, activeTicketId]);
+  }, [loadTicketState]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('support-chat-realtime')
+      .on('broadcast', { event: 'ticket-update' }, () => {
+        loadTicketState();
+      });
+
+    supportRealtimeChannelRef.current = channel;
+    channel.subscribe();
+
+    return () => {
+      supportRealtimeChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [loadTicketState, supabase]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -182,6 +221,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
           setActiveTicketId(String(createData.ticket.id));
           setMessages(mapTicketToMessages(createData.ticket));
+          await broadcastSupportUpdate(String(createData.ticket.id), 'created');
         } else {
           const replyResponse = await safeFetch(`${resolvedBase}/support-tickets/${activeTicketId}/reply`, {
             method: 'POST',
@@ -202,6 +242,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
           }
 
           setMessages(mapTicketToMessages(replyData.ticket));
+          await broadcastSupportUpdate(String(activeTicketId), 'reply');
         }
       } catch (error: any) {
         const failureText = String(error?.message || 'Message failed to send. Please try again in a moment.');
