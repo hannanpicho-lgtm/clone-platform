@@ -1,41 +1,17 @@
 #!/usr/bin/env node
-// Auto-save script for project backup
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 
-// CONFIGURATION
-const SOURCE_DIR = path.resolve(__dirname, '..'); // Project root
-const BACKUP_DIR = path.resolve(os.homedir(), 'TankPlatformBackups');
-const INTERVAL_MINUTES = 10; // Backup every 10 minutes
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const targetScript = path.join(scriptDir, 'backup-snapshot.js');
 
-function getTimestamp() {
-  const now = new Date();
-  return now.toISOString().replace(/[:.]/g, '-');
-}
+const child = spawn(
+  process.execPath,
+  [targetScript, '--interval-minutes', '10'],
+  { stdio: 'inherit' }
+);
 
-function copyRecursiveSync(src, dest) {
-  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
-  if (fs.lstatSync(src).isDirectory()) {
-    fs.readdirSync(src).forEach(child => {
-      copyRecursiveSync(path.join(src, child), path.join(dest, child));
-    });
-  } else {
-    fs.copyFileSync(src, dest);
-  }
-}
-
-function backupProject() {
-  const backupPath = path.join(BACKUP_DIR, `backup-${getTimestamp()}`);
-  copyRecursiveSync(SOURCE_DIR, backupPath);
-  console.log(`Backup completed: ${backupPath}`);
-}
-
-function startAutoSave() {
-  if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-  console.log(`Auto-save started. Backups will be saved to: ${BACKUP_DIR}`);
-  backupProject();
-  setInterval(backupProject, INTERVAL_MINUTES * 60 * 1000);
-}
-
-startAutoSave();
+child.on('exit', (code) => {
+  process.exit(code ?? 0);
+});

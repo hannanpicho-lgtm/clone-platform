@@ -141,35 +141,20 @@ async function main() {
     printResult('Reply to ticket', replyOk, `status=${replyTicket.res.status}`);
     replyOk ? passed++ : failed++;
 
-    // 7) Send chat message
-    const conversationId = `conv_smoke_${Date.now()}`;
-    const sendMsg = await request('/chat/messages', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({
-        conversationId,
-        message: 'Hello from customer-service smoke test!',
-      }),
-    }, accessToken);
-
-    const sendMsgOk = sendMsg.res.status === 200 && sendMsg.data?.success === true && !!sendMsg.data?.message?.id;
-    printResult('Send chat message', sendMsgOk, `status=${sendMsg.res.status}`);
-    sendMsgOk ? passed++ : failed++;
-
-    // 8) Get chat messages for conversation
-    const getMsgs = await request(`/chat/messages?conversationId=${encodeURIComponent(conversationId)}`, {
+    // 7) Confirm ticket thread includes the user reply
+    const verifyThread = await request(`/support-tickets/${ticketId}`, {
       method: 'GET',
     }, accessToken);
 
-    const getMsgsOk =
-      getMsgs.res.status === 200 &&
-      getMsgs.data?.success === true &&
-      Array.isArray(getMsgs.data?.messages) &&
-      getMsgs.data.messages.length >= 1;
-    printResult('Get chat messages', getMsgsOk, `status=${getMsgs.res.status}`);
-    getMsgsOk ? passed++ : failed++;
+    const verifyThreadOk =
+      verifyThread.res.status === 200 &&
+      verifyThread.data?.success === true &&
+      Array.isArray(verifyThread.data?.ticket?.replies) &&
+      verifyThread.data.ticket.replies.some((item) => String(item?.message || '').includes('Smoke test reply message.'));
+    printResult('Verify ticket thread', verifyThreadOk, `status=${verifyThread.res.status}`);
+    verifyThreadOk ? passed++ : failed++;
 
-    // 9) Get FAQ list
+    // 8) Get FAQ list
     const faqList = await request('/faq', {
       method: 'GET',
     }, accessToken);
@@ -182,7 +167,7 @@ async function main() {
     printResult('Get FAQ list', faqListOk, `status=${faqList.res.status}`);
     faqListOk ? passed++ : failed++;
 
-    // 10) Search FAQ
+    // 9) Search FAQ
     const faqSearch = await request('/faq/search?q=withdrawal', {
       method: 'GET',
     }, accessToken);

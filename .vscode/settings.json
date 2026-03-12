@@ -1,0 +1,11 @@
+{
+  "terminal.integrated.enablePersistentSessions": true,
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.gpuAcceleration": "off",
+  "terminal.integrated.smoothScrolling": false,
+  "powershell.integratedConsole.showOnStartup": false,
+  "deno.enable": true,
+  "deno.enablePaths": [
+    "supabase/functions"
+  ]
+}
