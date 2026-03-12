@@ -9,6 +9,7 @@ interface Message {
   text: string;
   sender: 'user' | 'admin';
   timestamp: string;
+  pending?: boolean;
 }
 
 interface CustomerServiceChatProps {
@@ -127,9 +128,9 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
   useEffect(() => {
     loadTicketState();
-    const interval = setInterval(loadTicketState, 7000);
+    const interval = setInterval(loadTicketState, 3000);
     return () => clearInterval(interval);
-  }, [accessToken]);
+  }, [accessToken, activeTicketId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -144,6 +145,16 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
         setErrorMessage('');
         const resolvedBase = baseUrl;
         const draft = inputMessage.trim();
+        const optimisticMessage: Message = {
+          id: `pending-${Date.now()}`,
+          text: draft,
+          sender: 'user',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          pending: true,
+        };
+
+        setMessages((prev) => ([...prev, optimisticMessage]));
+        setInputMessage('');
 
         if (!activeTicketId) {
           const createResponse = await safeFetch(`${resolvedBase}/support-tickets`, {
@@ -192,13 +203,11 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
           setMessages(mapTicketToMessages(replyData.ticket));
         }
-
-        setInputMessage('');
       } catch (error: any) {
         const failureText = String(error?.message || 'Message failed to send. Please try again in a moment.');
         setErrorMessage(failureText);
         setMessages((prev) => ([
-          ...prev,
+          ...prev.filter((item) => !item.pending),
           {
             id: `local-${Date.now()}`,
             text: failureText,
@@ -284,7 +293,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
               <div
                 className={`max-w-[75%] rounded-2xl px-4 py-2 ${
                   message.sender === 'user'
-                    ? 'bg-blue-600 text-white'
+                    ? `text-white ${message.pending ? 'bg-blue-400' : 'bg-blue-600'}`
                     : 'bg-white text-gray-900 shadow-sm border border-gray-200'
                 }`}
               >
@@ -295,6 +304,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
                   }`}
                 >
                   {message.timestamp}
+                  {message.pending ? ' • sending...' : ''}
                 </p>
               </div>
             </div>
@@ -349,7 +359,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
             </Button>
           </div>
           <p className="text-xs text-gray-500 mt-2 text-center">
-            💬 Customer Service is available 24/7
+            Admin replies refresh automatically while this chat is open
           </p>
         </div>
       </div>

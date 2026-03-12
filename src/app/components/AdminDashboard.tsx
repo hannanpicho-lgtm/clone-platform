@@ -982,6 +982,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     return () => clearInterval(interval);
   }, [adminAccessToken, adminIsSuperAdmin, adminPermissions]);
 
+  useEffect(() => {
+    if (activeTab !== 'customer-service') {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadAdminData();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [activeTab, adminAccessToken]);
+
   // Load admin accounts when super admin key changes
   useEffect(() => {
     if (superAdminKey.trim()) {
