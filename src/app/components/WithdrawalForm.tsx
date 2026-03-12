@@ -126,7 +126,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
         return;
       }
 
-      setSuccess(`Withdrawal of $${withdrawAmount.toFixed(2)} requested successfully! Admin approval required.`);
+      setSuccess(String(data?.message || `Withdrawal of $${withdrawAmount.toFixed(2)} requested successfully! Admin approval required.`));
       setAmount('');
       setPasswordVerified(false);
       

@@ -9,6 +9,10 @@ export interface RecordItem {
   productImage: string;
   totalAmount: number;
   profit: number;
+  expectedProfit?: number;
+  commissionRate?: number;
+  multiplier?: number;
+  profitCalculation?: string;
   status: 'approved' | 'pending' | 'frozen';
 }
 
@@ -19,6 +23,12 @@ interface RecordsPageProps {
 
 export function RecordsPage({ records, onClose }: RecordsPageProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'frozen' | 'approved'>('all');
+
+  const getStatusLabel = (status: 'approved' | 'pending' | 'frozen') => {
+    if (status === 'pending') return 'In Progress';
+    if (status === 'frozen') return 'On Hold';
+    return 'Approved';
+  };
 
   const classifyRecord = (record: RecordItem): 'approved' | 'pending' | 'frozen' => {
     const normalizedStatus = String(record.status || '').toLowerCase();
@@ -64,9 +74,6 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
 
       {/* Tabs */}
       <div className="bg-blue-600 px-4 pt-4 pb-2 sticky top-[60px] z-10">
-        <p className="text-[11px] text-blue-100 mb-2">
-          Pending = started but not submitted. Frozen = orders that triggered account freeze.
-        </p>
         <div className="flex space-x-2 overflow-x-auto pb-2">
           <button
             onClick={() => setActiveTab('all')}
@@ -86,7 +93,7 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
                 : 'bg-blue-500 text-white hover:bg-blue-400'
             }`}
           >
-            Pending
+            In Progress
           </button>
           <button
             onClick={() => setActiveTab('frozen')}
@@ -96,7 +103,7 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
                 : 'bg-blue-500 text-white hover:bg-blue-400'
             }`}
           >
-            Frozen
+            On Hold
           </button>
           <button
             onClick={() => setActiveTab('approved')}
@@ -120,12 +127,12 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
                 <div className="text-4xl mb-3">📋</div>
                 <p className="text-gray-600 font-medium">
                   {activeTab === 'all' && 'No records yet'}
-                  {activeTab === 'pending' && 'No pending submissions'}
-                  {activeTab === 'frozen' && 'No freeze-triggered records'}
+                  {activeTab === 'pending' && 'No in-progress records'}
+                  {activeTab === 'frozen' && 'No on-hold records'}
                   {activeTab === 'approved' && 'No approved items'}
                 </p>
                 <p className="text-gray-500 text-sm mt-2">
-                  Start a product task to create pending records, then submit to move them to approved.
+                  Records appear here as tasks move through the workflow.
                 </p>
               </div>
             </CardContent>
@@ -137,7 +144,7 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
               <div className="flex items-center justify-between">
                 <p className="text-white text-sm font-medium">{record.timestamp}</p>
                 <span className={`${getStatusColor(classifyRecord(record))} text-white px-4 py-1 rounded-full text-xs font-semibold`}>
-                  {classifyRecord(record)}
+                  {getStatusLabel(classifyRecord(record))}
                 </span>
               </div>
 
@@ -173,6 +180,9 @@ export function RecordsPage({ records, onClose }: RecordsPageProps) {
                     <div className="text-center flex-1">
                       <p className="text-xs text-gray-600 mb-1">Profit</p>
                       <p className="text-lg font-bold text-green-600">$ {(record.profit || 0).toFixed(2)}</p>
+                      <p className="text-[11px] text-gray-500 mt-1 px-2 break-words">
+                        {record.profitCalculation || 'Profit calculation unavailable'}
+                      </p>
                     </div>
                   </div>
                 </CardContent>

@@ -109,7 +109,7 @@
 
 **Common Questions**:
 - User reports withdrawal not appearing: [API_REFERENCE.md](API_REFERENCE.md) → Withdrawals section
-- Premium assignment issues: [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) → Scenario 3
+- Premium deficit assignment issues: [PREMIUM_DEFICIT_ASSIGNMENT_RULE.md](PREMIUM_DEFICIT_ASSIGNMENT_RULE.md)
 - Account frozen: [API_REFERENCE.md](API_REFERENCE.md) → Account Frozen Status endpoint
 
 ---
@@ -234,9 +234,10 @@ FAQs:                     → List, search
 
 ---
 
-### Premium Products
+### Premium Deficit Assignment
 
 **Docs**: [API_REFERENCE.md](API_REFERENCE.md#premium-products)  
+**Rule**: [PREMIUM_DEFICIT_ASSIGNMENT_RULE.md](PREMIUM_DEFICIT_ASSIGNMENT_RULE.md)  
 **Admin Guide**: [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md#admin-integration)  
 **Tests**: `test-premium-endpoints.js`
 

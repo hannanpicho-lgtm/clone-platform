@@ -83,14 +83,29 @@ export function EarningsDashboard({
     );
   }
 
-  if (error) {
+  // On error, show balance from profile and a soft notice — never block balance display
+  if (error && !earnings) {
     return (
-      <Card className="p-6 bg-gray-50 border-gray-200">
-        <div className="text-center space-y-3">
-          <p className="text-sm text-gray-700">Unable to load earnings. Your current balance is <b>${profile.balance ?? 0}</b>.</p>
-          <Button onClick={fetchEarnings} variant="outline" size="sm">Retry</Button>
-        </div>
-      </Card>
+      <div className="space-y-4">
+        <Card className="border-green-200 bg-gradient-to-br from-green-50 to-green-100">
+          <CardContent className="pt-6">
+            <p className="text-sm font-medium text-green-700">Current Balance</p>
+            <div className="text-3xl font-bold text-green-900 mt-1">
+              ${Number((profile as any)?.balance ?? 0).toFixed(2)}
+            </div>
+            <p className="text-xs text-green-600 mt-1">Available to withdraw</p>
+          </CardContent>
+        </Card>
+        <Card className="p-4 bg-amber-50 border-amber-200">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm text-amber-800">Earnings details are syncing. Your balance is displayed above.</p>
+            </div>
+            <Button onClick={fetchEarnings} variant="outline" size="sm" className="flex-shrink-0">Retry</Button>
+          </div>
+        </Card>
+      </div>
     );
   }
 

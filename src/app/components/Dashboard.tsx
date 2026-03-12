@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import {
   Menu,
   Bell,
+  RefreshCw,
   User,
   Home,
   BarChart3,
@@ -25,7 +26,6 @@ import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { ReferrersLeaderboard } from './ReferrersLeaderboard';
 import { BonusPayouts } from './BonusPayouts';
 import { SupportTickets } from './SupportTickets';
-import { LiveChat } from './LiveChat';
 import { FAQ } from './FAQ';
 
 /**
@@ -71,8 +71,10 @@ interface UserProfile {
   contactEmail?: string | null;
   invitationCode?: string;
   avatarUrl?: string | null;
+  creditScore?: number;
   name: string;
   vipTier: string;
+  vipTierResetAt?: string | null;
   createdAt: string;
   balance?: number;
   accountFrozen?: boolean;
@@ -116,6 +118,25 @@ interface Metrics {
   automationCoverage: number;
 }
 
+interface AnnouncementItem {
+  id: string;
+  title: string;
+  message: string;
+  level: 'info' | 'success' | 'warning';
+  popup: boolean;
+  createdAt: string;
+  unread: boolean;
+}
+
+interface BonusBadgeItem {
+  id: string;
+  category: 'bonus' | 'reward' | 'topup' | 'adjustment';
+  amount: number;
+  note: string | null;
+  createdAt: string;
+  unread: boolean;
+}
+
 interface DepositConfig {
   bank: {
     accountName: string;
@@ -147,20 +168,6 @@ const DEFAULT_DEPOSIT_CRYPTO_ASSETS: Array<{
   walletAddress: string;
   instructions: string;
 }> = [
-  {
-    asset: 'BTC',
-    network: 'Bitcoin',
-    networks: ['Bitcoin'],
-    walletAddress: '',
-    instructions: 'Send BTC on Bitcoin network only.',
-  },
-  {
-    asset: 'ETH',
-    network: 'ERC20',
-    networks: ['ERC20'],
-    walletAddress: '',
-    instructions: 'Send ETH on ERC20 network only.',
-  },
   {
     asset: 'USDC',
     network: 'ERC20',
@@ -239,6 +246,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [demoMode, setDemoMode] = useState(false);
   const [activeNav, setActiveNav] = useState('home');
   const [showNotifications, setShowNotifications] = useState(false);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+  const [bonusBadges, setBonusBadges] = useState<BonusBadgeItem[]>([]);
+  const [activeAnnouncementPopup, setActiveAnnouncementPopup] = useState<AnnouncementItem | null>(null);
+  const [activeBonusBadgePopup, setActiveBonusBadgePopup] = useState<BonusBadgeItem | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [menuLanguage, setMenuLanguage] = useState<'en' | 'zh'>('en');
   const [avatarError, setAvatarError] = useState(false);
@@ -291,7 +302,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showBonusPayouts, setShowBonusPayouts] = useState(false);
   const [showSupportTickets, setShowSupportTickets] = useState(false);
-  const [showLiveChat, setShowLiveChat] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
   const [homeHeroVideoIndex, setHomeHeroVideoIndex] = useState(0);
   
@@ -302,6 +312,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
+  const [avatarUrlInput, setAvatarUrlInput] = useState('');
   const [settingsForm, setSettingsForm] = useState({
     username: 'Demo User',
     contactEmail: '',
@@ -342,7 +353,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
   const menuText = {
     en: {
-      liveChat: 'Live Chat Box',
       supportTickets: 'Support Tickets',
       contactUs: 'Customer Service Chat',
       bonus: 'Bonus Payouts',
@@ -354,7 +364,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       signOut: 'Sign Out',
     },
     zh: {
-      liveChat: '在线聊天窗口',
       supportTickets: '工单支持',
       contactUs: '客服聊天',
       bonus: '奖金发放',
@@ -377,6 +386,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       || normalized.includes('reset task set')
       || normalized.includes('additional sets')
     );
+  };
+
+  const isFrozenAccountMessage = (message: string) => {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('account is frozen');
   };
 
   const handleSubmitProduct = (productId: string, commission: number) => {
@@ -483,16 +497,58 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       },
       body: JSON.stringify({
         productName: currentProduct.name,
+        productImage: currentProduct.image,
         productValue: currentProduct.totalAmount,
         profit: currentProduct.profit,
+        ratingNo: currentProduct.ratingNo,
       }),
     });
 
     const completionData = await completionResponse.json().catch(() => ({}));
     if (!completionResponse.ok) {
       const message = String(completionData?.error || 'Unable to submit task right now. Please try again.');
-      if (isTaskSubmissionLimitMessage(message)) {
+      const frozenAccount = isFrozenAccountMessage(message);
+      if (isTaskSubmissionLimitMessage(message) || frozenAccount) {
         setTaskActionNotice(message);
+
+        if (frozenAccount) {
+          const frozenUser = completionData?.user || {};
+          const now = new Date();
+          const frozenTimestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+          setAccountFrozen(Boolean(frozenUser?.accountFrozen ?? true));
+          setFreezeAmount(Number(frozenUser?.freezeAmount ?? completionData?.premiumEncounter?.topUpRequired ?? freezeAmount ?? 0));
+          if (Object.prototype.hasOwnProperty.call(frozenUser, 'balance')) {
+            setBalance(Number(frozenUser?.balance ?? balance));
+          }
+          setActivePremiumAssignment(frozenUser?.premiumAssignment ?? null);
+          setProfile((prev) => prev ? {
+            ...prev,
+            balance: Number(frozenUser?.balance ?? prev.balance ?? 0),
+            accountFrozen: Boolean(frozenUser?.accountFrozen ?? true),
+            freezeAmount: Number(frozenUser?.freezeAmount ?? completionData?.premiumEncounter?.topUpRequired ?? prev.freezeAmount ?? 0),
+            premiumAssignment: frozenUser?.premiumAssignment ?? prev.premiumAssignment ?? null,
+          } : prev);
+
+          if (activePendingRecordId) {
+            setProductRecords((prev) => prev.map((record) => (
+              record.id === activePendingRecordId
+                ? {
+                    ...record,
+                    timestamp: frozenTimestamp,
+                    status: 'frozen',
+                    profit: 0,
+                  }
+                : record
+            )));
+            setActivePendingRecordId(null);
+          }
+
+          // Send user to start page to clearly show frozen balance + hold financials.
+          setShowReviewPage(false);
+          setCurrentProduct(null);
+          setActiveNav('home');
+        }
       } else {
         setUiNotice({ type: 'error', text: message });
       }
@@ -575,6 +631,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     setIsLoading(true);
 
     const fetchData = async () => {
+        let loadedProfileForDerivedState: any = null;
         try {
           const { projectId } = await import('~/utils/supabase/info');
 
@@ -608,6 +665,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
           const loadedProfile = (profilePayload?.profile || profilePayload?.user || profilePayload || {}) as any;
           const loadedMetrics = (metricsPayload?.metrics || metricsPayload || {}) as any;
+          loadedProfileForDerivedState = loadedProfile;
 
           setProfile(loadedProfile as UserProfile);
           setMetrics({
@@ -622,6 +680,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
           setFreezeAmount(Number(loadedProfile?.freezeAmount ?? 0));
           setActivePremiumAssignment(loadedProfile?.premiumAssignment ?? null);
+          const todayKey = new Date().toISOString().slice(0, 10);
+          const initialTodayProfit = String(loadedProfile?.todayProfitDate || '') === todayKey
+            ? Number(loadedProfile?.todayProfit ?? 0)
+            : 0;
+          setTodaysProfit(Number(initialTodayProfit.toFixed(2)));
           setError('');
         } catch (err: any) {
           const message = String(err?.message || 'Please try again in a moment.');
@@ -647,12 +710,34 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
                 totalAmount: Number(record?.totalAmount || 0),
                 profit: Number(record?.profit || 0),
+                expectedProfit: Number(record?.expectedProfit || 0),
+                commissionRate: Number(record?.commissionRate || 0),
+                multiplier: Number(record?.multiplier || 1),
+                profitCalculation: String(record?.profitCalculation || ''),
                 status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
                   ? String(record?.status || '').toLowerCase()
                   : 'approved') as 'approved' | 'pending' | 'frozen',
               }))
             : [];
           setProductRecords(backendRecords);
+          const todayKey = new Date().toISOString().slice(0, 10);
+          const vipResetAtMs = Number.isFinite(new Date(String(loadedProfileForDerivedState?.vipTierResetAt || '')).getTime())
+            ? new Date(String(loadedProfileForDerivedState?.vipTierResetAt || '')).getTime()
+            : null;
+          const persistedTodayProfit = backendRecords.reduce((sum, record) => {
+            const recordDate = String(record.timestamp || '').slice(0, 10);
+            if (record.status !== 'approved' || recordDate !== todayKey) {
+              return sum;
+            }
+            if (vipResetAtMs !== null) {
+              const recordTime = new Date(String(record.timestamp || '').replace(' ', 'T')).getTime();
+              if (Number.isFinite(recordTime) && recordTime < vipResetAtMs) {
+                return sum;
+              }
+            }
+            return sum + Number(record.profit || 0);
+          }, 0);
+          setTodaysProfit(Number(persistedTodayProfit.toFixed(2)));
           setAssignedProducts([]);
         } catch {
           setProductRecords([]);
@@ -663,6 +748,153 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       setIsLoading(false);
     });
   }, [accessToken]);
+
+  useEffect(() => {
+    const refreshProfileState = async () => {
+      try {
+        const { projectId } = await import('~/utils/supabase/info');
+        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          return;
+        }
+
+        const latestProfile = (payload?.profile || payload?.user || payload || {}) as any;
+        setProfile((prev) => prev ? { ...prev, ...latestProfile } : latestProfile);
+        setBalance(Number(latestProfile?.balance ?? 0));
+        setProductsSubmitted(Number(latestProfile?.productsSubmitted ?? 0));
+        setAccountFrozen(Boolean(latestProfile?.accountFrozen ?? false));
+        setFreezeAmount(Number(latestProfile?.freezeAmount ?? 0));
+        setActivePremiumAssignment(latestProfile?.premiumAssignment ?? null);
+
+        // Sync today's profit from persistent backend value
+        const todayKey = new Date().toISOString().slice(0, 10);
+        if (String(latestProfile?.todayProfitDate || '') === todayKey) {
+          const serverTodayProfit = Number(latestProfile?.todayProfit ?? 0);
+          setTodaysProfit((prev) => Math.max(prev, serverTodayProfit));
+        }
+      } catch {
+        // Ignore transient polling errors.
+      }
+    };
+
+    const interval = setInterval(refreshProfileState, 15000);
+    return () => clearInterval(interval);
+  }, [accessToken]);
+
+  useEffect(() => {
+    const loadUserNotifications = async () => {
+      try {
+        const { projectId } = await import('~/utils/supabase/info');
+
+        const [announcementResponse, bonusBadgeResponse] = await Promise.all([
+          fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/announcements`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+          }),
+          fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/bonus-badges`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+          }),
+        ]);
+
+        const announcementPayload = await announcementResponse.json().catch(() => ({}));
+        const bonusBadgePayload = await bonusBadgeResponse.json().catch(() => ({}));
+
+        const announcementRows = Array.isArray(announcementPayload?.announcements) ? announcementPayload.announcements : [];
+        const badgeRows = Array.isArray(bonusBadgePayload?.badges) ? bonusBadgePayload.badges : [];
+
+        const nextAnnouncements = announcementRows.map((item: any) => ({
+          id: String(item?.id || ''),
+          title: String(item?.title || ''),
+          message: String(item?.message || ''),
+          level: (String(item?.level || 'info') as 'info' | 'success' | 'warning'),
+          popup: Boolean(item?.popup ?? true),
+          createdAt: String(item?.createdAt || new Date().toISOString()),
+          unread: Boolean(item?.unread ?? false),
+        })).filter((item: AnnouncementItem) => item.id && item.title && item.message);
+
+        const nextBadges = badgeRows.map((item: any) => ({
+          id: String(item?.id || ''),
+          category: (String(item?.category || 'bonus') as 'bonus' | 'reward' | 'topup' | 'adjustment'),
+          amount: Number(item?.amount || 0),
+          note: item?.note ? String(item.note) : null,
+          createdAt: String(item?.createdAt || new Date().toISOString()),
+          unread: Boolean(item?.unread ?? false),
+        })).filter((item: BonusBadgeItem) => item.id);
+
+        setAnnouncements(nextAnnouncements);
+        setBonusBadges(nextBadges);
+
+        const nextAnnouncementPopup = nextAnnouncements.find((item: AnnouncementItem) => item.unread && item.popup) || null;
+        if (nextAnnouncementPopup) {
+          setActiveAnnouncementPopup(nextAnnouncementPopup);
+        }
+
+        const nextBadgePopup = nextBadges.find((item: BonusBadgeItem) => item.unread) || null;
+        if (nextBadgePopup) {
+          setActiveBonusBadgePopup(nextBadgePopup);
+        }
+      } catch {
+        // Ignore notification fetch errors so dashboard remains usable.
+      }
+    };
+
+    loadUserNotifications();
+  }, [accessToken, refreshCounter]);
+
+  const ackAnnouncements = async (ids: string[]) => {
+    if (ids.length === 0) return;
+
+    try {
+      const { projectId } = await import('~/utils/supabase/info');
+      await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/announcements/ack`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids }),
+      });
+    } catch {
+      // Best-effort acknowledgement.
+    }
+
+    setAnnouncements((prev) => prev.map((item) => ids.includes(item.id) ? { ...item, unread: false } : item));
+  };
+
+  const ackBonusBadges = async (ids: string[]) => {
+    if (ids.length === 0) return;
+
+    try {
+      const { projectId } = await import('~/utils/supabase/info');
+      await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/bonus-badges/ack`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ids }),
+      });
+    } catch {
+      // Best-effort acknowledgement.
+    }
+
+    setBonusBadges((prev) => prev.map((item) => ids.includes(item.id) ? { ...item, unread: false } : item));
+  };
 
   useEffect(() => {
     if (depositMethod !== 'crypto') {
@@ -862,6 +1094,32 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     ? depositCryptoNetwork
     : (availableCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || cryptoWallet.walletType);
 
+  const ledgerBalance = Number(balance || 0);
+  const premiumProductValue = Math.max(
+    0,
+    Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? freezeAmount ?? 0),
+  );
+  const hasPremiumSnapshot = Boolean(accountFrozen) && premiumProductValue > 0;
+  const balanceBeforePremium = Number.isFinite(Number(activePremiumAssignment?.previousBalance))
+    ? Number(activePremiumAssignment?.previousBalance)
+    : ledgerBalance;
+  const displayBalance = hasPremiumSnapshot
+    ? (balanceBeforePremium + premiumProductValue)
+    : ledgerBalance;
+  const frozenCurrentBalance = hasPremiumSnapshot ? balanceBeforePremium : null;
+  const activeHoldAmount = premiumProductValue > 0
+    ? premiumProductValue
+    : Math.max(Number(freezeAmount || 0), -ledgerBalance, Number(activePremiumAssignment?.topUpRequired || 0));
+  const holdingAmount = accountFrozen ? -Math.max(0, activeHoldAmount) : 0;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todaysCommission = Math.max(0, Number(todaysProfit || 0));
+  const specialLuckyBonus = 0;
+  const creditScore = Math.max(0, Math.min(100, Number(displayProfile?.creditScore ?? 100)));
+  const creditRatio = creditScore / 100;
+  const unreadAnnouncements = announcements.filter((item) => item.unread).length;
+  const unreadBonusBadges = bonusBadges.filter((item) => item.unread).length;
+  const unreadNotificationCount = unreadAnnouncements + unreadBonusBadges;
+
   return (
     <div className="min-h-screen bg-slate-100 relative overflow-hidden">
       {uiNotice && (
@@ -936,16 +1194,21 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   {/* Left side - Stats */}
                   <div className="space-y-2 flex-1">
                     <div>
-                      <p className="text-blue-200 text-xs">Today's Profit</p>
-                      <p className="text-white font-bold text-lg">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Today's Commission</p>
+                      <p className="text-white font-bold text-lg">${todaysCommission.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Total Asset</p>
-                      <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Balance</p>
+                      <p className="text-white font-bold text-lg">${displayBalance.toFixed(2)}</p>
+                      {frozenCurrentBalance !== null && (
+                        <p className="text-blue-100 text-[11px] leading-tight mt-0.5">
+                          Current Balance: ${frozenCurrentBalance.toFixed(2)}
+                        </p>
+                      )}
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Assets</p>
-                      <p className="text-white font-bold text-lg">$0</p>
+                      <p className="text-blue-200 text-xs">Hold Amount</p>
+                      <p className="text-white font-bold text-lg">${holdingAmount.toFixed(2)}</p>
                     </div>
                   </div>
 
@@ -969,12 +1232,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         stroke="#22c55e"
                         strokeWidth="8"
                         fill="none"
-                        strokeDasharray={`${2 * Math.PI * 40 * 0.6} ${2 * Math.PI * 40}`}
+                        strokeDasharray={`${2 * Math.PI * 40 * creditRatio} ${2 * Math.PI * 40}`}
                         strokeLinecap="round"
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-white font-bold text-xl">60%</span>
+                      <span className="text-white font-bold text-xl">{creditScore}%</span>
                       <span className="text-blue-200 text-xs">Credit</span>
                       <span className="text-blue-200 text-xs">Score</span>
                     </div>
@@ -1000,7 +1263,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     <span className="text-gray-900 font-semibold text-sm">Upload</span>
                   </button>
                   <button 
-                    onClick={() => setShowWithdrawalModal(true)}
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowWithdrawal(true);
+                    }}
                     className="bg-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
                   >
                     <span className="text-lg">💵</span>
@@ -1145,12 +1411,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowLiveChat(true);
+                      setShowChat(true);
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
                     <span className="text-xl">💬</span>
-                    <span className="text-gray-900 font-medium">{t.liveChat}</span>
+                    <span className="text-gray-900 font-medium">{t.contactUs}</span>
                   </button>
                   <button 
                     onClick={() => {
@@ -1262,18 +1528,27 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           >
             <h3 className="font-bold text-gray-900 mb-3">Notifications</h3>
             <div className="space-y-3">
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900">Welcome to Tanknewmedia!</p>
-                <p className="text-xs text-gray-600 mt-1">Your account has been activated</p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900">VIP Status Updated</p>
-                <p className="text-xs text-gray-600 mt-1">You are now a {displayProfile.vipTier} member</p>
-              </div>
-              <div className="p-3 bg-purple-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900">New Features Available</p>
-                <p className="text-xs text-gray-600 mt-1">Check out the latest updates</p>
-              </div>
+              {announcements.length === 0 && bonusBadges.length === 0 ? (
+                <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-600">No new notifications.</div>
+              ) : (
+                <>
+                  {announcements.map((item) => (
+                    <div key={`ann-${item.id}`} className={`p-3 rounded-lg ${item.level === 'warning' ? 'bg-amber-50' : item.level === 'success' ? 'bg-emerald-50' : 'bg-blue-50'}`}>
+                      <p className="text-sm font-semibold text-gray-900">{item.title}{item.unread ? ' • New' : ''}</p>
+                      <p className="text-xs text-gray-700 mt-1">{item.message}</p>
+                    </div>
+                  ))}
+                  {bonusBadges.map((item) => (
+                    <div key={`badge-${item.id}`} className="p-3 rounded-lg bg-purple-50">
+                      <p className="text-sm font-semibold text-gray-900">Bonus Badge {item.unread ? '• New' : ''}</p>
+                      <p className="text-xs text-gray-700 mt-1">
+                        {item.category.toUpperCase()} credited: ${item.amount.toFixed(2)}
+                        {item.note ? ` • ${item.note}` : ''}
+                      </p>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1290,6 +1565,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           </button>
           <h1 className="text-2xl font-bold tracking-wider">TANK</h1>
           <div className="flex items-center space-x-3">
+            <button
+              className="p-2 relative hover:bg-white/10 rounded-lg transition-colors"
+              onClick={() => window.location.reload()}
+              aria-label="Refresh page"
+              title="Refresh"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </button>
             <button
               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
               onClick={() => setShowMenu(true)}
@@ -1313,11 +1596,60 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               onClick={() => setShowNotifications(!showNotifications)}
             >
               <Bell className="h-6 w-6" />
-              <span className="absolute top-1 right-1 bg-red-500 rounded-full w-2 h-2"></span>
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-4 h-4 px-1 flex items-center justify-center">
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </span>
+              )}
             </button>
           </div>
         </div>
       </header>
+
+      {activeAnnouncementPopup && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-2xl border border-blue-200 p-5">
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Announcement</p>
+            <h3 className="mt-1 text-xl font-extrabold text-gray-900">{activeAnnouncementPopup.title}</h3>
+            <p className="mt-3 text-sm text-gray-700 leading-relaxed">{activeAnnouncementPopup.message}</p>
+            <div className="mt-5 flex gap-2">
+              <Button
+                className="flex-1 bg-blue-600 text-white hover:bg-blue-700"
+                onClick={() => {
+                  ackAnnouncements([activeAnnouncementPopup.id]);
+                  setActiveAnnouncementPopup(null);
+                }}
+              >
+                Got it
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeBonusBadgePopup && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl bg-gradient-to-br from-amber-100 via-yellow-50 to-white shadow-2xl border border-amber-300 p-5">
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Bonus Badge</p>
+            <h3 className="mt-1 text-2xl font-black text-gray-900">+ ${activeBonusBadgePopup.amount.toFixed(2)}</h3>
+            <p className="mt-2 text-sm font-semibold text-gray-800">{activeBonusBadgePopup.category.toUpperCase()} credited to your account.</p>
+            {activeBonusBadgePopup.note && (
+              <p className="mt-1 text-xs text-gray-600">{activeBonusBadgePopup.note}</p>
+            )}
+            <div className="mt-5 flex gap-2">
+              <Button
+                className="flex-1 bg-amber-500 text-white hover:bg-amber-600"
+                onClick={() => {
+                  ackBonusBadges([activeBonusBadgePopup.id]);
+                  setActiveBonusBadgePopup(null);
+                }}
+              >
+                Claim
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Hero Section with Background Image */}
       {activeNav === 'home' && (
@@ -1333,17 +1665,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <source src={HOMEPAGE_BACKGROUND_VIDEOS[homeHeroVideoIndex]} type="video/mp4" />
             <source src={HOMEPAGE_BACKGROUND_VIDEOS[(homeHeroVideoIndex + 1) % HOMEPAGE_BACKGROUND_VIDEOS.length]} type="video/mp4" />
           </video>
-          {/* User Refresh Button */}
-          <button
-            className="absolute top-4 right-4 z-20 flex items-center bg-slate-100/85 hover:bg-slate-100 text-blue-700 font-semibold px-4 py-2 rounded-lg shadow transition-colors"
-            onClick={() => window.location.reload()}
-            aria-label="Refresh dashboard"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19A9 9 0 1 1 19 5" />
-            </svg>
-            Refresh
-          </button>
           <div className="absolute inset-0 opacity-70">
             <div className="absolute inset-0 bg-gradient-to-b from-slate-900/30 via-slate-900/40 to-slate-100"></div>
           </div>
@@ -1405,52 +1726,92 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         {activeNav === 'home' && (
           <>
             {/* Open and Extensible Card */}
-            <Card className="mb-6 shadow-lg bg-gray-100">
+            <Card className="mb-6 shadow-xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-cyan-50">
               <CardContent className="pt-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-3 text-center">
-                  Open and extensible
+                <h2 className="text-2xl font-black text-slate-900 mb-2 text-center tracking-wide">
+                  Open, Extensible, Profitable
                 </h2>
-                <p className="text-sm text-gray-600 text-center leading-relaxed">
-                  Tanknewmedia offers custom software development services that help innovative companies and startups design and build digital products with AI, mobile, and web technologies.
+                <p className="text-sm text-slate-700 text-center leading-relaxed">
+                  Tanknewmedia combines task automation, tiered commissions, and support tooling into one practical workspace for daily earning operations.
                 </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs">
+                  <span className="px-2.5 py-1 rounded-full bg-cyan-100 text-cyan-900 font-semibold">VIP-aware task engine</span>
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-semibold">Live balance controls</span>
+                  <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-900 font-semibold">Admin-managed safety</span>
+                </div>
               </CardContent>
             </Card>
 
-            {/* Balance Display */}
-            <Card className="mb-6 shadow-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm opacity-90 mb-1">Total Earnings</p>
-                    <p className="text-4xl font-bold">${balance.toFixed(2)}</p>
-                    <p className="text-xs opacity-80 mt-2">{productsSubmitted} products submitted</p>
-                  </div>
-                  <Wallet className="h-16 w-16 opacity-30" />
+            {/* Finance Snapshot */}
+            <Card className="mb-6 overflow-hidden border border-[#2b7fb5] bg-[#0b5c91] text-white shadow-xl">
+              <CardContent className="px-0 pb-0 pt-0">
+                <div className="px-5 py-8 text-center">
+                  <p className="text-4xl leading-none">🚀</p>
+                  <p className="mt-4 text-3xl font-extrabold tracking-tight sm:text-4xl">TODAY'S COMMISSION</p>
+                  <p className="mt-2 text-4xl font-black sm:text-5xl">{todaysCommission.toFixed(2)} USD</p>
+                  <p className="mt-3 text-xl text-blue-50">The displayed amount includes premium value and today's earned profit.</p>
                 </div>
-                <Button 
-                  onClick={() => setActiveNav('analytics')}
-                  className="w-full mt-4 bg-white text-green-600 hover:bg-gray-100"
-                >
-                  Submit Products & Earn
-                </Button>
-                <Button
-                  onClick={() => {
-                    setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
-                    const modalAssets = getDepositCryptoAssets(depositConfig);
-                    const modalDefaultAssetCode = String(
-                      depositConfig?.crypto?.defaultAsset
-                      || modalAssets?.[0]?.asset
-                      || 'BTC'
-                    ).toUpperCase();
-                    const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
-                    setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
-                    setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
-                    setShowDepositModal(true);
-                  }}
-                  className="w-full mt-3 bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Deposit Funds (Bank/Crypto)
-                </Button>
+
+                <div className="border-t border-[#9cc7e6]" />
+
+                <div className="grid grid-cols-1 md:grid-cols-2">
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-5xl leading-none">💳</p>
+                    <p className="mt-4 text-4xl font-extrabold">BALANCE</p>
+                    <p className="mt-2 text-4xl font-black">{displayBalance.toFixed(2)} USD</p>
+                    {frozenCurrentBalance !== null && (
+                      <p className="mt-2 text-xl font-extrabold leading-tight text-white sm:text-2xl">
+                        Current Balance: {frozenCurrentBalance.toFixed(2)} USD
+                      </p>
+                    )}
+                    <p className="mt-3 text-base leading-tight text-blue-50 sm:text-xl">Balance = current balance + premium value.</p>
+                  </div>
+
+                  <div className="border-t border-[#9cc7e6] md:border-l md:border-t-0 px-4 py-8 text-center">
+                    <p className="text-5xl leading-none">❄</p>
+                    <p className="mt-4 text-4xl font-extrabold">Hold Amount</p>
+                    <p className="mt-2 text-4xl font-black">{holdingAmount.toFixed(2)} USD</p>
+                    <p className="mt-3 text-base leading-tight text-blue-50 sm:text-xl">Negative value indicates the active premium hold amount.</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-[#9cc7e6] px-4 py-8 text-center">
+                  <p className="text-4xl font-extrabold sm:text-5xl">Special Lucky Bonus</p>
+                  <p className="mt-2 text-4xl font-black">{specialLuckyBonus.toFixed(2)} USD</p>
+                </div>
+
+                {accountFrozen && (
+                  <div className="mx-4 mb-4 mt-4 rounded-lg bg-red-600/90 px-3 py-2 text-center text-xs font-semibold text-white">
+                    Account is currently frozen. Holding amount reflects the required release/top-up amount.
+                  </div>
+                )}
+
+                <div className="px-4 pb-5 pt-4">
+                  <Button
+                    onClick={() => setActiveNav('analytics')}
+                    className="w-full bg-slate-900 text-slate-100 hover:bg-slate-800"
+                  >
+                    Submit Products & Earn
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
+                      const modalAssets = getDepositCryptoAssets(depositConfig);
+                      const modalDefaultAssetCode = String(
+                        depositConfig?.crypto?.defaultAsset
+                        || modalAssets?.[0]?.asset
+                        || 'BTC'
+                      ).toUpperCase();
+                      const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
+                      setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
+                      setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                      setShowDepositModal(true);
+                    }}
+                    className="mt-3 w-full bg-blue-700 text-white hover:bg-blue-800"
+                  >
+                    Deposit Funds (Bank/Crypto)
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
@@ -1549,25 +1910,25 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
             {/* Metrics Section */}
             <div className="grid grid-cols-2 gap-4 mb-6">
-              <Card className="shadow-sm bg-gray-100">
+              <Card className="shadow-md border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Compress alerts by</p>
                   <p className="text-5xl font-bold text-[#00bfff]">{displayMetrics.alertCompressionRatio}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm bg-gray-100">
+              <Card className="shadow-md border border-pink-100 bg-gradient-to-br from-pink-50 to-white">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Identify critical alerts in</p>
                   <p className="text-5xl font-bold text-[#ff2e9f]">{displayMetrics.mttrImprovement}s</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm bg-gray-100">
+              <Card className="shadow-md border border-slate-200 bg-gradient-to-br from-slate-50 to-white">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Reduce ServiceNow tickets by</p>
                   <p className="text-3xl font-bold text-gray-900">{displayMetrics.ticketReductionRate}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm bg-gray-100">
+              <Card className="shadow-md border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white">
                 <CardContent className="pt-6 text-center">
                   <p className="text-xs text-gray-600 mb-2">Save up to</p>
                   <p className="text-3xl font-bold text-gray-900">{displayMetrics.automationCoverage}%</p>
@@ -1661,6 +2022,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                             username: displayProfile.name || prev.username,
                             contactEmail: displayProfile.contactEmail || '',
                           }));
+                          setAvatarUrlInput(displayProfile.avatarUrl || '');
                           setEditingSettings(true);
                         }}
                         className="w-full px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
@@ -1669,6 +2031,42 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       </button>
                     ) : (
                       <div className="space-y-3 bg-white p-4 rounded-lg border-2 border-blue-300">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Profile Picture</label>
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="w-14 h-14 rounded-full overflow-hidden border border-gray-300 bg-gray-100">
+                              {avatarUrlInput ? (
+                                <img src={avatarUrlInput} alt="Avatar preview" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">No photo</div>
+                              )}
+                            </div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 2 * 1024 * 1024) {
+                                  setUiNotice({ type: 'error', text: 'Image must be 2MB or smaller' });
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onload = () => setAvatarUrlInput(String(reader.result || ''));
+                                reader.readAsDataURL(file);
+                              }}
+                              className="text-xs"
+                            />
+                          </div>
+                          <input
+                            type="url"
+                            value={avatarUrlInput}
+                            onChange={(e) => setAvatarUrlInput(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Or paste image URL"
+                          />
+                        </div>
+
                         <div>
                           <label className="block text-sm font-semibold text-gray-700 mb-1">Username</label>
                           <input
@@ -1780,6 +2178,34 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                     ...prev,
                                     contactEmail: normalizedContactEmail || null,
                                   } : prev);
+
+                                  const normalizedAvatarUrl = String(avatarUrlInput || '').trim();
+                                  const avatarResponse = await fetch(
+                                    `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile/avatar-url`,
+                                    {
+                                      method: 'PUT',
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${accessToken}`,
+                                        'apikey': publicAnonKey,
+                                      },
+                                      body: JSON.stringify({ avatarUrl: normalizedAvatarUrl || null }),
+                                    }
+                                  );
+
+                                  const avatarData = await avatarResponse.json().catch(() => ({}));
+                                  if (!avatarResponse.ok) {
+                                    throw new Error(avatarData?.error || 'Failed to update profile picture');
+                                  }
+
+                                  setProfile((prev) => prev ? {
+                                    ...prev,
+                                    avatarUrl: normalizedAvatarUrl || null,
+                                  } : prev);
+                                  setAvatarError(false);
+                                  if (!normalizedAvatarUrl) {
+                                    setAvatarError(false);
+                                  }
                                 } catch (saveErr: any) {
                                   setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save contact email'}` });
                                   return;
@@ -2014,46 +2440,46 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#1a1d2e] text-white shadow-lg z-40">
-        <div className="grid grid-cols-4 gap-1 px-2 py-3">
+      <nav className="fixed bottom-0 left-0 right-0 border-t border-blue-900/40 bg-[#121a2b]/95 text-white shadow-2xl backdrop-blur-sm z-40">
+        <div className="grid grid-cols-4 gap-2 px-2 py-3">
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'home' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`group flex flex-col items-center space-y-1 rounded-xl px-2 py-2 transition-all duration-300 ${activeNav === 'home' ? 'bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-900/40 scale-105' : 'text-gray-300 hover:text-white hover:bg-blue-900/40 hover:scale-105'}`}
             onClick={() => setActiveNav('home')}
           >
-            <Home className="h-6 w-6" />
-            <span className="text-xs">Home</span>
+            <Home className={`h-6 w-6 transition-transform duration-300 ${activeNav === 'home' ? 'scale-110' : 'group-hover:scale-110'}`} />
+            <span className="text-xs font-semibold tracking-wide">Home</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'analytics' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`group flex flex-col items-center space-y-1 rounded-xl px-2 py-2 transition-all duration-300 ${activeNav === 'analytics' ? 'bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-900/40 scale-105' : 'text-gray-300 hover:text-white hover:bg-blue-900/40 hover:scale-105'}`}
             onClick={() => setActiveNav('analytics')}
           >
-            <BarChart3 className="h-6 w-6" />
-            <span className="text-xs">Starting</span>
+            <BarChart3 className={`h-6 w-6 transition-transform duration-300 ${activeNav === 'analytics' ? 'scale-110' : 'group-hover:scale-110'}`} />
+            <span className="text-xs font-semibold tracking-wide">Starting</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'reports' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`group flex flex-col items-center space-y-1 rounded-xl px-2 py-2 transition-all duration-300 ${activeNav === 'reports' ? 'bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-900/40 scale-105' : 'text-gray-300 hover:text-white hover:bg-blue-900/40 hover:scale-105'}`}
             onClick={() => setActiveNav('reports')}
           >
-            <FileText className="h-6 w-6" />
-            <span className="text-xs">Reports</span>
+            <FileText className={`h-6 w-6 transition-transform duration-300 ${activeNav === 'reports' ? 'scale-110' : 'group-hover:scale-110'}`} />
+            <span className="text-xs font-semibold tracking-wide">Reports</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'settings' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`group flex flex-col items-center space-y-1 rounded-xl px-2 py-2 transition-all duration-300 ${activeNav === 'settings' ? 'bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-900/40 scale-105' : 'text-gray-300 hover:text-white hover:bg-blue-900/40 hover:scale-105'}`}
             onClick={() => setActiveNav('settings')}
           >
-            <Settings className="h-6 w-6" />
-            <span className="text-xs">Settings</span>
+            <Settings className={`h-6 w-6 transition-transform duration-300 ${activeNav === 'settings' ? 'scale-110' : 'group-hover:scale-110'}`} />
+            <span className="text-xs font-semibold tracking-wide">Settings</span>
           </button>
         </div>
       </nav>
 
       {/* Floating Chat Button */}
       <button 
-        className="fixed bottom-20 right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6 py-3 shadow-lg flex items-center space-x-2 z-50 transition-all active:scale-95"
+        className="group fixed bottom-20 right-4 z-50 flex items-center space-x-2 rounded-full border-2 border-white/70 bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 px-6 py-3 text-white shadow-[0_12px_30px_rgba(30,64,175,0.5)] transition-all duration-300 hover:scale-105 hover:shadow-[0_16px_38px_rgba(37,99,235,0.55)] active:scale-95"
         onClick={() => setShowChat(true)}
       >
-        <MessageCircle className="h-5 w-5" />
-        <span className="font-medium">Chat</span>
+        <MessageCircle className="h-5 w-5 transition-transform duration-300 group-hover:scale-110" />
+        <span className="font-semibold tracking-wide">Chat</span>
       </button>
 
       {/* Product Review Page */}
@@ -2108,6 +2534,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showActivity && (
         <ActivityPage
           onClose={() => setShowActivity(false)}
+            accessToken={accessToken}
         />
       )}
 
@@ -2576,33 +3003,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       )}
 
-      {/* Live Chat Modal */}
-      {showLiveChat && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-teal-500 to-cyan-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">💬 Live Chat Support</h2>
-                  <button
-                    onClick={() => setShowLiveChat(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <LiveChat accessToken={accessToken} />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* FAQ Modal */}
       {showFAQ && (
         <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
@@ -2623,7 +3023,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* Content */}
               <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <FAQ accessToken={accessToken} />
+                <FAQ
+                  accessToken={accessToken}
+                  onCreateSupportTicket={() => {
+                    setShowFAQ(false);
+                    setShowSupportTickets(true);
+                  }}
+                  onStartLiveChat={() => {
+                    setShowFAQ(false);
+                    setShowChat(true);
+                  }}
+                />
               </div>
             </div>
           </div>

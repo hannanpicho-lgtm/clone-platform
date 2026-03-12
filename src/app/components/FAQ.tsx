@@ -14,12 +14,14 @@ interface FAQ {
 
 interface FAQProps {
   accessToken: string;
+  onCreateSupportTicket?: () => void;
+  onStartLiveChat?: () => void;
 }
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
 const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
-export function FAQ({ accessToken }: FAQProps) {
+export function FAQ({ accessToken, onCreateSupportTicket, onStartLiveChat }: FAQProps) {
   const [faqs, setFaqs] = useState<FAQ[]>([]);
   const [filteredFaqs, setFilteredFaqs] = useState<FAQ[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,10 +258,16 @@ export function FAQ({ accessToken }: FAQProps) {
           We're here to help! Create a support ticket or start a live chat with our support team
         </p>
         <div className="flex flex-wrap gap-3">
-          <button className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-lg transition-colors">
+          <button
+            className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-lg transition-colors"
+            onClick={() => onCreateSupportTicket?.()}
+          >
             Create Support Ticket
           </button>
-          <button className="px-6 py-2 bg-white border-2 border-blue-500 text-blue-600 hover:bg-blue-50 font-semibold rounded-lg transition-colors">
+          <button
+            className="px-6 py-2 bg-white border-2 border-blue-500 text-blue-600 hover:bg-blue-50 font-semibold rounded-lg transition-colors"
+            onClick={() => onStartLiveChat?.()}
+          >
             Start Live Chat
           </button>
         </div>

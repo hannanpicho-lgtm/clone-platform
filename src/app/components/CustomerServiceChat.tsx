@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Send } from 'lucide-react';
 import { Button } from './ui/button';
 import { projectId } from '/utils/supabase/info';
@@ -24,6 +24,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string }>({
     whatsapp: 'https://wa.me/1234567890',
     telegram: 'https://t.me/tanknewmedia_support',
@@ -94,7 +95,12 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
       const ticketsData = await ticketsResponse.json().catch(() => ({}));
       const tickets = Array.isArray(ticketsData?.tickets) ? ticketsData.tickets : [];
-      const activeTicket = tickets.find((ticket: any) => ticket?.status !== 'resolved') || tickets[0] || null;
+      const sortedTickets = [...tickets].sort((a: any, b: any) => {
+        const bTime = new Date(String(b?.updatedAt || b?.createdAt || 0)).getTime();
+        const aTime = new Date(String(a?.updatedAt || a?.createdAt || 0)).getTime();
+        return bTime - aTime;
+      });
+      const activeTicket = sortedTickets.find((ticket: any) => ticket?.status !== 'resolved') || sortedTickets[0] || null;
 
       if (activeTicket?.id) {
         setActiveTicketId(String(activeTicket.id));
@@ -115,6 +121,10 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     const interval = setInterval(loadTicketState, 7000);
     return () => clearInterval(interval);
   }, [accessToken]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages]);
 
   const handleSendMessage = () => {
     if (!inputMessage.trim() || isSending) return;
@@ -263,6 +273,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
               </div>
             </div>
           ))}
+          <div ref={messagesEndRef} />
 
           {/* Info Message */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">

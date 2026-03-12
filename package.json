@@ -16,7 +16,17 @@
     "deploy:skip-tests": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -SkipTests -Force",
     "rollback": "powershell -ExecutionPolicy Bypass -File rollback.ps1",
     "validate": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1",
-    "validate:strict": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1 -Strict"
+    "validate:strict": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1 -Strict",
+    "backup:once": "node scripts/backup-snapshot.js --once",
+    "backup:watch": "node scripts/backup-snapshot.js --interval-minutes 10",
+    "backup:list": "powershell -ExecutionPolicy Bypass -File scripts/list-backups.ps1",
+    "backup:install-task": "powershell -ExecutionPolicy Bypass -File scripts/install-backup-task.ps1",
+    "backup:install-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-backup-startup.ps1",
+    "backup:restore": "powershell -ExecutionPolicy Bypass -File scripts/restore-backup.ps1",
+    "checkpoint:save": "powershell -ExecutionPolicy Bypass -File scripts/git-wip-checkpoint.ps1",
+    "checkpoint:list": "powershell -ExecutionPolicy Bypass -File scripts/git-wip-list.ps1",
+    "checkpoint:restore": "powershell -ExecutionPolicy Bypass -File scripts/git-wip-restore.ps1",
+    "protection:watch": "powershell -ExecutionPolicy Bypass -File scripts/run-auto-protection.ps1"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

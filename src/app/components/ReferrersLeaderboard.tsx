@@ -46,9 +46,8 @@ export function ReferrersLeaderboard({ accessToken }: ReferrersLeaderboardProps)
       }
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
-      setLeaderboard([]);
-      setUserRank(null);
-      setError('Leaderboard is temporarily unavailable');
+      // Keep existing leaderboard data — only update error state
+      setError('Leaderboard data may be outdated. Retrying...');
     } finally {
       setLoading(false);
     }
@@ -79,6 +78,8 @@ export function ReferrersLeaderboard({ accessToken }: ReferrersLeaderboardProps)
     );
   }
 
+    // If there's an error but we have stale data, show an inline notice instead of blocking the view
+
   const getMedalEmoji = (rank: number) => {
     switch (rank) {
       case 1: return '🥇';
@@ -99,6 +100,23 @@ export function ReferrersLeaderboard({ accessToken }: ReferrersLeaderboardProps)
   return (
     <div className="space-y-6">
       {/* User's Position */}
+        {/* Inline error banner — only visible when fetch failed but data still available */}
+        {error && leaderboard.length > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            <span>{error}</span>
+            <Button onClick={fetchLeaderboard} variant="outline" size="sm" className="flex-shrink-0">Retry</Button>
+          </div>
+        )}
+
+        {/* Full error block — only when fetch failed AND no data at all */}
+        {error && leaderboard.length === 0 && (
+          <Card className="p-6 bg-gray-50 border-gray-200">
+            <div className="text-center space-y-3">
+              <p className="text-sm text-gray-700">{error}</p>
+              <Button onClick={fetchLeaderboard} variant="outline" size="sm">Retry</Button>
+            </div>
+          </Card>
+        )}
       {userRank && (
         <Card className="p-6 bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200">
           <div className="flex items-center justify-between">

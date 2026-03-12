@@ -29,7 +29,6 @@ import {
   Copy,
 } from 'lucide-react';
 import { PremiumManagementPanel } from './PremiumManagementPanel';
-import { LiveChat } from './LiveChat';
 import { getVipTierConfig, VIP_TIER_ORDER } from './vipConfig';
 
 // Import all required types
@@ -49,6 +48,15 @@ interface User {
   lastLoginCountry?: string;
   lastLoginIp?: string;
   taskSetsCompletedToday?: number;
+  creditScore?: number;
+  freezeAmount?: number;
+  premiumAssignment?: {
+    orderId?: string | null;
+    amount?: number;
+    enteredAmount?: number;
+    previousBalance?: number;
+    topUpRequired?: number;
+  } | null;
 }
 interface Transaction {
   id: string;
@@ -115,6 +123,16 @@ interface AlertsSummary {
   critical: number;
   high: number;
 }
+interface AdminAuditLogItem {
+  id: string;
+  action: string;
+  actorUserId?: string | null;
+  actorType: 'super_admin' | 'limited_admin';
+  targetUserId?: string | null;
+  targetIdentifier?: string | null;
+  createdAt: string;
+  meta?: Record<string, any>;
+}
 interface LimitedAdminAccount {
   id: string;
   username: string;
@@ -124,34 +142,116 @@ interface LimitedAdminAccount {
   active?: boolean;
   displayName?: string;
 }
+interface AnnouncementConfigItem {
+  id: string;
+  title: string;
+  message: string;
+  level: 'info' | 'success' | 'warning';
+  popup: boolean;
+  active: boolean;
+  createdAt: string;
+  expiresAt?: string | null;
+}
 interface AdminDashboardProps {
   onLogout: () => void;
   adminAccessToken?: string;
   adminIsSuperAdmin?: boolean;
   adminPermissions?: string[];
 }
+
+type VipTierName = 'Normal' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond';
+type VipCommissionRangeMap = Record<VipTierName, { min: number; max: number }>;
+
+const DEFAULT_VIP_COMMISSION_RANGES: VipCommissionRangeMap = {
+  Normal: { min: 40, max: 60 },
+  Silver: { min: 60, max: 70 },
+  Gold: { min: 150, max: 170 },
+  Platinum: { min: 200, max: 250 },
+  Diamond: { min: 1500, max: 2000 },
+};
+
+const VIP_COMMISSION_TIER_LABELS: Record<VipTierName, string> = {
+  Normal: 'Bronze (VIP1)',
+  Silver: 'Silver (VIP2)',
+  Gold: 'Gold (VIP3)',
+  Platinum: 'Platinum (VIP4)',
+  Diamond: 'Diamond (VIP5)',
+};
+
+const normalizeVipCommissionRanges = (input: any): VipCommissionRangeMap => {
+  const tiers: VipTierName[] = ['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+  const normalized = { ...DEFAULT_VIP_COMMISSION_RANGES } as VipCommissionRangeMap;
+
+  tiers.forEach((tier) => {
+    const fallback = DEFAULT_VIP_COMMISSION_RANGES[tier];
+    const source = input?.[tier] || {};
+    const min = Number(source?.min);
+    const max = Number(source?.max);
+    const safeMin = Number.isFinite(min) && min >= 0 ? min : fallback.min;
+    const safeMaxCandidate = Number.isFinite(max) && max >= 0 ? max : fallback.max;
+    normalized[tier] = {
+      min: Math.round(safeMin * 100) / 100,
+      max: Math.round(Math.max(safeMin, safeMaxCandidate) * 100) / 100,
+    };
+  });
+
+  return normalized;
+};
+
 export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin = true, adminPermissions = ['*'] }: AdminDashboardProps) {
     // Utility functions and permission variables (must be inside the component)
     function formatLocationLabel(val: any) { return String(val || 'Unknown'); }
     function formatIpLabel(val: any) { return String(val || ''); }
     function getTasksPerSetForTier(tier: string) { return getVipTierConfig(tier).productsPerSet; }
-    function isResetRequired(user: User) { return false; }
-    const canViewUsers = true;
-    const canManageUsers = true;
-    const canAssignPremium = true;
-    const canManageSupport = true;
-    const canManageInvitations = true;
-    const canUnfreezeUsers = true;
-    const canAdjustBalance = true;
-    const canUpdateVip = true;
-    const canResetTasks = true;
-    const canManageTaskLimits = true;
+    function isResetRequired(user: User) {
+      const tasksPerSet = getTasksPerSetForTier(String(user?.vipTier || 'Normal'));
+      const completed = Number(user?.currentSetTasksCompleted ?? 0);
+      return completed >= tasksPerSet && tasksPerSet > 0;
+    }
+    const hasPermission = (permission: string) => {
+      if (adminIsSuperAdmin) return true;
+      return adminPermissions.includes('*') || adminPermissions.includes(permission);
+    };
+    const canViewUsers = hasPermission('users.view');
+    const canManageUsers = hasPermission('users.view')
+      || hasPermission('users.adjust_balance')
+      || hasPermission('users.assign_premium')
+      || hasPermission('users.reset_tasks')
+      || hasPermission('users.manage_task_limits')
+      || hasPermission('users.unfreeze')
+      || hasPermission('users.update_vip')
+      || hasPermission('users.reset_password');
+    const canAssignPremium = hasPermission('users.assign_premium') || hasPermission('premium.manage');
+    const canManageSupport = hasPermission('support.manage');
+    const canManageInvitations = hasPermission('invitations.manage');
+    const canUnfreezeUsers = hasPermission('users.unfreeze');
+    const canAdjustBalance = hasPermission('users.adjust_balance');
+    const canUpdateVip = hasPermission('users.update_vip');
+    const canResetTasks = hasPermission('users.reset_tasks');
+    const canManageTaskLimits = hasPermission('users.manage_task_limits');
+    const canResetPasswords = hasPermission('users.reset_password');
+    const canViewAudit = canViewUsers || canManageSupport || hasPermission('withdrawals.manage');
+    const LIMITED_ADMIN_PERMISSION_OPTIONS = [
+      'users.view',
+      'users.adjust_balance',
+      'users.assign_premium',
+      'users.reset_password',
+      'users.reset_tasks',
+      'users.manage_task_limits',
+      'users.unfreeze',
+      'users.update_vip',
+      'support.manage',
+      'withdrawals.manage',
+      'invitations.manage',
+      'premium.manage',
+    ];
   // State hooks for permission options and action submission
-  const [LIMITED_ADMIN_PERMISSION_OPTIONS] = useState<string[]>([]);
   const [submittingAction, setSubmittingAction] = useState(false);
   const [permissionsInput, setPermissionsInput] = useState('');
   const [denyWithdrawalId, setDenyWithdrawalId] = useState('');
   const [denyReasonInput, setDenyReasonInput] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isReconcilingPremiumBalances, setIsReconcilingPremiumBalances] = useState(false);
     // --- TEMP STUBS FOR BUILD ---
     // Replace these with real implementations as needed
     const getAdminAuthToken = () => {
@@ -168,16 +268,76 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
       return publicAnonKey;
     };
-    const setWithdrawalLimitInput = (v: string) => {};
-    const withdrawalLimitInput = '0';
-    const reloadInvitationCodes = async (_?: any) => {};
-    const loadAdminWithdrawals = async () => {};
+    const reloadInvitationCodes = async (_?: any) => {
+      try {
+        const response = await safeFetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/invitation-codes`,
+          {
+            headers: {
+              Authorization: `Bearer ${getAdminAuthToken()}`,
+            },
+          }
+        );
+
+        if (!response || !response.ok) {
+          setInvitationCodes([]);
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        const rows = Array.isArray(data?.invitationCodes) ? data.invitationCodes : [];
+        setInvitationCodes(rows.map((item: any) => ({
+          code: String(item?.code || ''),
+          owner: String(item?.ownerName || item?.owner || 'Platform Invite'),
+          referrals: Number(item?.signups ?? item?.referrals ?? 0),
+          status: String(item?.status || 'active'),
+          generatedAt: String(item?.createdAt || item?.generatedAt || ''),
+          ownerUserId: item?.ownerUserId ? String(item.ownerUserId) : undefined,
+        })).filter((item: InvitationCode) => item.code));
+      } catch {
+        setInvitationCodes([]);
+      }
+    };
+    const loadAdminWithdrawals = async () => {
+      try {
+        const response = await safeFetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/withdrawals`,
+          {
+            headers: {
+              Authorization: `Bearer ${getAdminAuthToken()}`,
+            },
+          }
+        );
+
+        if (!response || !response.ok) {
+          setWithdrawals([]);
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        const rows = Array.isArray(data?.withdrawals) ? data.withdrawals : [];
+        setWithdrawals(rows.map((item: any) => ({
+          id: String(item?.id || ''),
+          userId: String(item?.userId || ''),
+          userName: String(item?.userName || 'User'),
+          userEmail: String(item?.userEmail || ''),
+          amount: Number(item?.amount || 0),
+          status: (item?.status || 'pending') as 'pending' | 'approved' | 'denied',
+          requestedAt: String(item?.requestedAt || ''),
+          approvedAt: item?.approvedAt || undefined,
+          deniedAt: item?.deniedAt || undefined,
+          denialReason: item?.denialReason || undefined,
+        })));
+      } catch {
+        setWithdrawals([]);
+      }
+    };
   // --- React state and logic ---
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'transactions' | 'premium' | 'products' | 'invitations' | 'customer-service' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'transactions' | 'premium' | 'products' | 'invitations' | 'customer-service' | 'audit' | 'settings'>('overview');
   const [users, setUsers] = useState<User[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
-  const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'approved' | 'pending'>('all');
+  const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'approved' | 'pending' | 'denied'>('all');
   const [invitationCodes, setInvitationCodes] = useState<InvitationCode[]>([]);
   const [supportCases, setSupportCases] = useState<SupportCase[]>([]);
   const [metrics, setMetrics] = useState<PlatformMetrics>({
@@ -203,20 +363,30 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     high: 0,
   });
   const [showAlertsPanel, setShowAlertsPanel] = useState(false);
+  const [adminAuditLog, setAdminAuditLog] = useState<AdminAuditLogItem[]>([]);
+  const [loadingAuditLog, setLoadingAuditLog] = useState(false);
   const [adminAccounts, setAdminAccounts] = useState<LimitedAdminAccount[]>([]);
   const [newAdminUsername, setNewAdminUsername] = useState('');
   const [newAdminName, setNewAdminName] = useState('');
   const [newAdminPassword, setNewAdminPassword] = useState('');
-  const [newAdminPermissions, setNewAdminPermissions] = useState('users.view,users.adjust_balance,users.assign_premium,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,invitations.manage,support.manage,withdrawals.manage');
+  const [newAdminPermissions, setNewAdminPermissions] = useState('users.view,users.adjust_balance,users.assign_premium,users.reset_password,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,invitations.manage,support.manage,withdrawals.manage');
   const [superAdminKey, setSuperAdminKey] = useState('');
   const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
   const [supportStatusFilter, setSupportStatusFilter] = useState<'all' | 'open' | 'in_progress' | 'resolved'>('all');
   const [selectedSupportCaseId, setSelectedSupportCaseId] = useState<string | null>(null);
   const [supportLinks, setSupportLinks] = useState({ whatsapp: '', telegram: '' });
   const [savingSupportLinks, setSavingSupportLinks] = useState(false);
+  const [announcementsConfig, setAnnouncementsConfig] = useState<AnnouncementConfigItem[]>([]);
+  const [announcementTitleDraft, setAnnouncementTitleDraft] = useState('');
+  const [announcementMessageDraft, setAnnouncementMessageDraft] = useState('');
+  const [announcementLevelDraft, setAnnouncementLevelDraft] = useState<'info' | 'success' | 'warning'>('info');
+  const [announcementPopupDraft, setAnnouncementPopupDraft] = useState(true);
+  const [announcementExpiresAtDraft, setAnnouncementExpiresAtDraft] = useState('');
+  const [savingAnnouncements, setSavingAnnouncements] = useState(false);
   const [resetUserId, setResetUserId] = useState('');
   const [resetPassword, setResetPassword] = useState('');
   const [resetStatus, setResetStatus] = useState('');
+  const [copiedUserId, setCopiedUserId] = useState<string | null>(null);
   const [showAdjustBalanceModal, setShowAdjustBalanceModal] = useState(false);
   const [showAssignPremiumModal, setShowAssignPremiumModal] = useState(false);
   const [showTaskLimitsModal, setShowTaskLimitsModal] = useState(false);
@@ -232,6 +402,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [premiumPositionInput, setPremiumPositionInput] = useState('');
   const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
   const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
+  const [withdrawalLimitInput, setWithdrawalLimitInput] = useState('0');
+  const [creditScoreInput, setCreditScoreInput] = useState('100');
+  const [vipCommissionRanges, setVipCommissionRanges] = useState<VipCommissionRangeMap>({ ...DEFAULT_VIP_COMMISSION_RANGES });
+  const [savingVipCommissionRanges, setSavingVipCommissionRanges] = useState(false);
+  const [vipCommissionSetSelection, setVipCommissionSetSelection] = useState<'set1' | 'set2'>('set1');
+  const [vipCommissionTierSelection, setVipCommissionTierSelection] = useState<VipTierName>('Normal');
 
   async function handleAdminReset(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -259,6 +435,94 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       setResetStatus('Error occurred. Please try again.');
     }
   }
+
+  async function handleCopyUserId(userId: string) {
+    try {
+      await navigator.clipboard.writeText(userId);
+      setCopiedUserId(userId);
+      setResetUserId(userId);
+      window.setTimeout(() => {
+        setCopiedUserId((current) => (current === userId ? null : current));
+      }, 1500);
+    } catch {
+      setResetStatus('Unable to copy user ID. Please copy it manually.');
+    }
+  }
+
+  const loadVipCommissionRanges = async () => {
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/vip-commission-ranges`,
+        {
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+          },
+        },
+      );
+
+      if (!response || !response.ok) {
+        setVipCommissionRanges({ ...DEFAULT_VIP_COMMISSION_RANGES });
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      const normalized = normalizeVipCommissionRanges(data?.config?.ranges || data?.ranges || {});
+      setVipCommissionRanges(normalized);
+    } catch {
+      setVipCommissionRanges({ ...DEFAULT_VIP_COMMISSION_RANGES });
+    }
+  };
+
+  const updateVipCommissionRange = (tier: VipTierName, key: 'min' | 'max', raw: string) => {
+    const parsed = Number(raw);
+    setVipCommissionRanges((prev) => {
+      const next = { ...prev };
+      const current = next[tier];
+      if (!Number.isFinite(parsed)) {
+        next[tier] = { ...current, [key]: 0 };
+      } else {
+        next[tier] = { ...current, [key]: Math.max(0, parsed) };
+      }
+      if (next[tier].max < next[tier].min) {
+        next[tier].max = next[tier].min;
+      }
+      return next;
+    });
+  };
+
+  const handleResetVipCommissionRanges = () => {
+    setVipCommissionRanges({ ...DEFAULT_VIP_COMMISSION_RANGES });
+  };
+
+  const handleSaveVipCommissionRanges = async () => {
+    try {
+      setSavingVipCommissionRanges(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/vip-commission-ranges`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ranges: vipCommissionRanges }),
+        },
+      );
+
+      const data = await response?.json().catch(() => ({}));
+      if (!response || !response.ok) {
+        alert(`❌ Failed to save VIP commission ranges${data?.error ? `: ${data.error}` : ''}`);
+        return;
+      }
+
+      setVipCommissionRanges(normalizeVipCommissionRanges(data?.config?.ranges || vipCommissionRanges));
+      alert('✅ VIP commission ranges updated');
+    } catch {
+      alert('❌ Failed to save VIP commission ranges');
+    } finally {
+      setSavingVipCommissionRanges(false);
+    }
+  };
 
 
 
@@ -329,6 +593,37 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     });
   };
 
+  const loadAdminAuditLog = async () => {
+    if (!canViewAudit) {
+      setAdminAuditLog([]);
+      return;
+    }
+
+    try {
+      setLoadingAuditLog(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/audit-log?limit=100`,
+        {
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+          },
+        }
+      );
+
+      if (!response || !response.ok) {
+        setAdminAuditLog([]);
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      setAdminAuditLog(Array.isArray(data?.logs) ? data.logs : []);
+    } catch {
+      setAdminAuditLog([]);
+    } finally {
+      setLoadingAuditLog(false);
+    }
+  };
+
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
@@ -347,6 +642,27 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         const backendUsers = data.users || [];
         setUsers(backendUsers);
         setMetrics(data.metrics);
+        await loadVipCommissionRanges();
+
+        try {
+          const transactionsResponse = await safeFetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/transactions`,
+            {
+              headers: {
+                Authorization: `Bearer ${getAdminAuthToken()}`,
+              },
+            }
+          );
+
+          if (transactionsResponse?.ok) {
+            const txData = await transactionsResponse.json().catch(() => ({}));
+            setTransactions(Array.isArray(txData?.transactions) ? txData.transactions : []);
+          } else {
+            setTransactions([]);
+          }
+        } catch {
+          setTransactions([]);
+        }
 
         await reloadInvitationCodes(backendUsers);
 
@@ -369,6 +685,38 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               whatsapp: String(config.whatsapp || ''),
               telegram: String(config.telegram || ''),
             });
+          }
+        } catch {
+          // Keep existing values silently
+        }
+
+        try {
+          const announcementsResponse = await safeFetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/announcements`,
+            {
+              headers: {
+                Authorization: `Bearer ${getAdminAuthToken()}`,
+              },
+            }
+          );
+
+          if (announcementsResponse?.ok) {
+            const announcementsData = await announcementsResponse.json().catch(() => ({}));
+            const items = Array.isArray(announcementsData?.config?.items) ? announcementsData.config.items : [];
+            setAnnouncementsConfig(items.map((item: any) => ({
+              id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+              title: String(item?.title || ''),
+              message: String(item?.message || ''),
+              level: (String(item?.level || 'info').toLowerCase() === 'success'
+                ? 'success'
+                : String(item?.level || 'info').toLowerCase() === 'warning'
+                  ? 'warning'
+                  : 'info') as 'info' | 'success' | 'warning',
+              popup: item?.popup !== false,
+              active: item?.active !== false,
+              createdAt: String(item?.createdAt || new Date().toISOString()),
+              expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
+            })));
           }
         } catch {
           // Keep existing values silently
@@ -427,6 +775,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
         await loadAdminAlerts(false, backendUsers, supportCases);
         await loadAdminAccounts();
+        await loadAdminAuditLog();
       } else {
         throw new Error('Backend not available');
       }
@@ -436,6 +785,8 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       setWithdrawals([]);
       setInvitationCodes([]);
       setSupportCases([]);
+      setVipCommissionRanges({ ...DEFAULT_VIP_COMMISSION_RANGES });
+      setAnnouncementsConfig([]);
       setMetrics({
         totalUsers: 0,
         totalRevenue: 0,
@@ -447,6 +798,55 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       await loadAdminAlerts(true, [], []);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRefreshAll = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await loadAdminData();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleReconcilePremiumBalances = async () => {
+    if (isReconcilingPremiumBalances) return;
+    const proceed = window.confirm(
+      'Run premium balance reconciliation for all users now? This applies only missing credits and is safe to re-run.'
+    );
+    if (!proceed) return;
+
+    setIsReconcilingPremiumBalances(true);
+    try {
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users/reconcile-premium-balances`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ dryRun: false }),
+        }
+      );
+
+      const payload = await response?.json().catch(() => ({} as any));
+      if (!response || !response.ok) {
+        alert(`❌ Premium balance reconciliation failed${payload?.error ? `: ${payload.error}` : ''}`);
+        return;
+      }
+
+      const summary = payload?.summary || {};
+      alert(
+        `✅ Premium reconciliation complete. Updated users: ${Number(summary?.updatedUsers || 0)}. Total credited: $${Number(summary?.totalPremiumProfitCredited || 0).toFixed(2)}.`
+      );
+      await loadAdminData();
+    } catch {
+      alert('❌ Error running premium reconciliation');
+    } finally {
+      setIsReconcilingPremiumBalances(false);
     }
   };
 
@@ -483,6 +883,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   }, [adminAccessToken]);
 
   useEffect(() => {
+    if (activeTab === 'audit') {
+      loadAdminAuditLog();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       loadAdminAlerts(false);
     }, 30000);
@@ -493,6 +899,13 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     console.log('DEBUG: supportCases state', supportCases);
     return () => clearInterval(interval);
   }, [users, supportCases, selectedUser]);
+
+  // Load admin accounts when super admin key changes
+  useEffect(() => {
+    if (superAdminKey.trim()) {
+      loadAdminAccounts();
+    }
+  }, [superAdminKey]);
 
   const handleUnfreezeAccount = async (userId: string) => {
     try {
@@ -611,14 +1024,14 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     if (!actionTargetUser?.id) return;
 
     if (!premiumAmountInput.trim()) {
-      alert('❌ Premium amount is required');
+      alert('❌ Deficit amount is required');
       return;
     }
 
     const payload: any = { userId: actionTargetUser.id };
     const parsedAmount = Number(premiumAmountInput);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      alert('❌ Invalid premium amount');
+      alert('❌ Invalid deficit amount');
       return;
     }
     payload.amount = parsedAmount;
@@ -626,7 +1039,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     if (premiumPositionInput.trim()) {
       const parsedPosition = Number(premiumPositionInput);
       if (!Number.isFinite(parsedPosition)) {
-        alert('❌ Invalid premium position');
+        alert('❌ Invalid deficit position');
         return;
       }
       payload.position = parsedPosition;
@@ -648,16 +1061,16 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
 
       if (!response || !response.ok) {
         const errorData = response ? await response.json().catch(() => ({})) : {};
-        alert(`❌ Failed to assign premium${errorData?.error ? `: ${errorData.error}` : ''}`);
+        alert(`❌ Failed to assign premium deficit${errorData?.error ? `: ${errorData.error}` : ''}`);
         return;
       }
 
       await loadAdminData();
       setShowAssignPremiumModal(false);
       setActionTargetUser(null);
-      alert('✅ Premium assigned successfully');
+      alert('✅ Premium deficit assigned successfully');
     } catch {
-      alert('❌ Failed to assign premium');
+      alert('❌ Failed to assign premium deficit');
     } finally {
       setSubmittingAction(false);
     }
@@ -696,6 +1109,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setTaskLimitDailyInput(String(user.dailyTaskSetLimit ?? 3));
     setTaskLimitExtraInput(String(user.extraTaskSets ?? 0));
     setWithdrawalLimitInput(String(user.withdrawalLimit ?? 0));
+    setCreditScoreInput(String(user.creditScore ?? 100));
     setShowTaskLimitsModal(true);
   };
 
@@ -705,6 +1119,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     const dailyTaskSetLimit = Number(taskLimitDailyInput);
     const extraTaskSets = Number(taskLimitExtraInput);
     const withdrawalLimit = Number(withdrawalLimitInput);
+    const creditScore = Number(creditScoreInput);
 
     if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
       alert('❌ Daily task set limit must be at least 1');
@@ -721,6 +1136,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       return;
     }
 
+    if (!Number.isFinite(creditScore) || creditScore < 0 || creditScore > 100) {
+      alert('❌ Credit score must be between 0 and 100');
+      return;
+    }
+
     try {
       setSubmittingAction(true);
       const response = await safeFetch(
@@ -731,7 +1151,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             Authorization: `Bearer ${getAdminAuthToken()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit }),
+          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore }),
         }
       );
 
@@ -946,10 +1366,114 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     }
   };
 
-  const filteredUsers = users.filter(user =>
-    (user.name ? user.name.toLowerCase() : '').includes(searchQuery.toLowerCase()) ||
-    (user.email ? user.email.toLowerCase() : '').includes(searchQuery.toLowerCase())
-  );
+  const handleAddAnnouncementDraft = () => {
+    const title = announcementTitleDraft.trim();
+    const message = announcementMessageDraft.trim();
+    if (!title || !message) {
+      alert('❌ Announcement title and message are required');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextItem: AnnouncementConfigItem = {
+      id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      message,
+      level: announcementLevelDraft,
+      popup: announcementPopupDraft,
+      active: true,
+      createdAt: now,
+      expiresAt: announcementExpiresAtDraft.trim() || null,
+    };
+
+    setAnnouncementsConfig((prev) => [nextItem, ...prev].slice(0, 50));
+    setAnnouncementTitleDraft('');
+    setAnnouncementMessageDraft('');
+    setAnnouncementLevelDraft('info');
+    setAnnouncementPopupDraft(true);
+    setAnnouncementExpiresAtDraft('');
+  };
+
+  const handleToggleAnnouncementField = (id: string, field: 'active' | 'popup') => {
+    setAnnouncementsConfig((prev) => prev.map((item) => (
+      item.id === id ? { ...item, [field]: !item[field] } : item
+    )));
+  };
+
+  const handleDeleteAnnouncement = (id: string) => {
+    setAnnouncementsConfig((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleSaveAnnouncements = async () => {
+    if (!canManageSupport) {
+      alert('❌ Missing permission: support.manage');
+      return;
+    }
+
+    try {
+      setSavingAnnouncements(true);
+      const response = await safeFetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/announcements`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${getAdminAuthToken()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            items: announcementsConfig.map((item) => ({
+              id: item.id,
+              title: item.title,
+              message: item.message,
+              level: item.level,
+              popup: item.popup,
+              active: item.active,
+              createdAt: item.createdAt,
+              expiresAt: item.expiresAt || null,
+            })),
+          }),
+        }
+      );
+
+      const data = await response?.json().catch(() => ({}));
+      if (!response?.ok) {
+        alert(`❌ Failed to save announcements${data?.error ? `: ${data.error}` : ''}`);
+        return;
+      }
+
+      const savedItems = Array.isArray(data?.config?.items) ? data.config.items : [];
+      setAnnouncementsConfig(savedItems.map((item: any) => ({
+        id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        title: String(item?.title || ''),
+        message: String(item?.message || ''),
+        level: (String(item?.level || 'info').toLowerCase() === 'success'
+          ? 'success'
+          : String(item?.level || 'info').toLowerCase() === 'warning'
+            ? 'warning'
+            : 'info') as 'info' | 'success' | 'warning',
+        popup: item?.popup !== false,
+        active: item?.active !== false,
+        createdAt: String(item?.createdAt || new Date().toISOString()),
+        expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
+      })));
+      alert('✅ Announcements updated');
+    } catch {
+      alert('❌ Failed to save announcements');
+    } finally {
+      setSavingAnnouncements(false);
+    }
+  };
+
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredUsers = users.filter((user) => {
+    if (!normalizedSearchQuery) return true;
+    return (
+      String(user.name || '').toLowerCase().includes(normalizedSearchQuery)
+      || String(user.email || '').toLowerCase().includes(normalizedSearchQuery)
+      || String(user.id || '').toLowerCase().includes(normalizedSearchQuery)
+      || String(user.vipTier || '').toLowerCase().includes(normalizedSearchQuery)
+    );
+  });
 
   const getTierColor = (tier: string) => {
     const colors: Record<string, string> = {
@@ -963,9 +1487,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   };
 
   const getStatusColor = (status: string) => {
-    return status === 'approved' 
-      ? 'bg-green-100 text-green-800 border-green-300'
-      : 'bg-yellow-100 text-yellow-800 border-yellow-300';
+    if (status === 'approved') return 'bg-green-100 text-green-800 border-green-300';
+    if (status === 'denied') return 'bg-red-100 text-red-800 border-red-300';
+    return 'bg-yellow-100 text-yellow-800 border-yellow-300';
   };
 
   const getCaseStatusColor = (status: SupportCase['status']) => {
@@ -1182,6 +1706,46 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const pendingWithdrawalTotal = withdrawals
     .filter(item => item.status === 'pending')
     .reduce((total, item) => total + item.amount, 0);
+  const selectedVipRange = vipCommissionRanges[vipCommissionTierSelection];
+  const selectedVipConfig = getVipTierConfig(vipCommissionTierSelection);
+  const selectedTaskCount = vipCommissionSetSelection === 'set1'
+    ? selectedVipConfig.productsPerSet
+    : selectedVipConfig.productsPerSet * 2;
+  const selectedRate = Number(selectedVipConfig.commissionRate || 0);
+  const requiredProductValueMin = selectedRate > 0 ? selectedVipRange.min / selectedRate : 0;
+  const requiredProductValueMax = selectedRate > 0 ? selectedVipRange.max / selectedRate : 0;
+  const estimatedPerProductMin = selectedTaskCount > 0 ? requiredProductValueMin / selectedTaskCount : 0;
+  const estimatedPerProductMax = selectedTaskCount > 0 ? requiredProductValueMax / selectedTaskCount : 0;
+  const selectedUserPremiumAmount = Math.max(
+    0,
+    Number(
+      selectedUser?.premiumAssignment?.amount
+      ?? selectedUser?.premiumAssignment?.enteredAmount
+      ?? selectedUser?.freezeAmount
+      ?? 0,
+    ),
+  );
+  const selectedUserLedgerBalance = Number(selectedUser?.balance ?? 0);
+  const hasSelectedUserPremiumSnapshot = Boolean(selectedUser?.accountFrozen) && selectedUserPremiumAmount > 0;
+  const selectedUserPrePremiumBalance = Number.isFinite(Number(selectedUser?.premiumAssignment?.previousBalance))
+    ? Number(selectedUser?.premiumAssignment?.previousBalance)
+    : selectedUserLedgerBalance;
+  const selectedUserCurrentBalance = hasSelectedUserPremiumSnapshot
+    ? selectedUserPrePremiumBalance
+    : selectedUserLedgerBalance;
+  const selectedUserDisplayBalance = hasSelectedUserPremiumSnapshot
+    ? (selectedUserPrePremiumBalance + selectedUserPremiumAmount)
+    : selectedUserLedgerBalance;
+  const selectedUserActiveHoldAmount = selectedUserPremiumAmount > 0
+    ? selectedUserPremiumAmount
+    : Math.max(
+      Number(selectedUser?.freezeAmount ?? 0),
+      -selectedUserLedgerBalance,
+      Number(selectedUser?.premiumAssignment?.topUpRequired ?? 0),
+    );
+  const selectedUserFrozenHoldValue = selectedUser?.accountFrozen
+    ? -Math.max(0, selectedUserActiveHoldAmount)
+    : 0;
   const filteredTransactions = transactions.filter((transaction) => {
     if (transactionStatusFilter === 'all') return true;
     return (transaction.status ? transaction.status.toLowerCase() : '') === transactionStatusFilter;
@@ -1244,6 +1808,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             </div>
 
             <div className="flex items-center gap-3 relative">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleRefreshAll}
+                disabled={isRefreshing}
+                className="h-9 w-9 p-0"
+                title="Refresh all admin data"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+
               <button
                 type="button"
                 onClick={() => setShowAlertsPanel((prev) => !prev)}
@@ -1308,10 +1884,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               { id: 'users', label: 'Users', icon: Users },
               { id: 'withdrawals', label: 'Withdrawals', icon: DollarSign },
               { id: 'transactions', label: 'Transactions', icon: Activity },
-              { id: 'premium', label: 'Premium Products', icon: Gift },
+              { id: 'premium', label: 'Premium Deficit Assignment', icon: Gift },
               { id: 'products', label: 'Products', icon: Gift },
               ...(canManageInvitations ? [{ id: 'invitations', label: 'Invitations', icon: UserPlus }] : []),
               { id: 'customer-service', label: 'Customer Service', icon: MessageSquare },
+              ...(canViewAudit ? [{ id: 'audit', label: 'Audit Log', icon: Shield }] : []),
               { id: 'settings', label: 'Settings', icon: Settings },
             ].map((tab) => (
               <button
@@ -1349,7 +1926,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                                 Add products in the catalog, set image URL, and mark premium templates when needed.
                               </p>
                               <div className="text-xs text-gray-500 space-y-1">
-                                <p>Tip: use Task Products in Premium Products to add image URLs and toggle active/archived status.</p>
+                                <p>Tip: use Task Products in Premium Deficit Assignment to add image URLs and toggle active/archived status.</p>
                                 <p>User-side task cards and review pages read product image URLs from this catalog.</p>
                               </div>
                             </CardContent>
@@ -1494,7 +2071,19 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               {/* Quick Actions */}
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Quick Actions</h3>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRefreshAll}
+                      disabled={isRefreshing}
+                      className="h-8 w-8 p-0"
+                      title="Refresh all admin data"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                     <Button
                       onClick={() => setActiveTab('users')}
@@ -1509,7 +2098,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white"
                       >
                         <Gift className="w-4 h-4 mr-2" />
-                        Assign Premium
+                        Premium Deficit Assignment
                       </Button>
                     )}
                     {canManageInvitations && (
@@ -1535,13 +2124,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                       <MessageSquare className="w-4 h-4 mr-2" />
                       Customer Service
                     </Button>
-                    <Button
-                      onClick={loadAdminData}
-                      className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white"
-                    >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Refresh Data
-                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -1564,15 +2146,49 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               <Card className="border-0 shadow-lg">
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Live Chat Console</h3>
-                    <Button size="sm" variant="outline" onClick={loadAdminData}>
-                      Refresh
+                    <h3 className="text-lg font-bold text-gray-900">Customer Service Queue</h3>
+                    <Button
+                      size="sm"
+                      className="bg-pink-600 hover:bg-pink-700 text-white"
+                      onClick={() => setActiveTab('customer-service')}
+                    >
+                      Open Inbox
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-600 mb-4">
-                    Use this panel for real-time chat alongside support tickets.
-                  </p>
-                  <LiveChat accessToken={getAdminAuthToken()} />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-sm">
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                      <p className="text-xs text-blue-700">Open</p>
+                      <p className="text-lg font-bold text-blue-900">{supportCases.filter((item) => item.status === 'open').length}</p>
+                    </div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-xs text-amber-700">In Progress</p>
+                      <p className="text-lg font-bold text-amber-900">{supportCases.filter((item) => item.status === 'in_progress').length}</p>
+                    </div>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-xs text-emerald-700">Resolved</p>
+                      <p className="text-lg font-bold text-emerald-900">{supportCases.filter((item) => item.status === 'resolved').length}</p>
+                    </div>
+                  </div>
+                  {supportCases.length === 0 ? (
+                    <p className="text-xs text-gray-600">No customer service cases yet. New user messages will appear in the Customer Service tab.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {supportCases.slice(0, 5).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedSupportCaseId(item.id);
+                            setActiveTab('customer-service');
+                          }}
+                          className="w-full rounded-md border border-gray-200 px-3 py-2 text-left hover:bg-gray-50"
+                        >
+                          <p className="text-sm font-semibold text-gray-900">{item.userName || 'Unknown User'}</p>
+                          <p className="text-xs text-gray-500">{item.id} • {item.category || 'General'}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -1588,6 +2204,26 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             >
               {canViewUsers ? (
                 <>
+                  <Card className="border-0 shadow-lg">
+                    <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">Premium Balance Migration</p>
+                        <p className="text-xs text-gray-600">Recalculate and apply missing premium credits for current users using the new premium rule.</p>
+                      </div>
+                      {canAdjustBalance && (
+                        <Button
+                          type="button"
+                          onClick={handleReconcilePremiumBalances}
+                          disabled={isReconcilingPremiumBalances}
+                          className="bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          <RefreshCw className={`w-4 h-4 mr-2 ${isReconcilingPremiumBalances ? 'animate-spin' : ''}`} />
+                          {isReconcilingPremiumBalances ? 'Reconciling...' : 'Recalculate Premium Balances'}
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+
                   {/* Search Bar */}
                   <Card className="border-0 shadow-lg">
                     <CardContent className="p-4">
@@ -1595,12 +2231,24 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                         <Input
                           type="text"
-                          placeholder="Search users by name or email..."
+                          placeholder="Search users by name, email, user ID, or VIP tier..."
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-10"
+                          className="pl-10 pr-20"
                         />
+                        {searchQuery.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Clear
+                          </button>
+                        )}
                       </div>
+                      <p className="mt-2 text-xs text-gray-500">
+                        Showing {filteredUsers.length} of {users.length} users
+                      </p>
                     </CardContent>
                   </Card>
 
@@ -1620,72 +2268,88 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                             </tr>
                           </thead>
                           <tbody>
-                            {users.map((user) => (
-                              <tr key={user.id}>
-                                <td className="px-6 py-4 whitespace-nowrap">{user.name}</td>
-                                <td className="px-6 py-4 whitespace-nowrap">{user.vipTier}</td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <span className="text-gray-900">{user.balance ? user.balance.toLocaleString() : '0'}</span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <span className="text-gray-900">{user.productsSubmitted ?? 0}</span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  {user.accountFrozen ? (
-                                    <span className="flex items-center gap-1 text-red-600">
-                                      <XCircle className="w-4 h-4" />
-                                      <span className="text-sm font-medium">Frozen</span>
-                                    </span>
-                                  ) : (
-                                    <span className="flex items-center gap-1 text-green-600">
-                                      <CheckCircle className="w-4 h-4" />
-                                      <span className="text-sm font-medium">Active</span>
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="flex items-center gap-2">
-                                    {canUnfreezeUsers && user.accountFrozen && (
-                                      <Button
-                                        size="sm"
-                                        onClick={() => handleUnfreezeAccount(user.id)}
-                                        className="bg-green-600 hover:bg-green-700 text-white"
-                                      >
-                                        Unfreeze
-                                      </Button>
-                                    )}
-                                    {canAssignPremium && (
-                                      <Button
-                                        size="sm"
-                                        className="bg-purple-600 hover:bg-purple-700 text-white"
-                                        onClick={() => openAssignPremiumModal(user.id)}
-                                      >
-                                        Premium
-                                      </Button>
-                                    )}
-                                    {canAdjustBalance && (
-                                      <Button
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700 text-white"
-                                        onClick={() => openAdjustBalanceModal(user.id)}
-                                      >
-                                        Adjust
-                                      </Button>
-                                    )}
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        setSelectedUser(user);
-                                        setShowUserDetails(true);
-                                      }}
-                                    >
-                                      Details
-                                    </Button>
-                                  </div>
+                            {filteredUsers.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-500">
+                                  {users.length === 0 ? 'No users available.' : 'No users match your search.'}
                                 </td>
                               </tr>
-                            ))}
+                            ) : (
+                              filteredUsers.map((user) => (
+                                <tr key={user.id}>
+                                  <td className="px-6 py-4 whitespace-nowrap">{user.name}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap">{user.vipTier}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className="text-gray-900">{user.balance ? user.balance.toLocaleString() : '0'}</span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className="text-gray-900">{user.productsSubmitted ?? 0}</span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    {user.accountFrozen ? (
+                                      <span className="flex items-center gap-1 text-red-600">
+                                        <XCircle className="w-4 h-4" />
+                                        <span className="text-sm font-medium">Frozen</span>
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-green-600">
+                                        <CheckCircle className="w-4 h-4" />
+                                        <span className="text-sm font-medium">Active</span>
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleCopyUserId(user.id)}
+                                      >
+                                        <Copy className="w-4 h-4 mr-1" />
+                                        {copiedUserId === user.id ? 'Copied' : 'Copy ID'}
+                                      </Button>
+                                      {canUnfreezeUsers && user.accountFrozen && (
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleUnfreezeAccount(user.id)}
+                                          className="bg-green-600 hover:bg-green-700 text-white"
+                                        >
+                                          Unfreeze
+                                        </Button>
+                                      )}
+                                      {canAssignPremium && (
+                                        <Button
+                                          size="sm"
+                                          className="bg-purple-600 hover:bg-purple-700 text-white"
+                                          onClick={() => openAssignPremiumModal(user.id)}
+                                        >
+                                          Deficit
+                                        </Button>
+                                      )}
+                                      {canAdjustBalance && (
+                                        <Button
+                                          size="sm"
+                                          className="bg-green-600 hover:bg-green-700 text-white"
+                                          onClick={() => openAdjustBalanceModal(user.id)}
+                                        >
+                                          Adjust
+                                        </Button>
+                                      )}
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                          setSelectedUser(user);
+                                          setShowUserDetails(true);
+                                        }}
+                                      >
+                                        Details
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -1735,9 +2399,14 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">Pending Withdrawals</h3>
-                    <Button variant="outline" onClick={loadAdminWithdrawals}>
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Refresh
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={loadAdminWithdrawals}
+                      className="h-8 w-8 p-0"
+                      title="Refresh withdrawals"
+                    >
+                      <RefreshCw className="w-4 h-4" />
                     </Button>
                   </div>
 
@@ -1816,34 +2485,50 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                       >
                         Pending
                       </Button>
+                      <Button
+                        size="sm"
+                        variant={transactionStatusFilter === 'denied' ? 'default' : 'outline'}
+                        onClick={() => setTransactionStatusFilter('denied')}
+                      >
+                        Denied
+                      </Button>
                     </div>
                   </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Showing {filteredTransactions.length} of {transactions.length} transactions
+                  </p>
                   <div className="space-y-3">
-                    {filteredTransactions.map((transaction) => (
-                      <div
-                        key={transaction.id}
-                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-purple-300 transition-colors"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
-                            <DollarSign className="w-6 h-6 text-white" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{transaction.productName ?? ''}</p>
-                            <p className="text-sm text-gray-500">{transaction.userName ?? ''}</p>
-                            <p className="text-xs text-gray-400 mt-1">{transaction.timestamp}</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold text-xl text-green-600 mb-1">
-                            ${transaction.commission.toFixed(2)}
-                          </p>
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(transaction.status ?? '')}`}> 
-                            {transaction.status}
-                          </span>
-                        </div>
+                    {filteredTransactions.length === 0 ? (
+                      <div className="p-8 text-center text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
+                        No transactions found for this filter.
                       </div>
-                    ))}
+                    ) : (
+                      filteredTransactions.map((transaction) => (
+                        <div
+                          key={transaction.id}
+                          className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-purple-300 transition-colors"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                              <DollarSign className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">{transaction.productName ?? ''}</p>
+                              <p className="text-sm text-gray-500">{transaction.userName ?? ''}</p>
+                              <p className="text-xs text-gray-400 mt-1">{transaction.timestamp}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-xl text-green-600 mb-1">
+                              ${transaction.commission.toFixed(2)}
+                            </p>
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(transaction.status ?? '')}`}> 
+                              {transaction.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1959,8 +2644,15 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                       <Button size="sm" variant={supportStatusFilter === 'resolved' ? 'default' : 'outline'} onClick={() => setSupportStatusFilter('resolved')}>
                         Resolved ({supportCases.filter((item) => item.status === 'resolved').length})
                       </Button>
-                      <Button size="sm" variant="outline" onClick={loadAdminData}>
-                        Refresh
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleRefreshAll}
+                        disabled={isRefreshing}
+                        className="h-8 w-8 p-0"
+                        title="Refresh all admin data"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                       </Button>
                     </div>
                   </div>
@@ -2093,6 +2785,48 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             </motion.div>
           )}
 
+          {activeTab === 'audit' && (
+            <motion.div
+              key="audit"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <Card className="border-0 shadow-lg">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">Admin Audit Log</h3>
+                    <Button size="sm" variant="outline" onClick={loadAdminAuditLog} disabled={loadingAuditLog}>
+                      {loadingAuditLog ? 'Refreshing...' : 'Refresh'}
+                    </Button>
+                  </div>
+                  {adminAuditLog.length === 0 ? (
+                    <div className="p-6 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg">
+                      {loadingAuditLog ? 'Loading audit entries...' : 'No audit entries available for your scope.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {adminAuditLog.map((entry) => (
+                        <div key={entry.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-semibold text-sm text-gray-900">{entry.action}</p>
+                            <p className="text-xs text-gray-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-1">
+                            Actor: {entry.actorType === 'super_admin' ? 'Super Admin' : (entry.actorUserId || 'Limited Admin')}
+                            {entry.targetUserId ? ` | Target User: ${entry.targetUserId}` : ''}
+                            {entry.targetIdentifier ? ` | Target: ${entry.targetIdentifier}` : ''}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div
               key="settings"
@@ -2106,34 +2840,111 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   <h3 className="text-lg font-bold text-gray-900 mb-4">Platform Settings</h3>
                   
                   <div className="space-y-4">
-                    <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
-                      <h4 className="font-semibold text-purple-900 mb-2">VIP Tiers Configuration</h4>
+                    <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-semibold text-gray-900">VIP Commission Ranges</h4>
+                          <p className="text-xs text-gray-500">Configure total commission earnings per VIP level (both task sets combined).</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button type="button" variant="outline" onClick={handleResetVipCommissionRanges}>
+                            Reset Defaults
+                          </Button>
+                          <Button
+                            type="button"
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                            onClick={handleSaveVipCommissionRanges}
+                            disabled={savingVipCommissionRanges}
+                          >
+                            {savingVipCommissionRanges ? 'Saving...' : 'Save Changes'}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                        <p className="font-semibold mb-1">How it works:</p>
+                        <p>When assigning tasks, the system should keep each VIP tier within your target commission range.</p>
+                      </div>
+
                       <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm text-purple-900">
+                        <table className="min-w-full text-sm">
                           <thead>
-                            <tr className="text-left border-b border-purple-200">
-                              <th className="py-2 pr-4">Tier</th>
-                              <th className="py-2 pr-4">Commission</th>
-                              <th className="py-2 pr-4">Products/Set</th>
-                              <th className="py-2 pr-4">Min Balance</th>
-                              <th className="py-2">Order Range</th>
+                            <tr className="text-left border-b border-gray-200 text-gray-600">
+                              <th className="py-2 pr-3">VIP Level</th>
+                              <th className="py-2 pr-3">Minimum Commission ($)</th>
+                              <th className="py-2 pr-3">Maximum Commission ($)</th>
+                              <th className="py-2">Range</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {VIP_TIER_ORDER.map((tier) => {
-                              const cfg = getVipTierConfig(tier);
+                            {(VIP_TIER_ORDER as VipTierName[]).map((tier) => {
+                              const row = vipCommissionRanges[tier];
+                              const spread = Math.max(0, Number(row.max || 0) - Number(row.min || 0));
                               return (
-                                <tr key={tier} className="border-b border-purple-100">
-                                  <td className="py-2 pr-4 font-semibold">{tier}</td>
-                                  <td className="py-2 pr-4">{(cfg.commissionRate * 100).toFixed(2)}%</td>
-                                  <td className="py-2 pr-4">{cfg.productsPerSet}</td>
-                                  <td className="py-2 pr-4">${cfg.minimumBalance.toLocaleString()}</td>
-                                  <td className="py-2">${cfg.productMin.toLocaleString()} - ${cfg.productMax.toLocaleString()}</td>
+                                <tr key={tier} className="border-b border-gray-100 text-gray-800">
+                                  <td className="py-2 pr-3 font-semibold">{VIP_COMMISSION_TIER_LABELS[tier]}</td>
+                                  <td className="py-2 pr-3">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      value={row.min}
+                                      onChange={(e) => updateVipCommissionRange(tier, 'min', e.target.value)}
+                                    />
+                                  </td>
+                                  <td className="py-2 pr-3">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      value={row.max}
+                                      onChange={(e) => updateVipCommissionRange(tier, 'max', e.target.value)}
+                                    />
+                                  </td>
+                                  <td className="py-2">
+                                    <span className="font-semibold">${Number(row.min || 0).toFixed(2)} - ${Number(row.max || 0).toFixed(2)}</span>
+                                    <span className="text-xs text-gray-500"> (spread: ${spread.toFixed(2)})</span>
+                                  </td>
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
+                      </div>
+
+                      <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs text-purple-900">
+                        <p className="font-semibold mb-1">Example Calculation</p>
+                        <p>
+                          For {VIP_COMMISSION_TIER_LABELS[vipCommissionTierSelection]} with ${selectedVipRange.min.toFixed(2)} - ${selectedVipRange.max.toFixed(2)}:
+                          tasks in selected set should total commission within this band.
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                        <h5 className="font-semibold text-gray-900">Commission Calculator</h5>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <select
+                            className="h-10 rounded-md border border-gray-300 bg-white px-3"
+                            value={vipCommissionTierSelection}
+                            onChange={(e) => setVipCommissionTierSelection(e.target.value as VipTierName)}
+                          >
+                            {(VIP_TIER_ORDER as VipTierName[]).map((tier) => (
+                              <option key={tier} value={tier}>{VIP_COMMISSION_TIER_LABELS[tier]}</option>
+                            ))}
+                          </select>
+                          <select
+                            className="h-10 rounded-md border border-gray-300 bg-white px-3"
+                            value={vipCommissionSetSelection}
+                            onChange={(e) => setVipCommissionSetSelection(e.target.value as 'set1' | 'set2')}
+                          >
+                            <option value="set1">Set 1 (No Deficit Assignment)</option>
+                            <option value="set2">Set 1 + Set 2 (Both Sets)</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-700">
+                          <p>Commission rate: <strong>{(selectedRate * 100).toFixed(2)}%</strong> • Tasks: <strong>{selectedTaskCount}</strong></p>
+                          <p>Required product total: <strong>${requiredProductValueMin.toFixed(2)} - ${requiredProductValueMax.toFixed(2)}</strong></p>
+                          <p>Estimated per product value: <strong>${estimatedPerProductMin.toFixed(2)} - ${estimatedPerProductMax.toFixed(2)}</strong></p>
+                          <p>Tier product range baseline: <strong>${selectedVipConfig.productMin.toLocaleString()} - ${selectedVipConfig.productMax.toLocaleString()}</strong></p>
+                        </div>
                       </div>
                     </div>
 
@@ -2166,7 +2977,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => setNewAdminPermissions('users.view,invitations.manage,support.manage')}
+                            onClick={() => setNewAdminPermissions('users.view,users.reset_password,invitations.manage,support.manage')}
                           >
                             Apply Invite+Support Preset
                           </Button>
@@ -2174,7 +2985,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => setNewAdminPermissions('users.view,users.adjust_balance,users.assign_premium,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,withdrawals.manage,support.manage,invitations.manage')}
+                            onClick={() => setNewAdminPermissions('users.view,users.adjust_balance,users.assign_premium,users.reset_password,users.reset_tasks,users.manage_task_limits,users.unfreeze,users.update_vip,withdrawals.manage,support.manage,invitations.manage')}
                           >
                             Apply Ops Preset
                           </Button>
@@ -2223,6 +3034,124 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         <p className="text-xs text-gray-600 mt-1">User and account-management controls are restricted to super admin.</p>
                       </div>
                     )}
+
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                      <h4 className="font-semibold text-blue-900">Announcement System</h4>
+                      <p className="text-xs text-blue-800">Compose platform announcements and choose whether they should appear as popups.</p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <Input
+                          value={announcementTitleDraft}
+                          onChange={(e) => setAnnouncementTitleDraft(e.target.value)}
+                          placeholder="Announcement title"
+                          disabled={!canManageSupport}
+                        />
+                        <Input
+                          type="datetime-local"
+                          value={announcementExpiresAtDraft}
+                          onChange={(e) => setAnnouncementExpiresAtDraft(e.target.value)}
+                          placeholder="Expiry (optional)"
+                          disabled={!canManageSupport}
+                        />
+                      </div>
+
+                      <textarea
+                        value={announcementMessageDraft}
+                        onChange={(e) => setAnnouncementMessageDraft(e.target.value)}
+                        placeholder="Announcement message"
+                        disabled={!canManageSupport}
+                        className="w-full min-h-[88px] rounded-md border border-blue-200 bg-white p-3 text-sm text-gray-800"
+                      />
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={announcementLevelDraft}
+                          onChange={(e) => setAnnouncementLevelDraft(e.target.value as 'info' | 'success' | 'warning')}
+                          disabled={!canManageSupport}
+                          className="h-10 rounded-md border border-blue-200 bg-white px-3 text-sm"
+                        >
+                          <option value="info">Info</option>
+                          <option value="success">Success</option>
+                          <option value="warning">Warning</option>
+                        </select>
+                        <label className="inline-flex items-center gap-2 text-sm text-blue-900">
+                          <input
+                            type="checkbox"
+                            checked={announcementPopupDraft}
+                            onChange={(e) => setAnnouncementPopupDraft(e.target.checked)}
+                            disabled={!canManageSupport}
+                          />
+                          Show as popup
+                        </label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleAddAnnouncementDraft}
+                          disabled={!canManageSupport}
+                        >
+                          Add To Queue
+                        </Button>
+                        <Button
+                          type="button"
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                          onClick={handleSaveAnnouncements}
+                          disabled={!canManageSupport || savingAnnouncements}
+                        >
+                          {savingAnnouncements ? 'Saving...' : 'Publish Announcements'}
+                        </Button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {announcementsConfig.length === 0 ? (
+                          <p className="text-xs text-blue-800">No announcements configured yet.</p>
+                        ) : (
+                          announcementsConfig.map((item) => (
+                            <div key={item.id} className="rounded-md border border-blue-200 bg-white p-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                                  <p className="text-xs text-gray-500">{item.level.toUpperCase()} • {item.createdAt}</p>
+                                  {item.expiresAt ? (
+                                    <p className="text-xs text-gray-500">Expires: {item.expiresAt}</p>
+                                  ) : null}
+                                  <p className="text-sm text-gray-700 mt-1">{item.message}</p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleToggleAnnouncementField(item.id, 'active')}
+                                    disabled={!canManageSupport}
+                                  >
+                                    {item.active ? 'Active' : 'Inactive'}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleToggleAnnouncementField(item.id, 'popup')}
+                                    disabled={!canManageSupport}
+                                  >
+                                    {item.popup ? 'Popup On' : 'Popup Off'}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="bg-red-600 hover:bg-red-700 text-white"
+                                    onClick={() => handleDeleteAnnouncement(item.id)}
+                                    disabled={!canManageSupport}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {!canManageSupport && (
+                        <span className="text-xs text-gray-600 self-center">Permission required: support.manage</span>
+                      )}
+                    </div>
 
                     <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
                       <h4 className="font-semibold text-blue-900">Customer Service Contact Links</h4>
@@ -2298,6 +3227,21 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                     <p className="font-semibold text-gray-900">{selectedUser.email}</p>
                   </div>
                   <div>
+                    <p className="text-sm text-gray-500">User ID</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-gray-900 break-all">{selectedUser.id}</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCopyUserId(selectedUser.id)}
+                      >
+                        <Copy className="w-4 h-4 mr-1" />
+                        {copiedUserId === selectedUser.id ? 'Copied' : 'Copy'}
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
                     <p className="text-sm text-gray-500">VIP Tier</p>
                     <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium border ${getTierColor(selectedUser.vipTier ?? '')}`}>
                       {selectedUser.vipTier}
@@ -2305,8 +3249,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Balance</p>
-                    <p className={`font-bold text-lg ${(selectedUser.balance ?? 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      ${(selectedUser.balance ?? 0).toLocaleString()}
+                    <p className={`font-bold text-lg ${selectedUserDisplayBalance < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      ${selectedUserDisplayBalance.toLocaleString()}
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">Current Balance</p>
+                    <p className="font-bold text-base text-gray-900">
+                      ${selectedUserCurrentBalance.toLocaleString()}
                     </p>
                   </div>
                   <div>
@@ -2318,6 +3266,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                     <p className={`font-semibold ${selectedUser.accountFrozen ? 'text-red-600' : 'text-green-600'}`}>
                       {selectedUser.accountFrozen ? 'Frozen' : 'Active'}
                     </p>
+                    {selectedUser.accountFrozen && (
+                      <p className="text-xs font-semibold text-red-600">
+                        Hold Amount: ${selectedUserFrozenHoldValue.toLocaleString()}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Last Login Location</p>
@@ -2344,6 +3297,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                     <p className={`font-semibold ${isResetRequired(selectedUser) ? 'text-amber-700' : 'text-green-700'}`}>
                       {isResetRequired(selectedUser) ? 'Reset required - task set complete' : 'No reset required'}
                     </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Credit Score</p>
+                    <p className="font-semibold text-gray-900">{Number(selectedUser.creditScore ?? 100).toFixed(0)}%</p>
                   </div>
                 </div>
 
@@ -2378,7 +3335,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         )}
                         {canAssignPremium && (
                           <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white" onClick={() => openAssignPremiumModal(selectedUser.id)}>
-                            Assign Premium
+                            Premium Deficit Assignment
                           </Button>
                         )}
                         {canResetTasks && (
@@ -2455,10 +3412,22 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   placeholder="e.g. 500"
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Credit Score (0 - 100)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={creditScoreInput}
+                  onChange={(e) => setCreditScoreInput(e.target.value)}
+                  placeholder="e.g. 100"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-2">
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setShowTaskLimitsModal(false);
                     setTaskLimitsTargetUser(null);
@@ -2468,7 +3437,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   Cancel
                 </Button>
                 <Button
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full min-w-0 bg-blue-600 hover:bg-blue-700 text-white"
                   onClick={submitTaskLimitsForUser}
                   disabled={submittingAction}
                 >
@@ -2500,10 +3469,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               <p className="text-xs text-gray-500">
                 Allowed: {LIMITED_ADMIN_PERMISSION_OPTIONS.join(', ')}
               </p>
-              <div className="flex gap-2 pt-2">
+              <div className="grid grid-cols-2 gap-2 pt-2">
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setShowEditPermissionsModal(false);
                     setPermissionsTargetAdmin(null);
@@ -2513,7 +3482,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   Cancel
                 </Button>
                 <Button
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                  className="w-full min-w-0 bg-indigo-600 hover:bg-indigo-700 text-white"
                   onClick={submitEditAdminPermissions}
                   disabled={submittingAction}
                 >
@@ -2542,10 +3511,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   placeholder="Required"
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="grid grid-cols-2 gap-2 pt-2">
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setShowDenyWithdrawalModal(false);
                     setDenyWithdrawalId('');
@@ -2555,7 +3524,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   Cancel
                 </Button>
                 <Button
-                  className="w-full bg-red-600 hover:bg-red-700 text-white"
+                  className="w-full min-w-0 bg-red-600 hover:bg-red-700 text-white"
                   onClick={submitDenyWithdrawal}
                   disabled={submittingAction}
                 >
@@ -2607,10 +3576,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   placeholder="Reason"
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="grid grid-cols-2 gap-2 pt-2">
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setShowAdjustBalanceModal(false);
                     setActionTargetUser(null);
@@ -2620,7 +3589,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   Cancel
                 </Button>
                 <Button
-                  className="w-full bg-green-600 hover:bg-green-700 text-white"
+                  className="w-full min-w-0 bg-green-600 hover:bg-green-700 text-white"
                   onClick={submitAdjustBalance}
                   disabled={submittingAction}
                 >
@@ -2636,12 +3605,12 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white">
-              <h3 className="text-lg font-bold">Assign Premium</h3>
+              <h3 className="text-lg font-bold">Premium Deficit Assignment</h3>
               <p className="text-xs opacity-90">User: {actionTargetUser.name}</p>
             </div>
             <div className="p-6 space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Premium Amount</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Deficit Amount</label>
                 <Input
                   type="number"
                   step="0.01"
@@ -2659,10 +3628,10 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   placeholder="Leave blank for global default"
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="grid grid-cols-2 gap-2 pt-2">
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setShowAssignPremiumModal(false);
                     setActionTargetUser(null);
@@ -2672,11 +3641,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   Cancel
                 </Button>
                 <Button
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+                  className="w-full min-w-0 bg-purple-600 hover:bg-purple-700 text-white"
                   onClick={submitAssignPremium}
                   disabled={submittingAction}
                 >
-                  {submittingAction ? 'Saving...' : 'Assign'}
+                  {submittingAction ? 'Saving...' : 'Assign Deficit'}
                 </Button>
               </div>
             </div>
@@ -2685,6 +3654,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       )}
 
       {/* Admin password reset form */}
+      {canResetPasswords && (
       <div className="admin-reset-form mt-8">
         <h2 className="text-xl font-bold mb-4">Admin Password Reset</h2>
         <p className="text-sm text-gray-600 mb-3 text-center">
@@ -2715,6 +3685,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

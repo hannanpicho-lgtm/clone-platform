@@ -49,10 +49,10 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="text-center mb-6">
-          <div className="mb-4 flex justify-center">
-            <div className="w-32 h-32 bg-gray-100 rounded-lg shadow-lg overflow-hidden">
+      <div className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="mb-5 flex justify-center">
+            <div className="w-44 h-44 sm:w-52 sm:h-52 bg-gray-100 rounded-xl shadow-lg overflow-hidden">
               <img
                 src={product.image}
                 alt={product.name}
@@ -61,20 +61,20 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
             </div>
           </div>
 
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 px-2">
             {product.name}
           </h2>
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-2 gap-4 sm:gap-8 mb-4 max-w-xl mx-auto">
             <div>
               <p className="text-sm text-gray-700 mb-1">Total amount</p>
-              <p className="text-2xl font-bold text-red-600">
+              <p className="text-2xl sm:text-3xl font-bold text-red-600">
                 ${product.totalAmount.toFixed(0)}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-700 mb-1">Profit</p>
-              <p className="text-2xl font-bold text-red-600">
+              <p className="text-2xl sm:text-3xl font-bold text-red-600">
                 ${product.profit.toFixed(2)}
               </p>
             </div>
@@ -91,12 +91,12 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           </div>
         </div>
 
-        <div className="bg-cyan-400 rounded-lg p-6 shadow-xl border-4 border-cyan-300">
-          <h3 className="text-center text-xl font-bold text-gray-900 mb-4">
+        <div className="bg-cyan-400 rounded-lg p-4 sm:p-5 shadow-xl border-4 border-cyan-300 max-w-2xl mx-auto">
+          <h3 className="text-center text-lg sm:text-xl font-bold text-gray-900 mb-3">
             Rate Us Now
           </h3>
 
-          <div className="flex justify-center gap-3 mb-6">
+          <div className="flex justify-center gap-2 sm:gap-3 mb-4">
             {[1, 2, 3, 4, 5].map((star) => (
               <button
                 key={star}
@@ -106,7 +106,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
                 className="transition-transform hover:scale-110 active:scale-95"
               >
                 <Star
-                  className={`h-10 w-10 ${
+                  className={`h-8 w-8 sm:h-9 sm:w-9 ${
                     star <= (hoveredRating || rating)
                       ? 'fill-gray-900 text-gray-900'
                       : 'fill-gray-100 text-gray-900'
@@ -116,11 +116,11 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
             ))}
           </div>
 
-          <div className="mb-6">
-            <p className="text-center font-semibold text-gray-900 mb-4">
+          <div className="mb-4">
+            <p className="text-center font-semibold text-gray-900 mb-3 text-sm sm:text-base">
               Describe your Review (optional)
             </p>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="radio"
@@ -130,7 +130,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Excellent! I personally used it too, very Applicable
                 </span>
               </label>
@@ -143,7 +143,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Normal! Not used often but know the Product
                 </span>
               </label>
@@ -156,7 +156,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Opps! Not used or heard it before
                 </span>
               </label>
@@ -167,18 +167,18 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
             value={reviewText}
             onChange={(e) => setReviewText(e.target.value)}
             placeholder="type here"
-            className="w-full h-24 px-4 py-3 rounded-lg border-2 border-gray-300 bg-gray-100 focus:border-blue-500 focus:outline-none resize-none mb-4"
+            className="w-full h-20 sm:h-24 px-4 py-3 rounded-lg border-2 border-gray-300 bg-gray-100 focus:border-blue-500 focus:outline-none resize-none mb-3"
           />
 
           <button
             onClick={handleSubmit}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition-colors active:scale-95"
           >
             Submit
           </button>
           <button
             onClick={onCancel}
-            className="w-full mt-3 bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-3 rounded-lg transition-colors"
+            className="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-2.5 rounded-lg transition-colors"
           >
             Cancel
           </button>

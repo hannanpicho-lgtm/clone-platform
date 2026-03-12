@@ -256,6 +256,49 @@ const DEFAULT_CONTACT_LINKS = {
   telegram: 'https://t.me/murphy_00754_support',
 };
 
+const NOTIFICATION_MAX_ITEMS = 50;
+
+const sanitizeAnnouncementLevel = (value: any): 'info' | 'success' | 'warning' => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'success') return 'success';
+  if (normalized === 'warning') return 'warning';
+  return 'info';
+};
+
+const getAnnouncementConfig = async () => {
+  const row = await kv.get('system:announcements') || {};
+  const source = Array.isArray(row?.items) ? row.items : [];
+  const items = source
+    .map((item: any) => ({
+      id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+      title: String(item?.title || '').trim(),
+      message: String(item?.message || '').trim(),
+      level: sanitizeAnnouncementLevel(item?.level),
+      popup: item?.popup !== false,
+      active: item?.active !== false,
+      createdAt: String(item?.createdAt || new Date().toISOString()),
+      expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
+    }))
+    .filter((item: any) => item.title && item.message)
+    .slice(0, NOTIFICATION_MAX_ITEMS);
+
+  return {
+    items,
+    updatedAt: row?.updatedAt || null,
+    updatedBy: row?.updatedBy || null,
+  };
+};
+
+const getUserSeenAnnouncements = async (userId: string): Promise<Set<string>> => {
+  const seen = await kv.get(`user:announcements:seen:${userId}`) || [];
+  return new Set(Array.isArray(seen) ? seen.map((value: any) => String(value || '').trim()).filter(Boolean) : []);
+};
+
+const getUserSeenBonusBadges = async (userId: string): Promise<Set<string>> => {
+  const seen = await kv.get(`user:bonus-badges:seen:${userId}`) || [];
+  return new Set(Array.isArray(seen) ? seen.map((value: any) => String(value || '').trim()).filter(Boolean) : []);
+};
+
 const getContactLinksConfig = async () => {
   const row = await kv.get('support:contact-links') || {};
   const whatsapp = String(row?.whatsapp || DEFAULT_CONTACT_LINKS.whatsapp).trim();
@@ -355,6 +398,43 @@ const getVipTaskCommissionRate = (vipTier: string): number => {
 };
 
 const VIP_TIER_ORDER = ['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const;
+
+const DEFAULT_VIP_COMMISSION_RANGES: Record<string, { min: number; max: number }> = {
+  Normal: { min: 40, max: 60 },
+  Silver: { min: 60, max: 70 },
+  Gold: { min: 150, max: 170 },
+  Platinum: { min: 200, max: 250 },
+  Diamond: { min: 1500, max: 2000 },
+};
+
+const normalizeVipCommissionRange = (
+  input: any,
+  fallback: { min: number; max: number },
+): { min: number; max: number } => {
+  const parsedMin = Number(input?.min);
+  const parsedMax = Number(input?.max);
+  const safeMin = Number.isFinite(parsedMin) && parsedMin >= 0 ? parsedMin : fallback.min;
+  const safeMaxCandidate = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : fallback.max;
+  return {
+    min: roundCurrency(safeMin),
+    max: roundCurrency(Math.max(safeMin, safeMaxCandidate)),
+  };
+};
+
+const getVipCommissionRangeConfig = async () => {
+  const row = await kv.get('vip:commission-ranges') || {};
+  const sourceRanges = row?.ranges || row || {};
+  const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
+    acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], DEFAULT_VIP_COMMISSION_RANGES[tier]);
+    return acc;
+  }, {} as Record<string, { min: number; max: number }>);
+
+  return {
+    ranges,
+    updatedAt: row?.updatedAt || null,
+    updatedBy: row?.updatedBy || null,
+  };
+};
 
 const VIP_AUTO_UPGRADE_SET_REQUIREMENTS: Record<string, number> = {
   Normal: 3,
@@ -646,12 +726,14 @@ const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) =>
       ? premiumAmount
       : roundCurrency((amountRange.min + amountRange.max) / 2);
     const createdAt = formatTaskTimestamp(new Date());
+    // Premium products use a 12× commission multiplier on the base VIP task rate
+    const premiumComRate = roundCurrency(resolvedAmount * rate * 12);
 
     return {
       name: String(assignment?.productName || premiumProduct?.name || 'Premium Assigned Product'),
       image: String(assignment?.productImage || premiumProduct?.image || TASK_PRODUCT_IMAGE_POOL[0]),
       totalAmount: resolvedAmount,
-      profit: roundCurrency(resolvedAmount * rate),
+      profit: premiumComRate,
       creationTime: createdAt,
       ratingNo: Math.random().toString(36).substring(2, 12),
       isPremium: true,
@@ -755,11 +837,81 @@ const buildTaskState = (user: any) => {
   };
 };
 
+const PREMIUM_PROFIT_CREDIT_HISTORY_LIMIT = 20;
+
+const buildPremiumCreditKey = (user: any): string => {
+  const orderId = String(user?.premiumAssignment?.orderId || '').trim();
+  if (orderId) {
+    return `order:${orderId}`;
+  }
+
+  const encounteredAt = String(user?.premiumAssignment?.encounteredAt || '').trim();
+  const amount = roundCurrency(Number(user?.premiumAssignment?.amount ?? user?.premiumAssignment?.enteredAmount ?? 0));
+  return `encountered:${encounteredAt || 'unknown'}:amount:${amount.toFixed(2)}`;
+};
+
+const reconcilePremiumProfitForUser = async (
+  user: any,
+): Promise<{ user: any; applied: boolean; premiumProfit: number }> => {
+  if (!user || !user?.id) {
+    return { user, applied: false, premiumProfit: 0 };
+  }
+
+  const assignment = user?.premiumAssignment || null;
+  const encounteredAt = String(assignment?.encounteredAt || '').trim();
+  const isFrozen = Boolean(user?.accountFrozen ?? false);
+
+  // Eligible only after premium encounter and unfreeze.
+  if (!assignment || !encounteredAt || isFrozen) {
+    return { user, applied: false, premiumProfit: 0 };
+  }
+
+  const assignmentAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
+  if (!Number.isFinite(assignmentAmount) || assignmentAmount <= 0) {
+    return { user, applied: false, premiumProfit: 0 };
+  }
+
+  const creditHistory = Array.isArray(user?.premiumProfitCreditHistory)
+    ? user.premiumProfitCreditHistory.map((item: any) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const creditKey = buildPremiumCreditKey(user);
+  if (creditHistory.includes(creditKey)) {
+    return { user, applied: false, premiumProfit: 0 };
+  }
+
+  const premiumRate = getVipTaskCommissionRate(String(user?.vipTier || 'Normal')) * 12;
+  const premiumProfit = roundCurrency(assignmentAmount * premiumRate);
+  if (!Number.isFinite(premiumProfit) || premiumProfit <= 0) {
+    return { user, applied: false, premiumProfit: 0 };
+  }
+
+  const updatedUser = {
+    ...user,
+    balance: roundCurrency(Number(user?.balance ?? 0) + premiumProfit),
+    premiumProfitCreditHistory: [...creditHistory, creditKey].slice(-PREMIUM_PROFIT_CREDIT_HISTORY_LIMIT),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await kv.set(`user:${user.id}`, updatedUser);
+
+  const userProfits = await kv.get(`profits:${user.id}`) || {
+    totalEarned: 0,
+    fromDirectChildren: 0,
+    fromIndirectReferrals: 0,
+    byLevel: {},
+  };
+  userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + premiumProfit);
+  await kv.set(`profits:${user.id}`, userProfits);
+
+  return { user: updatedUser, applied: true, premiumProfit };
+};
+
 const ADMIN_PERMISSION_ALL = '*';
 const ADMIN_ALLOWED_PERMISSIONS = [
   'users.view',
   'users.adjust_balance',
   'users.assign_premium',
+  'users.reset_password',
   'users.reset_tasks',
   'users.manage_task_limits',
   'users.unfreeze',
@@ -857,7 +1009,12 @@ const requireAdminPermission = async (
   return { ok: true, isSuperAdmin: false, userId, permissions };
 };
 
-const requireSupportAccess = async (c: any) => {
+const requireSupportAccess = async (
+  c: any,
+): Promise<
+  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
+  | { ok: false; response: any }
+> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
@@ -887,8 +1044,46 @@ const requireSupportAccess = async (c: any) => {
 
 type AdminScopeConfig =
   | { mode: 'all' }
-  | { mode: 'parent'; parentUserId: string }
+  | { mode: 'none' }
   | { mode: 'users'; userIds: Set<string> };
+
+const buildUserTreeScope = (rootUserId: string, users: any[]): Set<string> => {
+  const normalizedRoot = String(rootUserId || '').trim();
+  const scopedIds = new Set<string>();
+  if (!normalizedRoot) {
+    return scopedIds;
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  users.forEach((user) => {
+    const userId = String(user?.id || '').trim();
+    const parentId = String(user?.parentUserId || '').trim();
+    if (!userId || !parentId) {
+      return;
+    }
+    if (!childrenByParent.has(parentId)) {
+      childrenByParent.set(parentId, []);
+    }
+    childrenByParent.get(parentId)!.push(userId);
+  });
+
+  const queue: string[] = [normalizedRoot];
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (scopedIds.has(currentId)) {
+      continue;
+    }
+    scopedIds.add(currentId);
+    const children = childrenByParent.get(currentId) || [];
+    children.forEach((childId) => {
+      if (!scopedIds.has(childId)) {
+        queue.push(childId);
+      }
+    });
+  }
+
+  return scopedIds;
+};
 
 const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null }): Promise<AdminScopeConfig> => {
   if (adminAccess.isSuperAdmin || !adminAccess.userId) {
@@ -897,22 +1092,51 @@ const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId:
 
   const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
   if (!adminAccount) {
-    return { mode: 'all' };
+    return { mode: 'none' };
   }
+
+  const allUsers = await kv.getByPrefix('user:') || [];
+  const usersById = new Set((allUsers || []).map((user: any) => String(user?.id || '').trim()).filter(Boolean));
+  const ownInviteTreeScope = buildUserTreeScope(String(adminAccess.userId || ''), allUsers);
 
   const managedUserIds = Array.isArray(adminAccount?.managedUserIds)
     ? adminAccount.managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
     : [];
   if (managedUserIds.length > 0) {
-    return { mode: 'users', userIds: new Set(managedUserIds) };
+    const scopedIds = new Set<string>();
+    managedUserIds.forEach((managedId: string) => {
+      if (usersById.has(managedId)) {
+        buildUserTreeScope(managedId, allUsers).forEach((id) => scopedIds.add(id));
+      }
+    });
+    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+    return { mode: 'users', userIds: scopedIds };
   }
 
   const managedParentUserId = String(adminAccount?.managedParentUserId || '').trim();
   if (managedParentUserId) {
-    return { mode: 'parent', parentUserId: managedParentUserId };
+    const scopedIds = buildUserTreeScope(managedParentUserId, allUsers);
+    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+    return { mode: 'users', userIds: scopedIds };
   }
 
-  return { mode: 'all' };
+  // Fallback: infer parent root from username for legacy limited-admin accounts.
+  const normalizedUsername = String(adminAccount?.username || '').trim().toLowerCase();
+  if (normalizedUsername) {
+    const inferredRootUser = (allUsers || []).find((user: any) => String(user?.username || '').trim().toLowerCase() === normalizedUsername);
+    if (inferredRootUser?.id) {
+      const scopedIds = buildUserTreeScope(String(inferredRootUser.id), allUsers);
+      ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+      return { mode: 'users', userIds: scopedIds };
+    }
+  }
+
+  // Fallback: include users who signed up using invitation codes owned by this limited-admin account.
+  if (ownInviteTreeScope.size > 0) {
+    return { mode: 'users', userIds: ownInviteTreeScope };
+  }
+
+  return { mode: 'none' };
 };
 
 const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
@@ -920,15 +1144,15 @@ const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
     return true;
   }
 
+  if (scope.mode === 'none') {
+    return false;
+  }
+
   if (!user?.id) {
     return false;
   }
 
-  if (scope.mode === 'users') {
-    return scope.userIds.has(String(user.id));
-  }
-
-  return String(user?.parentUserId || '') === scope.parentUserId;
+  return scope.userIds.has(String(user.id));
 };
 
 const getRequesterIp = (c: any): string => {
@@ -1071,6 +1295,33 @@ const enforceAdminRateLimit = async (
   });
 
   return { allowed: true };
+};
+
+type AdminAuditActor = { isSuperAdmin: boolean; userId: string | null };
+
+const writeAdminAuditLog = async (
+  action: string,
+  actor: AdminAuditActor,
+  payload: {
+    targetUserId?: string | null;
+    targetIdentifier?: string | null;
+    meta?: Record<string, any>;
+  } = {},
+) => {
+  const createdAt = new Date().toISOString();
+  const entryId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const record = {
+    id: entryId,
+    action,
+    actorType: actor.isSuperAdmin ? 'super_admin' : 'limited_admin',
+    actorUserId: actor.userId || null,
+    targetUserId: payload.targetUserId || null,
+    targetIdentifier: payload.targetIdentifier || null,
+    meta: payload.meta || {},
+    createdAt,
+  };
+
+  await kv.set(`admin:audit:${createdAt}:${entryId}`, record);
 };
 
 const isLikelyTestUser = (user: any): boolean => {
@@ -1384,7 +1635,8 @@ app.post("/signup", async (c) => {
       parentUserId: parentUserId || null,
       childCount: 0,
       totalProfitFromChildren: 0,
-      balance: getMinimumBalanceByTier('Normal'),
+      balance: 0,
+      creditScore: 100,
       welcomeBonusGranted: false,
       dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
       extraTaskSets: 0,
@@ -1482,34 +1734,103 @@ app.get("/admin/invitation-codes", async (c) => {
       return adminAccess.response;
     }
 
+    const scope = await getAdminScopeConfig(adminAccess);
+    const canAccessOwnerUser = async (ownerUserId: any): Promise<boolean> => {
+      if (adminAccess.isSuperAdmin) return true;
+
+      const normalizedOwnerUserId = String(ownerUserId || '').trim();
+      if (!normalizedOwnerUserId) return false;
+      if (normalizedOwnerUserId === String(adminAccess.userId || '').trim()) return true;
+
+      const ownerUser = await kv.get(`user:${normalizedOwnerUserId}`);
+      if (ownerUser?.id && isUserInAdminScope(scope, ownerUser)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const userRows = await kv.getByPrefix('user:') || [];
+    const legacyUsersByCode = new Map<string, any>();
+    (userRows || []).forEach((user: any) => {
+      const legacyCode = normalizeInvitationCode(String(user?.invitationCode || ''));
+      if (legacyCode) {
+        legacyUsersByCode.set(legacyCode, user);
+      }
+    });
+
     const codeRows = await getKvRowsByPrefix('invitecode:');
-    const invitationCodes = await Promise.all((codeRows ?? []).map(async (row: any) => {
+    const visibleCodes = new Map<string, any>();
+
+    const invitationCodesFromRows = await Promise.all((codeRows ?? []).map(async (row: any) => {
       const rawKey = String(row?.key || '');
-      const code = rawKey.replace('invitecode:', '');
+      const code = normalizeInvitationCode(rawKey.replace('invitecode:', ''));
       const payload = row?.value ?? {};
-      const ownerUserId = payload?.userId || null;
+      const ownerUserId = String(payload?.userId || '').trim() || null;
+
+      const fallbackOwnerUser = legacyUsersByCode.get(code);
+      const resolvedOwnerUserId = ownerUserId || (fallbackOwnerUser?.id ? String(fallbackOwnerUser.id).trim() : null);
+      const resolvedOwnerName = payload?.name || fallbackOwnerUser?.name || 'Platform Invite';
+      const resolvedOwnerEmail = payload?.email || fallbackOwnerUser?.email || null;
 
       if (!code) {
         return null;
       }
 
-      if (!adminAccess.isSuperAdmin && ownerUserId !== adminAccess.userId) {
+      if (!(await canAccessOwnerUser(resolvedOwnerUserId))) {
         return null;
       }
 
-      const referrals = ownerUserId ? (await kv.getByPrefix(`referral:${ownerUserId}:`))?.length || 0 : 0;
+      const referrals = resolvedOwnerUserId ? (await kv.getByPrefix(`referral:${resolvedOwnerUserId}:`))?.length || 0 : 0;
       return {
         code,
-        ownerUserId,
-        ownerName: payload?.name || 'Platform Invite',
-        ownerEmail: payload?.email || null,
+        ownerUserId: resolvedOwnerUserId,
+        ownerName: resolvedOwnerName,
+        ownerEmail: resolvedOwnerEmail,
         signups: referrals,
         status: payload?.status || 'active',
-        createdAt: payload?.createdAt || new Date().toISOString(),
+        createdAt: payload?.createdAt || fallbackOwnerUser?.createdAt || new Date().toISOString(),
       };
     }));
 
-    return c.json({ success: true, invitationCodes: invitationCodes.filter(Boolean) });
+    (invitationCodesFromRows || []).forEach((item: any) => {
+      if (item?.code) {
+        visibleCodes.set(item.code, item);
+      }
+    });
+
+    // Restore legacy invitation codes stored on user profiles, even if the invitecode:* row is missing.
+    const legacyCodes = await Promise.all((userRows || []).map(async (user: any) => {
+      const legacyCode = normalizeInvitationCode(String(user?.invitationCode || ''));
+      if (!legacyCode) return null;
+      if (visibleCodes.has(legacyCode)) return null;
+
+      if (!adminAccess.isSuperAdmin && !isUserInAdminScope(scope, user) && String(user?.id || '') !== String(adminAccess.userId || '')) {
+        return null;
+      }
+
+      const referrals = user?.id ? (await kv.getByPrefix(`referral:${user.id}:`))?.length || 0 : 0;
+      return {
+        code: legacyCode,
+        ownerUserId: String(user?.id || '').trim() || null,
+        ownerName: String(user?.name || 'Platform Invite'),
+        ownerEmail: String(user?.email || '') || null,
+        signups: referrals,
+        status: 'active',
+        createdAt: String(user?.createdAt || new Date().toISOString()),
+      };
+    }));
+
+    (legacyCodes || []).forEach((item: any) => {
+      if (item?.code && !visibleCodes.has(item.code)) {
+        visibleCodes.set(item.code, item);
+      }
+    });
+
+    const invitationCodes = Array.from(visibleCodes.values())
+      .sort((a: any, b: any) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime());
+
+    return c.json({ success: true, invitationCodes });
   } catch (error) {
     console.error(`Error fetching invitation codes: ${error}`);
     return c.json({ error: 'Internal server error while fetching invitation codes' }, 500);
@@ -1593,8 +1914,16 @@ app.put("/admin/invitation-codes/status", async (c) => {
       return c.json({ error: 'Invitation code not found' }, 404);
     }
 
-    if (!adminAccess.isSuperAdmin && existing?.userId !== adminAccess.userId) {
-      return c.json({ error: 'Forbidden - You can only manage your own invitation codes' }, 403);
+    if (!adminAccess.isSuperAdmin) {
+      const scope = await getAdminScopeConfig(adminAccess);
+      const ownerUserId = String(existing?.userId || '').trim();
+      const isOwnCode = ownerUserId && ownerUserId === String(adminAccess.userId || '').trim();
+      const ownerUser = ownerUserId ? await kv.get(`user:${ownerUserId}`) : null;
+      const isScopedCode = Boolean(ownerUser?.id && isUserInAdminScope(scope, ownerUser));
+
+      if (!isOwnCode && !isScopedCode) {
+        return c.json({ error: 'Forbidden - You can only manage invitation codes in your scope' }, 403);
+      }
     }
 
     const updated = {
@@ -1618,6 +1947,144 @@ app.get('/contact-links', async (c) => {
   } catch (error) {
     console.error(`Error fetching contact links: ${error}`);
     return c.json({ error: 'Internal server error while fetching contact links' }, 500);
+  }
+});
+
+app.get('/announcements', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const config = await getAnnouncementConfig();
+    const seenIds = await getUserSeenAnnouncements(userId);
+    const nowMs = Date.now();
+    const items = config.items
+      .filter((item: any) => item.active)
+      .filter((item: any) => {
+        if (!item.expiresAt) return true;
+        const expiresAtMs = new Date(item.expiresAt).getTime();
+        return !Number.isFinite(expiresAtMs) || expiresAtMs > nowMs;
+      })
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map((item: any) => ({
+        ...item,
+        unread: !seenIds.has(item.id),
+      }));
+
+    return c.json({ success: true, announcements: items });
+  } catch (error) {
+    console.error(`Error fetching announcements: ${error}`);
+    return c.json({ error: 'Internal server error while fetching announcements' }, 500);
+  }
+});
+
+app.post('/announcements/ack', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const ids = Array.isArray(body?.ids)
+      ? body.ids.map((value: any) => String(value || '').trim()).filter(Boolean)
+      : [];
+
+    if (ids.length === 0) {
+      return c.json({ error: 'ids is required' }, 400);
+    }
+
+    const seen = await getUserSeenAnnouncements(userId);
+    ids.forEach((id: string) => seen.add(id));
+    await kv.set(`user:announcements:seen:${userId}`, Array.from(seen).slice(-200));
+
+    return c.json({ success: true, seenCount: seen.size });
+  } catch (error) {
+    console.error(`Error acknowledging announcements: ${error}`);
+    return c.json({ error: 'Internal server error while acknowledging announcements' }, 500);
+  }
+});
+
+app.get('/bonus-badges', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const logs = await kv.get(`admin:adjustments:${userId}`) || [];
+    const seenIds = await getUserSeenBonusBadges(userId);
+    const badges = (Array.isArray(logs) ? logs : [])
+      .filter((entry: any) => ['bonus', 'reward', 'topup'].includes(String(entry?.category || '').toLowerCase()))
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, NOTIFICATION_MAX_ITEMS)
+      .map((entry: any) => ({
+        id: String(entry?.id || ''),
+        category: String(entry?.category || 'bonus').toLowerCase(),
+        amount: Number(entry?.amount || 0),
+        note: entry?.note ? String(entry.note) : null,
+        createdAt: String(entry?.createdAt || new Date().toISOString()),
+        unread: !seenIds.has(String(entry?.id || '')),
+      }))
+      .filter((entry: any) => entry.id);
+
+    return c.json({ success: true, badges });
+  } catch (error) {
+    console.error(`Error fetching bonus badges: ${error}`);
+    return c.json({ error: 'Internal server error while fetching bonus badges' }, 500);
+  }
+});
+
+app.post('/bonus-badges/ack', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const ids = Array.isArray(body?.ids)
+      ? body.ids.map((value: any) => String(value || '').trim()).filter(Boolean)
+      : [];
+
+    if (ids.length === 0) {
+      return c.json({ error: 'ids is required' }, 400);
+    }
+
+    const seen = await getUserSeenBonusBadges(userId);
+    ids.forEach((id: string) => seen.add(id));
+    await kv.set(`user:bonus-badges:seen:${userId}`, Array.from(seen).slice(-200));
+
+    return c.json({ success: true, seenCount: seen.size });
+  } catch (error) {
+    console.error(`Error acknowledging bonus badges: ${error}`);
+    return c.json({ error: 'Internal server error while acknowledging bonus badges' }, 500);
   }
 });
 
@@ -1663,6 +2130,104 @@ app.put('/admin/contact-links', async (c) => {
   }
 });
 
+app.get('/admin/announcements', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'support.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const config = await getAnnouncementConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching admin announcements: ${error}`);
+    return c.json({ error: 'Internal server error while fetching announcements' }, 500);
+  }
+});
+
+app.put('/admin/announcements', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'support.manage');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const sourceItems = Array.isArray(body?.items) ? body.items : [];
+    const items = sourceItems
+      .map((item: any) => ({
+        id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        title: String(item?.title || '').trim(),
+        message: String(item?.message || '').trim(),
+        level: sanitizeAnnouncementLevel(item?.level),
+        popup: item?.popup !== false,
+        active: item?.active !== false,
+        createdAt: String(item?.createdAt || new Date().toISOString()),
+        expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
+      }))
+      .filter((item: any) => item.title && item.message)
+      .slice(0, NOTIFICATION_MAX_ITEMS);
+
+    const payload = {
+      items,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminAccess.userId || 'super_admin',
+    };
+
+    await kv.set('system:announcements', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating announcements: ${error}`);
+    return c.json({ error: 'Internal server error while updating announcements' }, 500);
+  }
+});
+
+app.get('/admin/vip-commission-ranges', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const config = await getVipCommissionRangeConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching VIP commission ranges: ${error}`);
+    return c.json({ error: 'Internal server error while fetching VIP commission ranges' }, 500);
+  }
+});
+
+app.put('/admin/vip-commission-ranges', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const currentConfig = await getVipCommissionRangeConfig();
+    const sourceRanges = body?.ranges || {};
+
+    const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
+      const fallback = currentConfig?.ranges?.[tier] || DEFAULT_VIP_COMMISSION_RANGES[tier];
+      acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], fallback);
+      return acc;
+    }, {} as Record<string, { min: number; max: number }>);
+
+    const payload = {
+      ranges,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminAccess.userId || 'super_admin',
+    };
+
+    await kv.set('vip:commission-ranges', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating VIP commission ranges: ${error}`);
+    return c.json({ error: 'Internal server error while updating VIP commission ranges' }, 500);
+  }
+});
+
 app.get('/deposit-config', async (c) => {
   try {
     const config = await getDepositConfig();
@@ -1680,10 +2245,12 @@ app.put('/admin/deposit-config', async (c) => {
       return adminAccess.response;
     }
 
+    const permissions = adminAccess.permissions || [];
+
     if (!adminAccess.isSuperAdmin) {
-      const hasAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
-        || adminAccess.permissions.includes('support.manage')
-        || adminAccess.permissions.includes('withdrawals.manage');
+      const hasAccess = permissions.includes(ADMIN_PERMISSION_ALL)
+        || permissions.includes('support.manage')
+        || permissions.includes('withdrawals.manage');
       if (!hasAccess) {
         return c.json({ error: 'Forbidden - Missing permission: support.manage or withdrawals.manage' }, 403);
       }
@@ -2025,7 +2592,9 @@ app.get("/profile", async (c) => {
     }
 
     // Get user profile from KV store
-    const profile = await kv.get(`user:${userId}`);
+    const rawProfile = await kv.get(`user:${userId}`);
+    const reconciled = await reconcilePremiumProfitForUser(rawProfile);
+    const profile = reconciled.user;
     
     if (!profile) {
       const supabase = getServiceClient();
@@ -2043,7 +2612,8 @@ app.get("/profile", async (c) => {
         name: metadataName || metadataUsername || 'User',
         username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
         vipTier: 'Normal',
-        balance: getMinimumBalanceByTier('Normal'),
+        balance: 0,
+        creditScore: 100,
         welcomeBonusGranted: false,
         dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
         extraTaskSets: 0,
@@ -2063,20 +2633,31 @@ app.get("/profile", async (c) => {
       return c.json({ success: true, profile: newProfile });
     }
 
-    const requestLocation = await resolveBestRequestLocation(c);
-    const shouldBackfillLoginMetadata = !profile?.lastLoginAt
-      || !profile?.lastLoginIp
-      || String(profile?.lastLoginIp || '').trim().toLowerCase() === 'unknown'
-      || !profile?.lastLoginCountry
-      || String(profile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
+    const profileAfterReconcile = profile;
 
-    let effectiveProfile = profile;
+    const requestLocation = await resolveBestRequestLocation(c);
+    const shouldBackfillLoginMetadata = !profileAfterReconcile?.lastLoginAt
+      || !profileAfterReconcile?.lastLoginIp
+      || String(profileAfterReconcile?.lastLoginIp || '').trim().toLowerCase() === 'unknown'
+      || !profileAfterReconcile?.lastLoginCountry
+      || String(profileAfterReconcile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
+
+    let effectiveProfile = profileAfterReconcile;
     if (shouldBackfillLoginMetadata) {
       effectiveProfile = {
-        ...profile,
-        lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
-        lastLoginIp: requestLocation.ip || profile?.lastLoginIp || 'unknown',
-        lastLoginCountry: requestLocation.country || profile?.lastLoginCountry || 'Unknown',
+        ...profileAfterReconcile,
+        lastLoginAt: profileAfterReconcile?.lastLoginAt || new Date().toISOString(),
+        lastLoginIp: requestLocation.ip || profileAfterReconcile?.lastLoginIp || 'unknown',
+        lastLoginCountry: requestLocation.country || profileAfterReconcile?.lastLoginCountry || 'Unknown',
+        creditScore: Number.isFinite(Number(profileAfterReconcile?.creditScore)) ? Number(profileAfterReconcile.creditScore) : 100,
+      };
+      await kv.set(`user:${userId}`, effectiveProfile);
+    }
+
+    if (!Number.isFinite(Number(effectiveProfile?.creditScore))) {
+      effectiveProfile = {
+        ...effectiveProfile,
+        creditScore: 100,
       };
       await kv.set(`user:${userId}`, effectiveProfile);
     }
@@ -2127,6 +2708,46 @@ app.put("/profile/contact-email", async (c) => {
   } catch (error) {
     console.error(`Error updating contact email: ${error}`);
     return c.json({ error: "Internal server error while updating contact email" }, 500);
+  }
+});
+
+app.put('/profile/avatar-url', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const { avatarUrl } = await c.req.json();
+    const normalizedAvatarUrl = String(avatarUrl || '').trim();
+    if (normalizedAvatarUrl.length > 300000) {
+      return c.json({ error: 'Avatar is too large. Keep it under 300KB.' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const existingProfile = await kv.get(profileKey);
+    if (!existingProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const updatedProfile = {
+      ...existingProfile,
+      avatarUrl: normalizedAvatarUrl || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+    const { withdrawalPassword: _withdrawalPassword, ...safeProfile } = updatedProfile;
+    return c.json({ success: true, profile: safeProfile });
+  } catch (error) {
+    console.error(`Error updating avatar URL: ${error}`);
+    return c.json({ error: 'Internal server error while updating avatar URL' }, 500);
   }
 });
 
@@ -2203,8 +2824,20 @@ app.put("/vip-tier", async (c) => {
       return c.json({ error: "Profile not found" }, 404);
     }
 
-    // Update VIP tier
-    const updatedProfile = { ...profile, vipTier, tierSetProgress: 0, updatedAt: new Date().toISOString() };
+    const timestamp = new Date().toISOString();
+    const tierChanged = String(profile?.vipTier || '') !== String(vipTier);
+
+    // VIP change resets tier-based progress and commission counters, but keeps the main balance.
+    const updatedProfile = {
+      ...profile,
+      vipTier,
+      tierSetProgress: 0,
+      currentSetTasksCompleted: tierChanged ? 0 : Number(profile?.currentSetTasksCompleted ?? 0),
+      taskSetsCompletedToday: tierChanged ? 0 : Number(profile?.taskSetsCompletedToday ?? 0),
+      currentSetDate: tierChanged ? null : (profile?.currentSetDate ?? null),
+      vipTierResetAt: tierChanged ? timestamp : (profile?.vipTierResetAt ?? null),
+      updatedAt: timestamp,
+    };
     await kv.set(`user:${userId}`, updatedProfile);
 
     return c.json({ success: true, profile: updatedProfile });
@@ -2222,15 +2855,18 @@ app.get("/admin/users", async (c) => {
       return adminAccess.response;
     }
 
+    const permissions = adminAccess.permissions || [];
+
     if (!adminAccess.isSuperAdmin) {
-      const hasUsersAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
-        || adminAccess.permissions.includes('users.view')
-        || adminAccess.permissions.includes('users.adjust_balance')
-        || adminAccess.permissions.includes('users.assign_premium')
-        || adminAccess.permissions.includes('users.reset_tasks')
-        || adminAccess.permissions.includes('users.manage_task_limits')
-        || adminAccess.permissions.includes('users.unfreeze')
-        || adminAccess.permissions.includes('users.update_vip');
+      const hasUsersAccess = permissions.includes(ADMIN_PERMISSION_ALL)
+        || permissions.includes('users.view')
+        || permissions.includes('users.adjust_balance')
+        || permissions.includes('users.assign_premium')
+        || permissions.includes('users.reset_password')
+        || permissions.includes('users.reset_tasks')
+        || permissions.includes('users.manage_task_limits')
+        || permissions.includes('users.unfreeze')
+        || permissions.includes('users.update_vip');
       if (!hasUsersAccess) {
         return c.json({ error: 'Forbidden - Missing user management permission' }, 403);
       }
@@ -2239,7 +2875,13 @@ app.get("/admin/users", async (c) => {
     const scope = await getAdminScopeConfig(adminAccess);
 
     const rawUsers = await kv.getByPrefix('user:');
-    const users = (rawUsers ?? []).map((user: any) => ({
+    const reconciledUsers: any[] = [];
+    for (const user of (rawUsers ?? [])) {
+      const reconciled = await reconcilePremiumProfitForUser(user);
+      reconciledUsers.push(reconciled.user || user);
+    }
+
+    const users = reconciledUsers.map((user: any) => ({
       id: user?.id ?? '',
       email: user?.email ?? '',
       name: user?.name ?? 'User',
@@ -2248,9 +2890,19 @@ app.get("/admin/users", async (c) => {
       lastLoginIp: user?.lastLoginIp ?? null,
       vipTier: user?.vipTier ?? 'Normal',
       balance: Number(user?.balance ?? 0),
+      creditScore: Number(user?.creditScore ?? 100),
       productsSubmitted: Number(user?.productsSubmitted ?? 0),
       accountFrozen: Boolean(user?.accountFrozen ?? false),
       freezeAmount: Number(user?.freezeAmount ?? 0),
+      premiumAssignment: user?.premiumAssignment
+        ? {
+            orderId: user?.premiumAssignment?.orderId ?? null,
+            amount: Number(user?.premiumAssignment?.amount ?? 0),
+            enteredAmount: Number(user?.premiumAssignment?.enteredAmount ?? 0),
+            previousBalance: Number(user?.premiumAssignment?.previousBalance ?? 0),
+            topUpRequired: Number(user?.premiumAssignment?.topUpRequired ?? 0),
+          }
+        : null,
       dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
       extraTaskSets: Number(user?.extraTaskSets ?? 0),
       withdrawalLimit: Number(user?.withdrawalLimit ?? 0),
@@ -2281,6 +2933,88 @@ app.get("/admin/users", async (c) => {
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
+  }
+});
+
+// Admin: reconcile premium profit credits for all users (idempotent)
+app.post('/admin/users/reconcile-premium-balances', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.adjust_balance');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = Boolean(body?.dryRun ?? false);
+
+    const allUsers = await kv.getByPrefix('user:') || [];
+    let scannedUsers = 0;
+    let eligibleUsers = 0;
+    let updatedUsers = 0;
+    let totalPremiumProfitCredited = 0;
+
+    for (const user of allUsers) {
+      scannedUsers += 1;
+      const assignment = user?.premiumAssignment || null;
+      const encounteredAt = String(assignment?.encounteredAt || '').trim();
+      const isFrozen = Boolean(user?.accountFrozen ?? false);
+      const amount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
+      if (!assignment || !encounteredAt || isFrozen || amount <= 0) {
+        continue;
+      }
+
+      eligibleUsers += 1;
+
+      const creditHistory = Array.isArray(user?.premiumProfitCreditHistory)
+        ? user.premiumProfitCreditHistory.map((item: any) => String(item || '').trim()).filter(Boolean)
+        : [];
+      const creditKey = buildPremiumCreditKey(user);
+      if (creditHistory.includes(creditKey)) {
+        continue;
+      }
+
+      const premiumRate = getVipTaskCommissionRate(String(user?.vipTier || 'Normal')) * 12;
+      const premiumProfit = roundCurrency(amount * premiumRate);
+      if (premiumProfit <= 0) {
+        continue;
+      }
+
+      if (!dryRun) {
+        const reconciled = await reconcilePremiumProfitForUser(user);
+        if (reconciled.applied) {
+          updatedUsers += 1;
+          totalPremiumProfitCredited = roundCurrency(totalPremiumProfitCredited + reconciled.premiumProfit);
+        }
+      } else {
+        updatedUsers += 1;
+        totalPremiumProfitCredited = roundCurrency(totalPremiumProfitCredited + premiumProfit);
+      }
+    }
+
+    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
+      meta: {
+        action: 'reconcile_premium_balances',
+        dryRun,
+        scannedUsers,
+        eligibleUsers,
+        updatedUsers,
+        totalPremiumProfitCredited,
+      },
+    });
+
+    return c.json({
+      success: true,
+      dryRun,
+      summary: {
+        scannedUsers,
+        eligibleUsers,
+        updatedUsers,
+        totalPremiumProfitCredited,
+      },
+    });
+  } catch (error) {
+    console.error(`Error reconciling premium balances: ${error}`);
+    return c.json({ error: 'Internal server error while reconciling premium balances' }, 500);
   }
 });
 
@@ -2386,19 +3120,84 @@ app.post("/admin/unfreeze", async (c) => {
 
     const currentBalance = Number(user?.balance ?? 0);
     const freezeAmount = Number(user?.freezeAmount ?? 0);
+    const assignmentAmount = roundCurrency(Number(user?.premiumAssignment?.amount ?? user?.premiumAssignment?.enteredAmount ?? 0));
+    const previousBalance = roundCurrency(Number(user?.premiumAssignment?.previousBalance ?? currentBalance));
+    const creditedPremiumAmount = assignmentAmount > 0 ? assignmentAmount : freezeAmount;
+
+    // Calculate the 12× premium commission profit earned on this product
+    const vipTierForProfit = String(user?.vipTier || 'Normal');
+    const premiumCommissionRate = getVipTaskCommissionRate(vipTierForProfit) * 12;
+    const premiumProfit = creditedPremiumAmount > 0
+      ? roundCurrency(creditedPremiumAmount * premiumCommissionRate)
+      : 0;
+
     const nextBalance = user?.accountFrozen
-      ? currentBalance + freezeAmount
+      ? roundCurrency(previousBalance + creditedPremiumAmount + premiumProfit)
       : currentBalance;
 
+    const unfreezeDate = new Date().toISOString().slice(0, 10);
+    const existingTodayProfit = String(user?.todayProfitDate || '') === unfreezeDate
+      ? roundCurrency(Number(user?.todayProfit || 0))
+      : 0;
+    const newTodayProfit = roundCurrency(existingTodayProfit + premiumProfit);
+
+    const preservedTaskSetsCompletedToday = Number(user?.taskSetsCompletedToday ?? 0);
+    const preservedCurrentSetTasksCompleted = Number(user?.currentSetTasksCompleted ?? 0);
+    const preservedCurrentSetDate = user?.currentSetDate ?? null;
+    const preservedProductsSubmitted = Number(user?.productsSubmitted ?? 0);
+
+    // Update frozen product record → approved, with premium profit credited
+    if (premiumProfit > 0) {
+      try {
+        const productRows = await getKvRowsByPrefix(`product:${userId}:`);
+        const frozenRow = productRows.find((row: any) => row.value?.status === 'frozen');
+        if (frozenRow) {
+          await kv.set(frozenRow.key, {
+            ...frozenRow.value,
+            status: 'approved',
+            userEarned: premiumProfit,
+            submittedAt: new Date().toISOString(),
+          });
+          // Update profits record
+          const userProfits = await kv.get(`profits:${userId}`) || {
+            totalEarned: 0, fromDirectChildren: 0, fromIndirectReferrals: 0, byLevel: {},
+          };
+          userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + premiumProfit);
+          await kv.set(`profits:${userId}`, userProfits);
+        }
+      } catch (_err) {
+        // Non-fatal — balance update proceeds regardless
+      }
+    }
+
+    // Unfreeze should only release the hold and recalculate balances.
+    // Task/profit progression remains paused and resumes from the same point.
     const updatedUser = {
       ...user,
       accountFrozen: false,
       balance: nextBalance,
       freezeAmount: 0,
+      taskSetsCompletedToday: preservedTaskSetsCompletedToday,
+      currentSetTasksCompleted: preservedCurrentSetTasksCompleted,
+      currentSetDate: preservedCurrentSetDate,
+      productsSubmitted: preservedProductsSubmitted,
+      todayProfit: newTodayProfit,
+      todayProfitDate: unfreezeDate,
       unfrozenAt: new Date().toISOString(),
     };
 
     await kv.set(key, updatedUser);
+
+    await writeAdminAuditLog('users.unfreeze', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        previousBalance: currentBalance,
+        freezeAmount,
+        creditedPremiumAmount,
+        premiumProfit,
+        nextBalance,
+      },
+    });
 
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
@@ -2407,7 +3206,7 @@ app.post("/admin/unfreeze", async (c) => {
   }
 });
 
-// Admin: assign premium product to a user
+// Admin: assign premium deficit product to a user
 app.post("/admin/premium", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -2417,7 +3216,7 @@ app.post("/admin/premium", async (c) => {
 
     const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'premium.assign', 20, 10 * 60 * 1000);
     if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+      return c.json({ error: `Rate limit exceeded for premium deficit assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const { userId, amount, position, productId } = await c.req.json();
@@ -2464,16 +3263,16 @@ app.post("/admin/premium", async (c) => {
       : null;
 
     if (normalizedProductId && !assignedProduct) {
-      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
+      return c.json({ error: 'Selected deficit product was not found in catalog' }, 400);
     }
 
     const currentBalance = Number(user?.balance ?? 0);
     const bundleDetails = buildPremiumBundleDetails(premiumAmount);
     const bundleTotal = Number(bundleDetails.bundleTotal || 0);
-    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
-    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
-    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const vipPremiumRate = 0;
+    const potentialPremiumProfit = 0;
+    const balanceAfterAssignment = roundCurrency(-Math.abs(bundleTotal));
+    const projectedTopUpRequired = Math.abs(bundleTotal);
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const updatedUser = {
@@ -2514,7 +3313,7 @@ app.post("/admin/premium", async (c) => {
         boostedCommission: potentialPremiumProfit,
         potentialProfit: potentialPremiumProfit,
         frozen: false,
-        willFreezeOnEncounter: projectedTopUpRequired > 0,
+        willFreezeOnEncounter: true,
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
@@ -2523,8 +3322,8 @@ app.post("/admin/premium", async (c) => {
       },
     });
   } catch (error) {
-    console.error(`Error assigning premium product: ${error}`);
-    return c.json({ error: 'Internal server error while assigning premium product' }, 500);
+    console.error(`Error assigning premium deficit product: ${error}`);
+    return c.json({ error: 'Internal server error while assigning premium deficit product' }, 500);
   }
 });
 
@@ -2557,14 +3356,29 @@ app.put("/admin/vip-tier", async (c) => {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
+    const timestamp = new Date().toISOString();
+    const tierChanged = String(user?.vipTier || '') !== String(vipTier);
+
     const updatedUser = {
       ...user,
       vipTier,
       tierSetProgress: 0,
-      updatedAt: new Date().toISOString(),
+      currentSetTasksCompleted: tierChanged ? 0 : Number(user?.currentSetTasksCompleted ?? 0),
+      taskSetsCompletedToday: tierChanged ? 0 : Number(user?.taskSetsCompletedToday ?? 0),
+      currentSetDate: tierChanged ? null : (user?.currentSetDate ?? null),
+      vipTierResetAt: tierChanged ? timestamp : (user?.vipTierResetAt ?? null),
+      updatedAt: timestamp,
     };
 
     await kv.set(key, updatedUser);
+
+    await writeAdminAuditLog('users.update_vip', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        previousVipTier: String(user?.vipTier || 'Normal'),
+        nextVipTier: String(vipTier),
+      },
+    });
 
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
@@ -2573,7 +3387,7 @@ app.put("/admin/vip-tier", async (c) => {
   }
 });
 
-// Admin: list all premium assignments
+// Admin: list all premium deficit assignments
 app.get("/admin/premium/list", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -2604,12 +3418,12 @@ app.get("/admin/premium/list", async (c) => {
       assignments: premiumAssignments,
     });
   } catch (error) {
-    console.error(`Error listing premium assignments: ${error}`);
-    return c.json({ error: 'Internal server error while listing premium assignments' }, 500);
+    console.error(`Error listing premium deficit assignments: ${error}`);
+    return c.json({ error: 'Internal server error while listing premium deficit assignments' }, 500);
   }
 });
 
-// Admin: revoke premium assignment from a user
+// Admin: revoke premium deficit assignment from a user
 app.post("/admin/premium/revoke", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -2629,7 +3443,7 @@ app.post("/admin/premium/revoke", async (c) => {
     }
 
     if (!user?.premiumAssignment) {
-      return c.json({ error: 'User has no active premium assignment' }, 400);
+      return c.json({ error: 'User has no active premium deficit assignment' }, 400);
     }
 
     const oldAssignment = user.premiumAssignment;
@@ -2648,12 +3462,12 @@ app.post("/admin/premium/revoke", async (c) => {
 
     return c.json({
       success: true,
-      message: `Premium assignment revoked for user ${userId}`,
+      message: `Premium deficit assignment revoked for user ${userId}`,
       user: updatedUser,
     });
   } catch (error) {
-    console.error(`Error revoking premium assignment: ${error}`);
-    return c.json({ error: 'Internal server error while revoking premium assignment' }, 500);
+    console.error(`Error revoking premium deficit assignment: ${error}`);
+    return c.json({ error: 'Internal server error while revoking premium deficit assignment' }, 500);
   }
 });
 
@@ -2977,8 +3791,51 @@ app.get('/tasks/next-product', async (c) => {
       }, 409);
     }
 
+    // Reuse an existing pending task first, so users don't accumulate duplicate in-progress rows.
+    const existingRows = await getKvRowsByPrefix(`product:${userId}:`);
+    const existingPending = existingRows
+      .map((row) => row.value)
+      .find((item: any) => item && String(item?.status || '').toLowerCase() === 'pending');
+
+    if (existingPending) {
+      return c.json({
+        success: true,
+        product: {
+          name: String(existingPending?.productName || 'Task Product'),
+          image: String(existingPending?.productImage || TASK_PRODUCT_IMAGE_POOL[0]),
+          totalAmount: Number(existingPending?.productValue || 0),
+          profit: Number(existingPending?.expectedProfit || existingPending?.userEarned || 0),
+          creationTime: formatTaskTimestamp(new Date(String(existingPending?.submittedAt || existingPending?.createdAt || new Date().toISOString()))),
+          ratingNo: String(existingPending?.taskToken || existingPending?.ratingNo || Math.random().toString(36).substring(2, 12)),
+        },
+        taskState: {
+          ...normalizedTaskState,
+          nextTaskNumber: normalizedTaskState.currentSetTasksCompleted + 1,
+          maxSetsForToday,
+          remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
+        },
+      });
+    }
+
     const nextTaskNumber = normalizedTaskState.currentSetTasksCompleted + 1;
     const product = await buildNextTaskProduct(userProfile, nextTaskNumber);
+
+    const pendingKey = `product:${userId}:${Date.now()}`;
+    const pendingTimestamp = new Date().toISOString();
+    await kv.set(pendingKey, {
+      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      productName: String(product?.name || 'Task Product'),
+      productImage: String(product?.image || TASK_PRODUCT_IMAGE_POOL[0]),
+      productValue: Number(product?.totalAmount || 0),
+      expectedProfit: Number(product?.profit || 0),
+      userEarned: 0,
+      taskToken: String(product?.ratingNo || ''),
+      commissionsCascade: [],
+      status: 'pending',
+      submittedAt: pendingTimestamp,
+      createdAt: pendingTimestamp,
+    });
 
     return c.json({
       success: true,
@@ -3015,9 +3872,13 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const { productName, productValue } = await c.req.json();
+    const { productName, productValue, productImage, ratingNo } = await c.req.json();
+    const normalizedName = String(productName || '').trim();
+    const normalizedValue = Number(productValue || 0);
+    const normalizedImage = String(productImage || '').trim() || TASK_PRODUCT_IMAGE_POOL[0];
+    const normalizedRatingNo = String(ratingNo || '').trim();
 
-    if (!productName || !productValue || productValue <= 0) {
+    if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: "Product name and positive value are required" }, 400);
     }
 
@@ -3094,8 +3955,8 @@ app.post("/submit-product", async (c) => {
     if (shouldTriggerPremiumEncounter) {
       const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const topUpRequired = roundCurrency(Math.abs(bundleTotal));
+      const balanceAfterEncounter = roundCurrency(-topUpRequired);
       const encounteredAt = new Date().toISOString();
 
       const updatedAssignment = {
@@ -3110,51 +3971,48 @@ app.post("/submit-product", async (c) => {
 
       effectivePremiumAssignment = updatedAssignment;
 
-      if (balanceAfterEncounter < 0) {
-        const frozenProfile = {
-          ...userProfile,
-          premiumAssignment: updatedAssignment,
+      const frozenProfile = {
+        ...userProfile,
+        premiumAssignment: updatedAssignment,
+        accountFrozen: true,
+        freezeAmount: topUpRequired,
+        balance: balanceAfterEncounter,
+        updatedAt: encounteredAt,
+      };
+
+      await kv.set(`user:${userId}`, frozenProfile);
+      await kv.set(`product:${userId}:${Date.now()}`, {
+        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        productName: normalizedName,
+        productImage: normalizedImage,
+        productValue: normalizedValue,
+        userEarned: 0,
+        taskToken: normalizedRatingNo || null,
+        commissionsCascade: [],
+        status: 'frozen',
+        submittedAt: encounteredAt,
+      });
+
+      return c.json({
+        error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+        premiumEncounter: {
+          orderId: updatedAssignment.orderId || null,
+          position: premiumPosition,
+          topUpRequired,
+          amount: bundleTotal,
+        },
+        user: {
           accountFrozen: true,
           freezeAmount: topUpRequired,
           balance: balanceAfterEncounter,
-          updatedAt: encounteredAt,
-        };
-
-        await kv.set(`user:${userId}`, frozenProfile);
-        await kv.set(`product:${userId}:${Date.now()}`, {
-          id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          userId,
-          productName: normalizedName,
-          productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
-          productValue: normalizedValue,
-          userEarned: 0,
-          commissionsCascade: [],
-          status: 'frozen',
-          submittedAt: encounteredAt,
-        });
-
-        return c.json({
-          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
-          premiumEncounter: {
-            orderId: updatedAssignment.orderId || null,
-            position: premiumPosition,
-            topUpRequired,
-            amount: bundleTotal,
-          },
-          user: {
-            accountFrozen: true,
-            freezeAmount: topUpRequired,
-            balance: balanceAfterEncounter,
-            premiumAssignment: updatedAssignment,
-          },
-        }, 403);
-      }
-
-      currentBalanceForProfit = balanceAfterEncounter;
+          premiumAssignment: updatedAssignment,
+        },
+      }, 403);
     }
 
     // Calculate profit distribution
-    const profitAmount = productValue * 0.8; // 80% to user
+    const profitAmount = normalizedValue * 0.8; // 80% to user
 
     // Update user balance
     const updatedProfile = {
@@ -3183,7 +4041,7 @@ app.post("/submit-product", async (c) => {
 
     // Multi-level commission cascade
     let currentParentId = userProfile.parentUserId;
-    let commissionAmount = productValue * 0.2; // Start with 20% for direct parent
+    let commissionAmount = normalizedValue * 0.2; // Start with 20% for direct parent
     let level = 1;
     const commissionLog = [];
 
@@ -3251,9 +4109,11 @@ app.post("/submit-product", async (c) => {
     // Log product submission
     await kv.set(`product:${userId}:${Date.now()}`, {
       userId,
-      productName,
-      productValue,
+      productName: normalizedName,
+      productImage: normalizedImage,
+      productValue: normalizedValue,
       userEarned: profitAmount,
+      taskToken: normalizedRatingNo || null,
       commissionsCascade: commissionLog,
       submittedAt: new Date().toISOString(),
     });
@@ -3261,8 +4121,8 @@ app.post("/submit-product", async (c) => {
     return c.json({
       success: true,
       product: {
-        name: productName,
-        value: productValue,
+        name: normalizedName,
+        value: normalizedValue,
         userEarned: profitAmount,
         commissionsCascade: commissionLog,
       },
@@ -3297,10 +4157,12 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
     }
 
-    const { productName, productValue, profit } = await c.req.json();
+    const { productName, productValue, profit, productImage, ratingNo } = await c.req.json();
     const normalizedName = String(productName || '').trim();
     const normalizedValue = Number(productValue || 0);
     const normalizedProfit = Number(profit || 0);
+    const normalizedImage = String(productImage || '').trim() || TASK_PRODUCT_IMAGE_POOL[0];
+    const normalizedRatingNo = String(ratingNo || '').trim();
 
     if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: 'productName and productValue are required' }, 400);
@@ -3376,8 +4238,8 @@ app.post('/tasks/complete-product', async (c) => {
     if (shouldTriggerPremiumEncounter) {
       const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const topUpRequired = roundCurrency(Math.abs(bundleTotal));
+      const balanceAfterEncounter = roundCurrency(-topUpRequired);
       const encounteredAt = new Date().toISOString();
 
       const updatedAssignment = {
@@ -3392,40 +4254,85 @@ app.post('/tasks/complete-product', async (c) => {
 
       effectivePremiumAssignment = updatedAssignment;
 
-      if (balanceAfterEncounter < 0) {
-        const frozenProfile = {
-          ...userProfile,
-          premiumAssignment: updatedAssignment,
+      const frozenProfile = {
+        ...userProfile,
+        premiumAssignment: updatedAssignment,
+        accountFrozen: true,
+        freezeAmount: topUpRequired,
+        balance: balanceAfterEncounter,
+        updatedAt: encounteredAt,
+      };
+
+      await kv.set(`user:${userId}`, frozenProfile);
+
+      // Promote an existing pending row to frozen, or create one if missing.
+      const pendingRows = await getKvRowsByPrefix(`product:${userId}:`);
+      const matchingPending = pendingRows.find((row: any) => {
+        const value = row?.value || {};
+        if (String(value?.status || '').toLowerCase() !== 'pending') return false;
+        if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
+        return String(value?.productName || '') === normalizedName
+          && Number(value?.productValue || 0) === normalizedValue;
+      });
+
+      if (matchingPending) {
+        await kv.set(matchingPending.key, {
+          ...matchingPending.value,
+          productName: normalizedName,
+          productImage: normalizedImage,
+          productValue: normalizedValue,
+          expectedProfit: normalizedProfit > 0
+            ? roundCurrency(normalizedProfit)
+            : roundCurrency(Number(matchingPending.value?.expectedProfit || 0)),
+          taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
+          userEarned: 0,
+          status: 'frozen',
+          submittedAt: encounteredAt,
+          updatedAt: encounteredAt,
+        });
+      } else {
+        await kv.set(`product:${userId}:${Date.now()}`, {
+          id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          userId,
+          productName: normalizedName,
+          productImage: normalizedImage,
+          productValue: normalizedValue,
+          expectedProfit: normalizedProfit > 0
+            ? roundCurrency(normalizedProfit)
+            : roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')) * 12),
+          userEarned: 0,
+          taskToken: normalizedRatingNo || null,
+          commissionsCascade: [],
+          status: 'frozen',
+          submittedAt: encounteredAt,
+        });
+      }
+
+      return c.json({
+        error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+        premiumEncounter: {
+          orderId: updatedAssignment.orderId || null,
+          position: premiumPosition,
+          topUpRequired,
+          amount: bundleTotal,
+        },
+        user: {
           accountFrozen: true,
           freezeAmount: topUpRequired,
           balance: balanceAfterEncounter,
-          updatedAt: encounteredAt,
-        };
-
-        await kv.set(`user:${userId}`, frozenProfile);
-
-        return c.json({
-          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
-          premiumEncounter: {
-            orderId: updatedAssignment.orderId || null,
-            position: premiumPosition,
-            topUpRequired,
-            amount: bundleTotal,
-          },
-          user: {
-            accountFrozen: true,
-            freezeAmount: topUpRequired,
-            balance: balanceAfterEncounter,
-            premiumAssignment: updatedAssignment,
-          },
-        }, 403);
-      }
-
-      currentBalanceForProfit = balanceAfterEncounter;
+          premiumAssignment: updatedAssignment,
+        },
+      }, 403);
     }
 
     const expectedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
     const appliedProfit = Number.isFinite(normalizedProfit) && normalizedProfit > 0 ? roundCurrency(normalizedProfit) : expectedProfit;
+
+    // Accumulate today's profit (reset to 0 when the date changes)
+    const existingTodayProfit = String(userProfile?.todayProfitDate || '') === todayDate
+      ? roundCurrency(Number(userProfile?.todayProfit || 0))
+      : 0;
+    const newTodayProfit = roundCurrency(existingTodayProfit + appliedProfit);
 
     const updatedProfile = {
       ...userProfile,
@@ -3437,6 +4344,8 @@ app.post('/tasks/complete-product', async (c) => {
       taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
       currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
       currentSetDate: todayDate,
+      todayProfit: newTodayProfit,
+      todayProfitDate: todayDate,
       lastCompletedTaskAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -3453,17 +4362,44 @@ app.post('/tasks/complete-product', async (c) => {
     await kv.set(`profits:${userId}`, userProfits);
 
     const submittedAt = new Date().toISOString();
-    await kv.set(`product:${userId}:${Date.now()}`, {
-      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      userId,
-      productName: normalizedName,
-      productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
-      productValue: normalizedValue,
-      userEarned: appliedProfit,
-      commissionsCascade: [],
-      status: 'approved',
-      submittedAt,
+    const pendingRows = await getKvRowsByPrefix(`product:${userId}:`);
+    const matchingPending = pendingRows.find((row: any) => {
+      const value = row?.value || {};
+      if (String(value?.status || '').toLowerCase() !== 'pending') return false;
+      if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
+      return String(value?.productName || '') === normalizedName
+        && Number(value?.productValue || 0) === normalizedValue;
     });
+
+    if (matchingPending) {
+      await kv.set(matchingPending.key, {
+        ...matchingPending.value,
+        productName: normalizedName,
+        productImage: normalizedImage,
+        productValue: normalizedValue,
+        expectedProfit: appliedProfit,
+        userEarned: appliedProfit,
+        taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
+        commissionsCascade: [],
+        status: 'approved',
+        submittedAt,
+        updatedAt: submittedAt,
+      });
+    } else {
+      await kv.set(`product:${userId}:${Date.now()}`, {
+        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        productName: normalizedName,
+        productImage: normalizedImage,
+        productValue: normalizedValue,
+        expectedProfit: appliedProfit,
+        userEarned: appliedProfit,
+        taskToken: normalizedRatingNo || null,
+        commissionsCascade: [],
+        status: 'approved',
+        submittedAt,
+      });
+    }
 
     const currentSetDone = updatedProfile.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
     if (currentSetDone) {
@@ -3625,6 +4561,8 @@ app.get('/records', async (c) => {
 
     // Get submitted/frozen records
     const products = await kv.getByPrefix(`product:${userId}:`);
+    const vipTier = String(userProfile?.vipTier || 'Normal');
+    const baseRate = getVipTaskCommissionRate(vipTier);
     const backendRecords = (products || [])
       .filter((item: any) => item)
       .map((item: any, index: number) => {
@@ -3636,13 +4574,34 @@ app.get('/records', async (c) => {
         const status = (rawStatus === 'pending' || rawStatus === 'frozen' || rawStatus === 'approved')
           ? rawStatus
           : 'approved';
+        const totalAmount = Number(item?.productValue || item?.value || item?.totalAmount || 0);
+        const expectedProfit = roundCurrency(Number(item?.expectedProfit || 0));
+        const realizedProfit = roundCurrency(Number(item?.userEarned || item?.profit || 0));
+        const displayProfit = status === 'approved'
+          ? (realizedProfit > 0 ? realizedProfit : expectedProfit)
+          : expectedProfit;
+        const regularProfit = roundCurrency(totalAmount * baseRate);
+        const inferredMultiplier = totalAmount > 0 && regularProfit > 0
+          ? Math.max(1, Math.round((displayProfit || expectedProfit || 0) / regularProfit))
+          : 1;
+        const multiplier = inferredMultiplier >= 12 ? 12 : 1;
+        const appliedRate = roundCurrency(baseRate * multiplier * 100);
+        const profitCalculation = totalAmount > 0
+          ? multiplier > 1
+            ? `$${totalAmount.toFixed(2)} x ${(baseRate * 100).toFixed(2)}% x ${multiplier} = $${displayProfit.toFixed(2)}`
+            : `$${totalAmount.toFixed(2)} x ${appliedRate.toFixed(2)}% = $${displayProfit.toFixed(2)}`
+          : 'Waiting for product assignment';
         return {
           id: String(item?.id || `record_${index}_${safeDate.getTime()}`),
           timestamp,
           productName: String(item?.productName || item?.name || 'Product Task'),
           productImage: String(item?.productImage || item?.image || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
-          totalAmount: Number(item?.productValue || item?.value || item?.totalAmount || 0),
-          profit: roundCurrency(Number(item?.userEarned || item?.profit || 0)),
+          totalAmount,
+          profit: displayProfit,
+          expectedProfit,
+          commissionRate: baseRate,
+          multiplier,
+          profitCalculation,
           status,
           submittedAt: safeDate.toISOString(),
         };
@@ -3654,7 +4613,47 @@ app.get('/records', async (c) => {
       return bTime - aTime;
     });
 
-    return c.json({ success: true, records: sortedRecords });
+    // Add virtual pending rows for tasks remaining in the current set so
+    // users can see in-progress workload before each submission is started.
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const taskState = buildTaskState(userProfile);
+    const normalizedTaskState = taskState.currentSetDate === todayDate
+      ? taskState
+      : {
+          ...taskState,
+          taskSetsCompletedToday: 0,
+          currentSetTasksCompleted: 0,
+          currentSetDate: todayDate,
+        };
+    const pendingCountFromRecords = sortedRecords.filter((item: any) => String(item?.status || '').toLowerCase() === 'pending').length;
+    const remainingInSet = Math.max(0, Number(normalizedTaskState.tasksPerSet || 0) - Number(normalizedTaskState.currentSetTasksCompleted || 0));
+    const virtualPendingNeeded = Math.max(0, remainingInSet - pendingCountFromRecords);
+
+    const catalog = await getTaskProductCatalog();
+    const virtualPending = Array.from({ length: virtualPendingNeeded }).map((_, index) => {
+      const fallbackCatalogItem = catalog[index % Math.max(1, catalog.length)] || {};
+      const now = new Date();
+      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const taskNumber = Number(normalizedTaskState.currentSetTasksCompleted || 0) + index + 1;
+      return {
+        id: `virtual_pending_${userId}_${taskNumber}`,
+        timestamp: ts,
+        productName: `Task #${taskNumber} Pending Submission`,
+        productImage: String(fallbackCatalogItem?.image || TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length]),
+        totalAmount: 0,
+        profit: 0,
+        expectedProfit: 0,
+        commissionRate: baseRate,
+        multiplier: 1,
+        profitCalculation: 'Waiting for product assignment',
+        status: 'pending',
+        submittedAt: now.toISOString(),
+      };
+    });
+
+    const finalRecords = [...virtualPending, ...sortedRecords];
+
+    return c.json({ success: true, records: finalRecords });
   } catch (error) {
     console.error(`Error fetching records: ${error}`);
     return c.json({ error: 'Internal server error while fetching records' }, 500);
@@ -3745,6 +4744,11 @@ app.get("/earnings", async (c) => {
     const childCount = profile?.childCount || 0;
     const totalFromChildren = referrals?.reduce((sum: number, ref: any) => sum + (ref?.totalSharedProfit || 0), 0) || 0;
 
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayProfit = String(profile?.todayProfitDate || '') === todayDate
+      ? roundCurrency(Number(profile?.todayProfit || 0))
+      : 0;
+
     return c.json({
       success: true,
       earnings: {
@@ -3754,6 +4758,7 @@ app.get("/earnings", async (c) => {
         fromIndirectReferrals: profits?.fromIndirectReferrals || 0,
         childCount,
         totalFromChildren,
+        todayProfit,
         parentUserId: profile?.parentUserId || null,
       },
     });
@@ -3849,18 +4854,7 @@ app.post("/request-withdrawal", async (c) => {
     const completedSetsToday = normalizedTaskState.taskSetsCompletedToday
       + (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet ? 1 : 0);
     const requiredSetsForWithdrawal = normalizedTaskState.dailyTaskSetLimit;
-
-    if (completedSetsToday < requiredSetsForWithdrawal) {
-      return c.json({
-        error: `Complete ${requiredSetsForWithdrawal} task set(s) before requesting withdrawal`,
-        taskRequirement: {
-          requiredSets: requiredSetsForWithdrawal,
-          completedSets: completedSetsToday,
-          tasksPerSet: normalizedTaskState.tasksPerSet,
-          currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
-        },
-      }, 403);
-    }
+    const meetsTaskRequirement = completedSetsToday >= requiredSetsForWithdrawal;
 
     const passwordCheck = await verifyWithdrawalPassword(
       String(withdrawalPassword || ''),
@@ -3896,6 +4890,13 @@ app.post("/request-withdrawal", async (c) => {
       userName: userProfile.name,
       amount,
       status: 'pending',
+      requiresTaskCompletionOverride: !meetsTaskRequirement,
+      taskRequirement: {
+        requiredSets: requiredSetsForWithdrawal,
+        completedSets: completedSetsToday,
+        tasksPerSet: normalizedTaskState.tasksPerSet,
+        currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
+      },
       requestedAt: new Date().toISOString(),
       approvedAt: null,
       deniedAt: null,
@@ -3919,7 +4920,9 @@ app.post("/request-withdrawal", async (c) => {
     return c.json({
       success: true,
       withdrawal: withdrawalRequest,
-      message: 'Withdrawal request submitted. Admin approval required.',
+      message: meetsTaskRequirement
+        ? 'Withdrawal request submitted. Admin approval required.'
+        : `Withdrawal request submitted for admin review. Task sets completed: ${completedSetsToday}/${requiredSetsForWithdrawal}.`,
     });
   } catch (error) {
     console.error(`Error requesting withdrawal: ${error}`);
@@ -4002,6 +5005,92 @@ app.get("/admin/withdrawals", async (c) => {
   }
 });
 
+// Admin: consolidated transaction feed (deposits, withdrawals, balance adjustments)
+app.get('/admin/transactions', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.view');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    const transactions: Array<{
+      id: string;
+      commission: number;
+      timestamp: string;
+      status: string;
+      productName: string;
+      userName: string;
+    }> = [];
+
+    const depositQueue = await kv.get('deposit:requests:queue') || [];
+    for (const requestId of depositQueue) {
+      const request = await kv.get(`deposit:request:${requestId}`);
+      if (!request) continue;
+      const owner = await kv.get(`user:${request.userId}`);
+      if (!isUserInAdminScope(scope, owner)) continue;
+
+      transactions.push({
+        id: `deposit:${request.id || requestId}`,
+        commission: roundCurrency(Number(request.amount || 0)),
+        timestamp: String(request.createdAt || request.updatedAt || new Date().toISOString()),
+        status: String(request.status || 'pending'),
+        productName: 'Deposit Request',
+        userName: String(request.userName || owner?.name || 'User'),
+      });
+    }
+
+    const pendingWithdrawalIds = await kv.get('withdrawals:pending') || [];
+    const approvedWithdrawalIds = await kv.get('withdrawals:approved') || [];
+    const deniedWithdrawalIds = await kv.get('withdrawals:denied') || [];
+    const allWithdrawalIds = Array.from(new Set([
+      ...pendingWithdrawalIds,
+      ...approvedWithdrawalIds,
+      ...deniedWithdrawalIds,
+    ]));
+
+    for (const withdrawalId of allWithdrawalIds) {
+      const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+      if (!withdrawal) continue;
+      const owner = await kv.get(`user:${withdrawal.userId}`);
+      if (!isUserInAdminScope(scope, owner)) continue;
+
+      transactions.push({
+        id: `withdrawal:${withdrawal.id || withdrawalId}`,
+        commission: roundCurrency(-Math.abs(Number(withdrawal.amount || 0))),
+        timestamp: String(withdrawal.requestedAt || withdrawal.approvedAt || withdrawal.deniedAt || new Date().toISOString()),
+        status: String(withdrawal.status || 'pending'),
+        productName: `Withdrawal (${String(withdrawal.status || 'pending').toUpperCase()})`,
+        userName: String(withdrawal.userName || owner?.name || 'User'),
+      });
+    }
+
+    const scopedUsers = (await kv.getByPrefix('user:') || []).filter((user: any) => isUserInAdminScope(scope, user));
+    for (const user of scopedUsers) {
+      const adjustmentRows = await kv.get(`admin:adjustments:${user.id}`) || [];
+      adjustmentRows.forEach((row: any) => {
+        transactions.push({
+          id: `adjustment:${row.id || `${user.id}-${row.createdAt || Date.now()}`}`,
+          commission: roundCurrency(Number(row.amount || 0)),
+          timestamp: String(row.createdAt || new Date().toISOString()),
+          status: 'approved',
+          productName: `Balance Adjustment (${String(row.category || 'adjustment')})`,
+          userName: String(user.name || 'User'),
+        });
+      });
+    }
+
+    const sortedTransactions = transactions
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 500);
+
+    return c.json({ success: true, transactions: sortedTransactions, total: sortedTransactions.length });
+  } catch (error) {
+    console.error(`Error fetching admin transactions: ${error}`);
+    return c.json({ error: 'Internal server error while fetching transactions' }, 500);
+  }
+});
+
 // Admin: approve withdrawal request
 app.post("/admin/approve-withdrawal", async (c) => {
   try {
@@ -4062,6 +5151,14 @@ app.post("/admin/approve-withdrawal", async (c) => {
       const template = emailTemplates.withdrawalApproved(withdrawal.userName, withdrawal.amount);
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
+
+    await writeAdminAuditLog('withdrawals.approve', adminAccess, {
+      targetUserId: String(withdrawal.userId || ''),
+      meta: {
+        withdrawalId: String(withdrawalId),
+        amount: Number(withdrawal.amount || 0),
+      },
+    });
 
     return c.json({
       success: true,
@@ -4131,6 +5228,15 @@ app.post("/admin/deny-withdrawal", async (c) => {
       const template = emailTemplates.withdrawalDenied(withdrawal.userName, withdrawal.amount, withdrawal.denialReason);
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
+
+    await writeAdminAuditLog('withdrawals.deny', adminAccess, {
+      targetUserId: String(withdrawal.userId || ''),
+      meta: {
+        withdrawalId: String(withdrawalId),
+        amount: Number(withdrawal.amount || 0),
+        denialReason: withdrawal.denialReason || null,
+      },
+    });
 
     return c.json({
       success: true,
@@ -4209,6 +5315,17 @@ app.post('/admin/users/adjust-balance', async (c) => {
     });
     await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
 
+    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        amount: adjustmentAmount,
+        category: adjustmentCategory,
+        note: normalizedNote || null,
+        previousBalance,
+        newBalance: nextBalance,
+      },
+    });
+
     return c.json({
       success: true,
       user: updatedProfile,
@@ -4235,7 +5352,7 @@ app.post('/admin/users/assign-premium', async (c) => {
 
     const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'premium.assign', 20, 10 * 60 * 1000);
     if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+      return c.json({ error: `Rate limit exceeded for premium deficit assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -4247,10 +5364,10 @@ app.post('/admin/users/assign-premium', async (c) => {
     const normalizedProductId = String(body?.productId || '').trim();
 
     if (body?.amount === undefined || body?.amount === null || body?.amount === '') {
-      return c.json({ error: 'amount is required for premium assignment' }, 400);
+      return c.json({ error: 'amount is required for premium deficit assignment' }, 400);
     }
     if (body?.position === undefined || body?.position === null || body?.position === '') {
-      return c.json({ error: 'position is required for premium assignment' }, 400);
+      return c.json({ error: 'position is required for premium deficit assignment' }, 400);
     }
     const amount = Number(body.amount);
     const requestedPosition = Number(body.position);
@@ -4275,7 +5392,7 @@ app.post('/admin/users/assign-premium', async (c) => {
       : null;
 
     if (normalizedProductId && !assignedProduct) {
-      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
+      return c.json({ error: 'Selected deficit product was not found in catalog' }, 400);
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
@@ -4302,10 +5419,10 @@ app.post('/admin/users/assign-premium', async (c) => {
     const currentBalance = Number(user?.balance ?? 0);
     const bundleDetails = buildPremiumBundleDetails(amount);
     const bundleTotal = Number(bundleDetails.bundleTotal || 0);
-    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
-    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
-    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const vipPremiumRate = 0;
+    const potentialPremiumProfit = 0;
+    const balanceAfterAssignment = roundCurrency(-Math.abs(bundleTotal));
+    const projectedTopUpRequired = Math.abs(bundleTotal);
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const updatedUser = {
       ...user,
@@ -4339,6 +5456,17 @@ app.post('/admin/users/assign-premium', async (c) => {
 
     await kv.set(key, updatedUser);
 
+    await writeAdminAuditLog('users.assign_premium', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        requestedPosition,
+        effectivePosition,
+        amount,
+        bundleTotal,
+        orderId: premiumOrderId,
+      },
+    });
+
     return c.json({
       success: true,
       user: updatedUser,
@@ -4346,7 +5474,7 @@ app.post('/admin/users/assign-premium', async (c) => {
         boostedCommission: potentialPremiumProfit,
         potentialProfit: potentialPremiumProfit,
         frozen: false,
-        willFreezeOnEncounter: projectedTopUpRequired > 0,
+        willFreezeOnEncounter: true,
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
@@ -4435,6 +5563,14 @@ app.post('/admin/users/reset-task-set', async (c) => {
 
     await kv.set(profileKey, updatedProfile);
 
+    await writeAdminAuditLog('users.reset_tasks', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        mode: resetMode,
+        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
+      },
+    });
+
     return c.json({
       success: true,
       user: updatedProfile,
@@ -4463,6 +5599,80 @@ app.post('/admin/users/reset-task-set', async (c) => {
   }
 });
 
+// Admin: reset a user's login password
+app.post('/admin/users/reset-password', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.reset_password');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.reset_password', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for password reset. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const identifier = String(body?.userId || '').trim();
+    const newPassword = String(body?.newPassword || '').trim();
+
+    if (!identifier) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    if (newPassword.length < 6) {
+      return c.json({ error: 'newPassword must be at least 6 characters' }, 400);
+    }
+
+    let targetUser = await kv.get(`user:${identifier}`);
+    if (!targetUser) {
+      const allUsers = await kv.getByPrefix('user:') || [];
+      const normalizedIdentifier = identifier.toLowerCase();
+      targetUser = allUsers.find((user: any) => {
+        const byId = String(user?.id || '').trim().toLowerCase() === normalizedIdentifier;
+        const byUsername = String(user?.username || '').trim().toLowerCase() === normalizedIdentifier;
+        const byEmail = String(user?.email || '').trim().toLowerCase() === normalizedIdentifier;
+        return byId || byUsername || byEmail;
+      }) || null;
+    }
+
+    if (!targetUser?.id) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, targetUser)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const supabase = getServiceClient();
+    const { error: authError } = await supabase.auth.admin.updateUserById(String(targetUser.id), {
+      password: newPassword,
+    });
+
+    if (authError) {
+      return c.json({ error: authError.message || 'Failed to reset password' }, 400);
+    }
+
+    await writeAdminAuditLog('users.reset_password', adminAccess, {
+      targetUserId: String(targetUser.id),
+      targetIdentifier: identifier,
+      meta: {
+        passwordChanged: true,
+      },
+    });
+
+    return c.json({
+      success: true,
+      userId: String(targetUser.id),
+      message: 'Password reset successfully',
+    });
+  } catch (error) {
+    console.error(`Error resetting user password: ${error}`);
+    return c.json({ error: 'Internal server error while resetting password' }, 500);
+  }
+});
+
 // Admin: update user task limits (daily sets + extra sets)
 app.put('/admin/users/task-limits', async (c) => {
   try {
@@ -4471,7 +5681,7 @@ app.put('/admin/users/task-limits', async (c) => {
       return adminAccess.response;
     }
 
-    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit } = await c.req.json();
+    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore } = await c.req.json();
     if (!userId) {
       return c.json({ error: 'userId is required' }, 400);
     }
@@ -4492,6 +5702,11 @@ app.put('/admin/users/task-limits', async (c) => {
       return c.json({ error: 'withdrawalLimit must be a non-negative number' }, 400);
     }
 
+    const parsedCreditScore = Number(creditScore ?? 100);
+    if (!Number.isFinite(parsedCreditScore) || parsedCreditScore < 0 || parsedCreditScore > 100) {
+      return c.json({ error: 'creditScore must be a number between 0 and 100' }, 400);
+    }
+
     const profileKey = `user:${userId}`;
     const userProfile = await kv.get(profileKey);
     if (!userProfile) {
@@ -4508,10 +5723,21 @@ app.put('/admin/users/task-limits', async (c) => {
       dailyTaskSetLimit: baseLimit,
       extraTaskSets: extraSets,
       withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
+      creditScore: roundCurrency(parsedCreditScore),
       updatedAt: new Date().toISOString(),
     };
 
     await kv.set(profileKey, updatedProfile);
+
+    await writeAdminAuditLog('users.manage_task_limits', adminAccess, {
+      targetUserId: String(userId),
+      meta: {
+        dailyTaskSetLimit: baseLimit,
+        extraTaskSets: extraSets,
+        withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
+        creditScore: roundCurrency(parsedCreditScore),
+      },
+    });
 
     return c.json({
       success: true,
@@ -4520,6 +5746,7 @@ app.put('/admin/users/task-limits', async (c) => {
         dailyTaskSetLimit: baseLimit,
         extraTaskSets: extraSets,
         withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
+        creditScore: roundCurrency(parsedCreditScore),
         maxSetsPerDay: baseLimit + extraSets,
       },
     });
@@ -4574,6 +5801,11 @@ app.post('/admin/accounts', async (c) => {
     }
 
     const adminUserId = data.user.id;
+    const existingUsers = await kv.getByPrefix('user:') || [];
+    const inferredManagedParent = (existingUsers || []).find((user: any) => {
+      const userUsername = String(user?.username || '').trim().toLowerCase();
+      return userUsername && userUsername === normalizedUsername;
+    });
     const record = {
       userId: adminUserId,
       username: normalizedUsername,
@@ -4582,6 +5814,8 @@ app.post('/admin/accounts', async (c) => {
       role: 'limited_admin',
       active: true,
       permissions: adminPermissions,
+      managedParentUserId: inferredManagedParent?.id ? String(inferredManagedParent.id) : null,
+      managedUserIds: [],
       createdAt: new Date().toISOString(),
     };
 
@@ -4629,6 +5863,8 @@ app.get('/admin/accounts', async (c) => {
       authEmail: row?.authEmail,
       active: row?.active !== false,
       permissions: sanitizeAdminPermissions(row?.permissions),
+      managedParentUserId: row?.managedParentUserId || null,
+      managedUserIds: Array.isArray(row?.managedUserIds) ? row.managedUserIds : [],
       createdAt: row?.createdAt,
       updatedAt: row?.updatedAt || null,
     }));
@@ -4658,7 +5894,7 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
       return c.json({ error: 'Admin account not found' }, 404);
     }
 
-    const { permissions, active, displayName } = await c.req.json();
+    const { permissions, active, displayName, managedParentUserId, managedUserIds } = await c.req.json();
     const nextPermissions = permissions === undefined
       ? sanitizeAdminPermissions(existing.permissions)
       : sanitizeAdminPermissions(permissions);
@@ -4667,11 +5903,22 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
       return c.json({ error: 'At least one valid permission is required' }, 400);
     }
 
+    const nextManagedParentUserId = managedParentUserId === undefined
+      ? (existing.managedParentUserId || null)
+      : (String(managedParentUserId || '').trim() || null);
+    const nextManagedUserIds = managedUserIds === undefined
+      ? (Array.isArray(existing.managedUserIds) ? existing.managedUserIds : [])
+      : (Array.isArray(managedUserIds)
+          ? managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
+          : []);
+
     const updated = {
       ...existing,
       permissions: nextPermissions,
       active: active === undefined ? existing.active !== false : Boolean(active),
       displayName: displayName ? String(displayName).trim() : existing.displayName,
+      managedParentUserId: nextManagedParentUserId,
+      managedUserIds: nextManagedUserIds,
       updatedAt: new Date().toISOString(),
     };
 
@@ -4691,11 +5938,13 @@ app.get("/admin/alerts", async (c) => {
       return adminAccess.response;
     }
 
+    const permissions = adminAccess.permissions || [];
+
     if (!adminAccess.isSuperAdmin) {
-      const canViewAlerts = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
-        || adminAccess.permissions.includes('users.view')
-        || adminAccess.permissions.includes('support.manage')
-        || adminAccess.permissions.includes('withdrawals.manage');
+      const canViewAlerts = permissions.includes(ADMIN_PERMISSION_ALL)
+        || permissions.includes('users.view')
+        || permissions.includes('support.manage')
+        || permissions.includes('withdrawals.manage');
       if (!canViewAlerts) {
         return c.json({ error: 'Forbidden - Missing alert visibility permission' }, 403);
       }
@@ -4811,8 +6060,8 @@ app.get("/admin/alerts", async (c) => {
         id: `premium_assignment:${premiumUser.id}`,
         type: 'premium_assignment',
         severity: isActive ? 'info' : 'high',
-        title: 'Premium order assigned',
-        message: `${premiumUser.name || 'User'} premium order ${premiumAssignment?.orderId || 'N/A'} is ${isActive ? 'active' : 'inactive (frozen)'}`,
+        title: 'Premium deficit assignment created',
+        message: `${premiumUser.name || 'User'} premium deficit assignment ${premiumAssignment?.orderId || 'N/A'} is ${isActive ? 'active' : 'inactive (frozen)'}`,
         createdAt: premiumAssignment?.assignedAt || premiumUser?.updatedAt || premiumUser?.createdAt || nowIso,
         status: isActive ? 'new' : 'action_required',
         meta: {
@@ -4899,6 +6148,55 @@ app.get("/admin/alerts", async (c) => {
   } catch (error) {
     console.error(`Error fetching admin alerts: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin alerts' }, 500);
+  }
+});
+
+// Admin: retrieve audit log entries for sensitive admin actions
+app.get('/admin/audit-log', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const permissions = adminAccess.permissions || [];
+
+    if (!adminAccess.isSuperAdmin) {
+      const canViewAudit = permissions.includes(ADMIN_PERMISSION_ALL)
+        || permissions.includes('users.view')
+        || permissions.includes('support.manage')
+        || permissions.includes('withdrawals.manage');
+      if (!canViewAudit) {
+        return c.json({ error: 'Forbidden - Missing audit visibility permission' }, 403);
+      }
+    }
+
+    const rawLimit = Number(c.req.query('limit') || 100);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 100;
+    const scope = await getAdminScopeConfig(adminAccess);
+
+    const auditRows = await getKvRowsByPrefix('admin:audit:');
+    const scopedLogs = (auditRows || [])
+      .map((row: any) => row?.value)
+      .filter((entry: any) => {
+        if (!entry) return false;
+        if (adminAccess.isSuperAdmin) return true;
+
+        const targetUserId = String(entry?.targetUserId || '').trim();
+        if (!targetUserId) {
+          return String(entry?.actorUserId || '').trim() === String(adminAccess.userId || '').trim();
+        }
+
+        const scopedUser = { id: targetUserId };
+        return isUserInAdminScope(scope, scopedUser);
+      })
+      .sort((a: any, b: any) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+      .slice(0, limit);
+
+    return c.json({ success: true, logs: scopedLogs, total: scopedLogs.length });
+  } catch (error) {
+    console.error(`Error fetching admin audit log: ${error}`);
+    return c.json({ error: 'Internal server error while fetching audit log' }, 500);
   }
 });
 
@@ -5042,14 +6340,15 @@ app.get("/analytics/leaderboard", async (c) => {
     const allUsers = await kv.getByPrefix('user:');
     
     const leaderboard = (allUsers || [])
-      .filter((u): u is any => u && u.totalProfitFromChildren !== undefined)
+      .filter((u): u is any => u !== null && u !== undefined && u.id)
       .map((user) => ({
         userId: user.id,
         name: user.name,
-        totalProfitFromChildren: user.totalProfitFromChildren || 0,
-        childCount: user.childCount || 0,
+        totalProfitFromChildren: Number(user.totalProfitFromChildren || 0),
+        childCount: Number(user.childCount || 0),
         vipTier: user.vipTier || 'Normal',
       }))
+      .filter((u) => u.totalProfitFromChildren > 0 || u.childCount > 0)
       .sort((a, b) => b.totalProfitFromChildren - a.totalProfitFromChildren)
       .slice(0, 50); // Top 50
 
@@ -5493,9 +6792,11 @@ app.get('/admin/support-tickets', async (c) => {
       return adminAccess.response;
     }
 
+    const permissions = adminAccess.permissions || [];
+
     if (!adminAccess.isSuperAdmin) {
-      const hasSupportAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
-        || adminAccess.permissions.includes('support.manage');
+      const hasSupportAccess = permissions.includes(ADMIN_PERMISSION_ALL)
+        || permissions.includes('support.manage');
       if (!hasSupportAccess) {
         return c.json({ error: 'Forbidden - Missing permission: support.manage' }, 403);
       }
@@ -5588,124 +6889,6 @@ app.post('/admin/support-tickets/:id/reply', async (c) => {
   } catch (error) {
     console.error(`Error replying as admin: ${error}`);
     return c.json({ error: 'Internal server error while replying to support ticket' }, 500);
-  }
-});
-
-// Live Chat: Send message
-app.post("/chat/messages", async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error) return c.json({ error }, 401);
-
-    const { conversationId, message } = await c.req.json();
-    const user = await kv.get(`user:${userId}`);
-
-    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const msg = {
-      id: messageId,
-      conversationId,
-      userId,
-      userName: user.name,
-      message,
-      createdAt: new Date().toISOString(),
-      read: false,
-    };
-
-    // Save message
-    await kv.set(`message:${messageId}`, msg);
-
-    // Add to conversation
-    const convMessages = await kv.get(`chat:messages:${conversationId}`) || [];
-    convMessages.push(messageId);
-    await kv.set(`chat:messages:${conversationId}`, convMessages);
-
-    return c.json({ success: true, message: msg });
-  } catch (error) {
-    console.error(`Error sending message: ${error}`);
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// Live Chat: Get conversations
-app.get("/chat/conversations", async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error) return c.json({ error }, 401);
-
-    const convIds = await kv.get(`chat:conversations:${userId}`) || [];
-    const conversations = [];
-
-    for (const convId of convIds) {
-      const conv = await kv.get(`chat:conversation:${convId}`);
-      if (conv) {
-        // Get last message
-        const messageIds = await kv.get(`chat:messages:${convId}`) || [];
-        const lastMsgId = messageIds[messageIds.length - 1];
-        const lastMsg = lastMsgId ? await kv.get(`message:${lastMsgId}`) : null;
-
-        conversations.push({
-          ...conv,
-          lastMessage: lastMsg,
-          messageCount: messageIds.length,
-        });
-      }
-    }
-
-    return c.json({
-      success: true,
-      conversations: conversations.sort((a: any, b: any) => 
-        new Date(b.lastMessage?.createdAt || b.createdAt).getTime() - 
-        new Date(a.lastMessage?.createdAt || a.createdAt).getTime()
-      ),
-    });
-  } catch (error) {
-    console.error(`Error fetching conversations: ${error}`);
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// Live Chat: Get messages in conversation
-app.get("/chat/messages", async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error) return c.json({ error }, 401);
-
-    const conversationId = c.req.query('conversationId');
-    const messageIds = await kv.get(`chat:messages:${conversationId}`) || [];
-    const messages = [];
-
-    for (const msgId of messageIds) {
-      const msg = await kv.get(`message:${msgId}`);
-      if (msg) messages.push(msg);
-    }
-
-    return c.json({
-      success: true,
-      messages: messages.sort((a: any, b: any) => 
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      ),
-    });
-  } catch (error) {
-    console.error(`Error fetching messages: ${error}`);
-    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -5809,6 +6992,281 @@ app.get("/faq/search", async (c) => {
   } catch (error) {
     console.error(`Error searching FAQs: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// CHECK-IN SYSTEM
+// ─────────────────────────────────────────────────────────────
+
+const DEFAULT_CHECKIN_CONFIG = {
+  milestones: [
+    { day: 3,  reward: 500 },
+    { day: 5,  reward: 1000 },
+    { day: 15, reward: 1500 },
+    { day: 30, reward: 2000 },
+  ],
+  termsAndConditions: [
+    'Every user is required to complete 5 sets a day to be entitled.',
+    'Withdraw sets incentives are to be reflected on your account successively: 3, 5, 15 & 30 days.',
+  ],
+};
+
+const getCheckinConfig = async () => {
+  const stored = await kv.get('config:checkin') || {};
+  const milestones = Array.isArray(stored?.milestones) ? stored.milestones : DEFAULT_CHECKIN_CONFIG.milestones;
+  const terms = Array.isArray(stored?.termsAndConditions) ? stored.termsAndConditions : DEFAULT_CHECKIN_CONFIG.termsAndConditions;
+  return { milestones, termsAndConditions: terms };
+};
+
+// GET /check-in/status — returns user's current streak and milestone progress
+app.get('/check-in/status', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) return c.json({ error: 'Unauthorized' }, 401);
+    const { userId, error } = await verifyJWT(authHeader.replace('Bearer ', ''));
+    if (error || !userId) return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+
+    const profile = await kv.get(`user:${userId}`);
+    if (!profile) return c.json({ error: 'User not found' }, 404);
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const streak = Number(profile?.checkInStreak || 0);
+    const lastDate = String(profile?.lastCheckInDate || '');
+    const claimedMilestones: number[] = Array.isArray(profile?.claimedCheckInMilestones) ? profile.claimedCheckInMilestones : [];
+    const config = await getCheckinConfig();
+
+    const checkedInToday = lastDate === todayDate;
+    const nextMilestone = config.milestones.find((m: any) => !claimedMilestones.includes(m.day) && m.day > streak) || null;
+
+    return c.json({
+      success: true,
+      checkIn: {
+        streak,
+        lastCheckInDate: lastDate || null,
+        checkedInToday,
+        claimedMilestones,
+        milestones: config.milestones,
+        nextMilestone,
+        termsAndConditions: config.termsAndConditions,
+      },
+    });
+  } catch (err) {
+    console.error('Error fetching check-in status:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// POST /check-in — record today's check-in, award milestone rewards
+app.post('/check-in', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) return c.json({ error: 'Unauthorized' }, 401);
+    const { userId, error } = await verifyJWT(authHeader.replace('Bearer ', ''));
+    if (error || !userId) return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+
+    const profile = await kv.get(`user:${userId}`);
+    if (!profile) return c.json({ error: 'User not found' }, 404);
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const lastDate = String(profile?.lastCheckInDate || '');
+
+    if (lastDate === todayDate) {
+      return c.json({ error: 'Already checked in today', alreadyCheckedIn: true }, 409);
+    }
+
+    // Calculate new streak — consecutive day increments by 1; gap resets to 1
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayDate = yesterday.toISOString().slice(0, 10);
+    const currentStreak = Number(profile?.checkInStreak || 0);
+    const newStreak = lastDate === yesterdayDate ? currentStreak + 1 : 1;
+
+    const config = await getCheckinConfig();
+    const claimedMilestones: number[] = Array.isArray(profile?.claimedCheckInMilestones) ? [...profile.claimedCheckInMilestones] : [];
+
+    // Check for newly earned milestone
+    const earnedMilestone = config.milestones.find(
+      (m: any) => m.day === newStreak && !claimedMilestones.includes(m.day)
+    ) || null;
+
+    let newBalance = roundCurrency(Number(profile?.balance || 0));
+    if (earnedMilestone) {
+      newBalance = roundCurrency(newBalance + earnedMilestone.reward);
+      claimedMilestones.push(earnedMilestone.day);
+
+      // Log as bonus badge notification
+      const existingBadges = await kv.get(`bonus-badges:${userId}`) || [];
+      existingBadges.unshift({
+        id: `chk_${Date.now()}`,
+        category: 'reward',
+        amount: earnedMilestone.reward,
+        note: `Check-In Day ${earnedMilestone.day} reward`,
+        createdAt: new Date().toISOString(),
+        unread: true,
+      });
+      await kv.set(`bonus-badges:${userId}`, existingBadges.slice(0, 100));
+    }
+
+    const updatedProfile = {
+      ...profile,
+      checkInStreak: newStreak,
+      lastCheckInDate: todayDate,
+      claimedCheckInMilestones: claimedMilestones,
+      balance: newBalance,
+      updatedAt: new Date().toISOString(),
+    };
+    await kv.set(`user:${userId}`, updatedProfile);
+
+    const nextMilestone = config.milestones.find(
+      (m: any) => !claimedMilestones.includes(m.day) && m.day > newStreak
+    ) || null;
+
+    return c.json({
+      success: true,
+      checkIn: {
+        streak: newStreak,
+        lastCheckInDate: todayDate,
+        checkedInToday: true,
+        claimedMilestones,
+        milestones: config.milestones,
+        nextMilestone,
+        earnedMilestone,
+        newBalance,
+      },
+    });
+  } catch (err) {
+    console.error('Error processing check-in:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN REWARDS / ACTIVITY CONFIG
+// ─────────────────────────────────────────────────────────────
+
+const DEFAULT_MEMBERSHIP_CONFIG = {
+  levels: [
+    {
+      level: 1,
+      name: 'Level 1',
+      icon: '🥈',
+      gradient: 'from-gray-600 to-gray-700',
+      headline: 'Level 1 Users Are Assigned General Usage Access To Data Collection',
+      features: [
+        'Applicable to most data collection situations of light to medium level of usage involving the products',
+        'Profits of 0.5% per set - 35 sets per day',
+        'Obtain profits of up to $300K per month',
+        'Up to 90 withdrawal timing a day',
+        'Allow access support for assistance',
+      ],
+    },
+    {
+      level: 2,
+      name: 'Level 2',
+      icon: '🥈',
+      gradient: 'from-gray-500 to-gray-600',
+      headline: 'Level 2 Users Are Assigned General Usage Access To Data Collection',
+      features: [
+        'Applicable to most data collection situations of light to medium level of usage involving the products',
+        'Profits of 0.75% per set - 40 sets per day',
+        'Up to 120 commission timing a day',
+        'Unlock access support for assistance',
+      ],
+    },
+    {
+      level: 3,
+      name: 'Level 3',
+      icon: '🥇',
+      gradient: 'from-yellow-500 to-yellow-600',
+      headline: 'Level 3 Users Are Assigned General Usage Access To Data Collection',
+      features: [
+        'Applicable to most data collection situations of light to medium level of usage involving the products',
+        'Profits of 1% per set - 45 sets per day',
+        'Up to 180 commission timing a day',
+        'Unlock access support for assistance',
+      ],
+    },
+  ],
+};
+
+// GET /admin/rewards/config — returns check-in milestones + membership tiers
+app.get('/admin/rewards/config', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.view');
+    if (!adminAccess.ok) return adminAccess.response;
+
+    const checkinConfig = await getCheckinConfig();
+    const membershipConfig = await kv.get('config:membership') || DEFAULT_MEMBERSHIP_CONFIG;
+
+    return c.json({
+      success: true,
+      config: {
+        checkIn: checkinConfig,
+        membership: membershipConfig,
+      },
+    });
+  } catch (err) {
+    console.error('Error fetching rewards config:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /admin/rewards/config — updates check-in milestones and/or membership tiers
+app.put('/admin/rewards/config', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.adjust_balance');
+    if (!adminAccess.ok) return adminAccess.response;
+
+    const body = await c.req.json().catch(() => ({}));
+
+    if (body?.checkIn) {
+      const incoming = body.checkIn;
+      const current = await getCheckinConfig();
+
+      const milestones = Array.isArray(incoming?.milestones)
+        ? incoming.milestones
+            .filter((m: any) => Number.isInteger(Number(m?.day)) && Number(m?.day) > 0 && Number.isFinite(Number(m?.reward)) && Number(m?.reward) >= 0)
+            .map((m: any) => ({ day: Number(m.day), reward: roundCurrency(Number(m.reward)) }))
+            .sort((a: any, b: any) => a.day - b.day)
+        : current.milestones;
+
+      const terms = Array.isArray(incoming?.termsAndConditions)
+        ? incoming.termsAndConditions.map((t: any) => String(t || '').trim()).filter(Boolean)
+        : current.termsAndConditions;
+
+      await kv.set('config:checkin', { milestones, termsAndConditions: terms });
+    }
+
+    if (body?.membership) {
+      const incomingLevels = body.membership?.levels;
+      if (Array.isArray(incomingLevels)) {
+        const sanitizedLevels = incomingLevels.map((level: any) => ({
+          level: Number(level?.level || 0),
+          name: String(level?.name || ''),
+          icon: String(level?.icon || ''),
+          gradient: String(level?.gradient || ''),
+          headline: String(level?.headline || ''),
+          features: Array.isArray(level?.features) ? level.features.map((f: any) => String(f || '').trim()).filter(Boolean) : [],
+        }));
+        await kv.set('config:membership', { levels: sanitizedLevels });
+      }
+    }
+
+    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
+      meta: { action: 'rewards_config_update', updatedSections: Object.keys(body) },
+    });
+
+    const checkinConfig = await getCheckinConfig();
+    const membershipConfig = await kv.get('config:membership') || DEFAULT_MEMBERSHIP_CONFIG;
+
+    return c.json({
+      success: true,
+      config: { checkIn: checkinConfig, membership: membershipConfig },
+    });
+  } catch (err) {
+    console.error('Error updating rewards config:', err);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
