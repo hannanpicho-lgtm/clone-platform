@@ -14,9 +14,12 @@ export default function App() {
   const adminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').trim().toLowerCase() === 'true';
   const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
   const resolvedAdminPortalUrl = adminPortalUrl || 'https://tank-admin-portal.tanknewmedia.work';
+  const publicSiteUrl = String(import.meta.env.VITE_PUBLIC_SITE_URL || '').trim();
+  const resolvedPublicSiteUrl = publicSiteUrl || 'https://tanknewmedia.work';
   const isAdminPortalHost = hostname.includes('tank-admin-portal')
     || hostname.includes('tank-admin-live')
     || hostname.includes('clone-platform-admin.pages.dev');
+  const isPrimaryCloudflareHost = hostname === 'clone-platform.pages.dev';
   const isAdminRoute = typeof window !== 'undefined'
     ? (pathname === '/admin' || pathname.startsWith('/admin/'))
     : false;
@@ -67,6 +70,23 @@ export default function App() {
     };
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    if (!adminPortalOnly && !isAdminPortalHost && !isAdminRoute && isPrimaryCloudflareHost && resolvedPublicSiteUrl) {
+      try {
+        const targetUrl = new URL(resolvedPublicSiteUrl);
+        const alreadyOnPublicSite = targetUrl.hostname === hostname;
+        if (!alreadyOnPublicSite) {
+          const redirectUrl = `${targetUrl.origin}${window.location.pathname}${window.location.search}${window.location.hash}`;
+          window.location.replace(redirectUrl);
+          return () => {
+            console.error = originalConsoleError;
+            window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+          };
+        }
+      } catch (error) {
+        console.error('Invalid public site URL:', error);
+      }
+    }
 
     if (!adminPortalOnly && !isAdminPortalHost && isAdminRoute && resolvedAdminPortalUrl) {
       try {
