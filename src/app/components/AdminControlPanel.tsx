@@ -60,11 +60,22 @@ interface CustomerServiceCase {
   lastUpdate: string;
 }
 
-// Products state
-const [products, setProducts] = useState<any[]>([]);
-const [isLoadingProducts, setIsLoadingProducts] = useState(false);
-
 export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
+  const functionHost = (() => {
+    const configured = String(import.meta.env.VITE_FUNCTION_HOST || '').trim();
+    if (configured) {
+      return configured.replace(/\/$/, '');
+    }
+    return window.location.hostname.includes('localhost')
+      ? 'http://localhost:54321'
+      : 'https://tpxgfjevorhdtwkesvcb.supabase.co';
+  })();
+
+  const functionBaseUrl = `${functionHost}/functions/v1/make-server-44a642d3`;
+
+  const [products, setProducts] = useState<any[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'products' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
@@ -83,19 +94,13 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchProducts = async () => {
       setIsLoadingProducts(true);
       try {
-        const baseUrl = window.location.hostname.includes('localhost')
-          ? 'http://localhost:54321'
-          : 'https://iridescent-basbousa-b72341.netlify.app';
-        console.log('Fetching products from:', `${baseUrl}/functions/v1/make-server-44a642d3/products`);
-        const response = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/products`, {
+        const response = await fetch(`${functionBaseUrl}/products`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
         });
-        console.log('Product fetch response status:', response.status);
         if (response.ok) {
           const data = await response.json();
-          console.log('Product fetch data:', data);
           setProducts(Array.isArray(data.products) ? data.products : []);
         } else {
           setProducts([]);
@@ -199,10 +204,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchSupportTickets = async () => {
       setIsLoadingSupport(true);
       try {
-        const baseUrl = window.location.hostname.includes('localhost')
-          ? 'http://localhost:54321'
-          : 'https://iridescent-basbousa-b72341.netlify.app';
-        const response = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
+        const response = await fetch(`${functionBaseUrl}/support-tickets`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
@@ -221,7 +223,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
             })));
           } else {
             // Seed demo ticket if none found
-            await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
+            await fetch(`${functionBaseUrl}/support-tickets`, {
               method: 'POST',
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
@@ -235,7 +237,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
               }),
             });
             // Re-fetch tickets
-            const seededResponse = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
+            const seededResponse = await fetch(`${functionBaseUrl}/support-tickets`, {
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
               },
@@ -810,11 +812,8 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                           onClick={async () => {
                             setIsReplying(true);
                             try {
-                              const baseUrl = window.location.hostname.includes('localhost')
-                                ? 'http://localhost:54321'
-                                : 'https://iridescent-basbousa-b72341.netlify.app';
                               const response = await fetch(
-                                `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -846,11 +845,8 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                           onClick={async () => {
                             setIsReplying(true);
                             try {
-                              const baseUrl = window.location.hostname.includes('localhost')
-                                ? 'http://localhost:54321'
-                                : 'https://iridescent-basbousa-b72341.netlify.app';
                               const response = await fetch(
-                                `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -891,11 +887,8 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                         onClick={async () => {
                           setIsReplying(true);
                           try {
-                            const baseUrl = window.location.hostname.includes('localhost')
-                              ? 'http://localhost:54321'
-                              : 'https://iridescent-basbousa-b72341.netlify.app';
                             const response = await fetch(
-                              `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                              `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
                               {
                                 method: 'POST',
                                 headers: {

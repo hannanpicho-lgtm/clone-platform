@@ -147,6 +147,7 @@ echo ""
 log_step "Phase 3: Building Project..."
 
 log_info "Building frontend (TypeScript/Vite)..."
+export NODE_OPTIONS="--max-old-space-size=4096"
 if npm run build; then
     FILE_COUNT=$(find dist -type f | wc -l)
     log_success "Build artifacts created: $FILE_COUNT files"
@@ -167,7 +168,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo ""
     echo "📋 Deployment would proceed with:"
     echo "  1. Deploy Edge Function: npx supabase functions deploy $FUNCTION_NAME --no-verify-jwt"
-    echo "  2. Deploy Frontend: dist/ → Supabase/Vercel/Netlify"
+    echo "  2. Deploy Frontend: dist/ → your static host (non-Netlify)"
     echo "  3. Run post-deployment tests"
     echo "  4. Health check verification"
     echo ""
@@ -208,6 +209,7 @@ fi
 
 # Run post-deployment smoke tests
 log_info "Running post-deployment smoke tests..."
+export NODE_OPTIONS="--max-old-space-size=4096"
 if FUNCTION_URL="$FUNCTION_URL" npm run test:smoke; then
     log_success "Post-deployment tests PASSED"
 else
@@ -245,7 +247,7 @@ echo "  3. Check Supabase dashboard:"
 echo "     https://app.supabase.com"
 echo ""
 echo "  4. Deploy frontend (if needed):"
-echo "     Upload 'dist/' to Vercel/Netlify/Supabase Hosting"
+echo "     Upload 'dist/' to your chosen static host"
 echo ""
 
 log_info "📚 Documentation:"

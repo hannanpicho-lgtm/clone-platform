@@ -175,6 +175,7 @@ Write-Host ""
 Write-Status "Phase 3: Building Project..." "STEP"
 
 $buildPassed = Invoke-Command "Building frontend (TypeScript/Vite)" {
+    $env:NODE_OPTIONS = "--max-old-space-size=4096"
     & npm run build
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
     if (-not (Test-Path "dist")) { throw "Build succeeded but dist directory was not created" }
@@ -200,7 +201,7 @@ if ($DryRun) {
     Write-Host ""
     Write-Host "$Yellow[PLAN] Deployment would proceed with:$Reset"
     Write-Host "  1. Deploy Edge Function: npx supabase functions deploy make-server-44a642d3 --no-verify-jwt"
-    Write-Host "  2. Deploy Frontend: dist/ -> Supabase/Vercel/Netlify"
+    Write-Host "  2. Deploy Frontend: dist/ -> your static host (non-Netlify)"
     Write-Host "  3. Run post-deployment tests"
     Write-Host "  4. Health check verification"
     Write-Host ""
@@ -259,6 +260,7 @@ try {
 Write-Status "Running post-deployment smoke tests..." "INFO"
 $postTestPassed = Invoke-Command "Post-deployment smoke tests" {
     # Set environment variable for test
+    $env:NODE_OPTIONS = "--max-old-space-size=4096"
     $env:FUNCTION_URL = $functionUrl
     & npm run test:smoke
     if ($LASTEXITCODE -ne 0) { throw "Post-deployment smoke tests failed with exit code $LASTEXITCODE" }
@@ -303,7 +305,7 @@ Write-Host "  3. Check Supabase dashboard:"
 Write-Host "     https://app.supabase.com"
 Write-Host ""
 Write-Host "  4. Deploy frontend (if needed):"
-Write-Host "     Upload 'dist/' to Vercel/Netlify/Supabase Hosting"
+Write-Host "     Upload 'dist/' to your chosen static host"
 Write-Host ""
 
 Write-Host "$Blue[DOCS] Documentation:$Reset"
