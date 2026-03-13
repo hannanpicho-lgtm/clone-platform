@@ -8,10 +8,11 @@
  * - GET /admin/premium/analytics - Get premium analytics
  */
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://tpxgfjevorhdtwkesvcb.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const FUNCTION_NAME = process.env.FUNCTION_NAME || 'make-server-44a642d3';
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`;
 const ADMIN_API_KEY = process.env.SUPABASE_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
+const ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 const colors = {
   reset: '\x1b[0m',
@@ -77,7 +78,8 @@ async function runTests() {
     const signupRes = await fetch(`${FUNCTION_URL}/signup`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRweGdmamV2b3JoZHR3a2VzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNDE3MjIsImV4cCI6MjA4NjgxNzcyMn0.K50o48WDbgmWvASexy3SCX2XfWiP_WQtCAkou49aFO8"}`,
+        'Authorization': `Bearer ${ANON_KEY}`,
+        'apikey': ANON_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -226,6 +228,16 @@ if (!ADMIN_API_KEY) {
   log('SKIP: No admin API key set (SUPABASE_ADMIN_API_KEY or ADMIN_API_KEY)', 'yellow');
   log('Premium admin tests are skipped in non-privileged environments.', 'yellow');
   process.exit(0);
+}
+
+if (!SUPABASE_URL) {
+  log('ERROR: Missing SUPABASE_URL env var', 'red');
+  process.exit(1);
+}
+
+if (!ANON_KEY) {
+  log('ERROR: Missing SUPABASE_ANON_KEY env var', 'red');
+  process.exit(1);
 }
 
 runTests().catch(err => {

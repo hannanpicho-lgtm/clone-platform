@@ -4,12 +4,13 @@
  */
 export async function safeFetch(
   url: string,
-  options?: RequestInit
+  options?: RequestInit,
+  timeoutMs: number = 12000,
 ): Promise<Response | null> {
   try {
     // Add timeout to prevent hanging
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 12000));
 
     const response = await fetch(url, {
       ...options,

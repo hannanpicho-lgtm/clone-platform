@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Send } from 'lucide-react';
 import { Button } from './ui/button';
-import { supabaseUrl } from '/utils/supabase/info';
-import { getSupabaseClient } from '/utils/supabase/client';
-import { safeFetch } from '../../utils/safeFetch';
+import { projectId } from '/utils/supabase/info';
 
 interface Message {
   id: string;
   text: string;
   sender: 'user' | 'admin';
   timestamp: string;
-  pending?: boolean;
 }
 
 interface CustomerServiceChatProps {
@@ -28,16 +24,15 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string }>({
+  const isRefreshingRef = useRef(false);
+  const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string; whatsapp2: string; telegram2: string }>({
     whatsapp: 'https://wa.me/1234567890',
     telegram: 'https://t.me/tanknewmedia_support',
+    whatsapp2: '',
+    telegram2: '',
   });
-  const supportRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
 
-  const baseUrl = useMemo(() => `${supabaseUrl.replace(/\/$/, '')}/functions/v1/make-server-44a642d3`, []);
-  const supabase = useMemo(() => getSupabaseClient(), []);
+  const baseUrl = useMemo(() => `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`, []);
 
   const mapTicketToMessages = (ticket: any): Message[] => {
     const mapped: Message[] = [];
@@ -65,7 +60,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
         id: 'welcome-message',
         text: accountFrozen
           ? `Hello ${userName}, I can see your account is frozen. Send your top-up receipt and we will assist with reset/unfreeze.`
-          : `Hello ${userName}. This support thread sends your message to admin and replies will appear here. For immediate help, use WhatsApp or Telegram below.`,
+          : `Hello ${userName}! Welcome to Tanknewmedia Customer Service. How can I help you today?`,
         sender: 'admin',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       });
@@ -74,46 +69,49 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     return mapped;
   };
 
-  const loadTicketState = useCallback(async () => {
+  const loadContactLinks = async () => {
     try {
-      setIsLoading(true);
-      setErrorMessage('');
-      const resolvedBase = baseUrl;
-
-      const linksResponse = await safeFetch(`${resolvedBase}/contact-links`, {
+      const linksResponse = await fetch(`${baseUrl}/contact-links`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (linksResponse?.ok) {
+      if (linksResponse.ok) {
         const linksData = await linksResponse.json().catch(() => ({}));
         if (linksData?.config) {
           setContactLinks({
             whatsapp: String(linksData.config.whatsapp || 'https://wa.me/1234567890'),
             telegram: String(linksData.config.telegram || 'https://t.me/tanknewmedia_support'),
+            whatsapp2: String(linksData.config.whatsapp2 || ''),
+            telegram2: String(linksData.config.telegram2 || ''),
           });
         }
       }
+    } catch {
+    }
+  };
 
-      const ticketsResponse = await safeFetch(`${resolvedBase}/support-tickets`, {
+  const loadTicketState = async (silent = false) => {
+    if (isRefreshingRef.current) {
+      return;
+    }
+
+    isRefreshingRef.current = true;
+    try {
+      if (!silent) {
+        setIsLoading(true);
+      }
+      const resolvedBase = baseUrl;
+
+      const ticketsResponse = await fetch(`${resolvedBase}/support-tickets`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
 
-      if (!ticketsResponse) {
-        throw new Error('Support service is temporarily unreachable. Use WhatsApp or Telegram for immediate help.');
-      }
-
       if (!ticketsResponse.ok) {
-        const errorData = await ticketsResponse.json().catch(() => ({}));
-        throw new Error(String(errorData?.error || 'Support service unavailable'));
+        throw new Error('Support service unavailable');
       }
 
       const ticketsData = await ticketsResponse.json().catch(() => ({}));
       const tickets = Array.isArray(ticketsData?.tickets) ? ticketsData.tickets : [];
-      const sortedTickets = [...tickets].sort((a: any, b: any) => {
-        const bTime = new Date(String(b?.updatedAt || b?.createdAt || 0)).getTime();
-        const aTime = new Date(String(a?.updatedAt || a?.createdAt || 0)).getTime();
-        return bTime - aTime;
-      });
-      const activeTicket = sortedTickets.find((ticket: any) => ticket?.status !== 'resolved') || sortedTickets[0] || null;
+      const activeTicket = tickets.find((ticket: any) => ticket?.status !== 'resolved') || tickets[0] || null;
 
       if (activeTicket?.id) {
         setActiveTicketId(String(activeTicket.id));
@@ -122,58 +120,24 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
         setActiveTicketId(null);
         setMessages(mapTicketToMessages(null));
       }
-    } catch (error: any) {
-      setErrorMessage(String(error?.message || 'Support service unavailable'));
+    } catch {
       setMessages(mapTicketToMessages(null));
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
+      isRefreshingRef.current = false;
     }
-  }, [accessToken, baseUrl, accountFrozen, userName]);
-
-  const broadcastSupportUpdate = useCallback(async (ticketId: string, action: 'created' | 'reply') => {
-    const channel = supportRealtimeChannelRef.current;
-    if (!channel) return;
-
-    try {
-      await channel.send({
-        type: 'broadcast',
-        event: 'ticket-update',
-        payload: {
-          ticketId,
-          action,
-          sender: 'user',
-          at: new Date().toISOString(),
-        },
-      });
-    } catch {
-    }
-  }, []);
+  };
 
   useEffect(() => {
-    loadTicketState();
-    const interval = setInterval(loadTicketState, 3000);
+    loadContactLinks();
+    loadTicketState(false);
+    const interval = setInterval(() => {
+      loadTicketState(true);
+    }, 7000);
     return () => clearInterval(interval);
-  }, [loadTicketState]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('support-chat-realtime')
-      .on('broadcast', { event: 'ticket-update' }, () => {
-        loadTicketState();
-      });
-
-    supportRealtimeChannelRef.current = channel;
-    channel.subscribe();
-
-    return () => {
-      supportRealtimeChannelRef.current = null;
-      supabase.removeChannel(channel);
-    };
-  }, [loadTicketState, supabase]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages]);
+  }, [accessToken]);
 
   const handleSendMessage = () => {
     if (!inputMessage.trim() || isSending) return;
@@ -181,22 +145,11 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     const send = async () => {
       try {
         setIsSending(true);
-        setErrorMessage('');
         const resolvedBase = baseUrl;
         const draft = inputMessage.trim();
-        const optimisticMessage: Message = {
-          id: `pending-${Date.now()}`,
-          text: draft,
-          sender: 'user',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          pending: true,
-        };
-
-        setMessages((prev) => ([...prev, optimisticMessage]));
-        setInputMessage('');
 
         if (!activeTicketId) {
-          const createResponse = await safeFetch(`${resolvedBase}/support-tickets`, {
+          const createResponse = await fetch(`${resolvedBase}/support-tickets`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -210,10 +163,6 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
             }),
           });
 
-          if (!createResponse) {
-            throw new Error('Support service is temporarily unreachable. Use WhatsApp or Telegram for immediate help.');
-          }
-
           const createData = await createResponse.json().catch(() => ({}));
           if (!createResponse.ok || !createData?.ticket?.id) {
             throw new Error(createData?.error || 'Unable to create support ticket');
@@ -221,9 +170,8 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
           setActiveTicketId(String(createData.ticket.id));
           setMessages(mapTicketToMessages(createData.ticket));
-          await broadcastSupportUpdate(String(createData.ticket.id), 'created');
         } else {
-          const replyResponse = await safeFetch(`${resolvedBase}/support-tickets/${activeTicketId}/reply`, {
+          const replyResponse = await fetch(`${resolvedBase}/support-tickets/${activeTicketId}/reply`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -232,26 +180,21 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
             body: JSON.stringify({ message: draft }),
           });
 
-          if (!replyResponse) {
-            throw new Error('Support service is temporarily unreachable. Use WhatsApp or Telegram for immediate help.');
-          }
-
           const replyData = await replyResponse.json().catch(() => ({}));
           if (!replyResponse.ok || !replyData?.ticket) {
             throw new Error(replyData?.error || 'Unable to send message');
           }
 
           setMessages(mapTicketToMessages(replyData.ticket));
-          await broadcastSupportUpdate(String(activeTicketId), 'reply');
         }
-      } catch (error: any) {
-        const failureText = String(error?.message || 'Message failed to send. Please try again in a moment.');
-        setErrorMessage(failureText);
+
+        setInputMessage('');
+      } catch {
         setMessages((prev) => ([
-          ...prev.filter((item) => !item.pending),
+          ...prev,
           {
             id: `local-${Date.now()}`,
-            text: failureText,
+            text: 'Message failed to send. Please try again in a moment.',
             sender: 'admin',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           },
@@ -288,7 +231,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
             </div>
             <div>
               <h3 className="font-bold text-lg">Customer Service</h3>
-              <p className="text-xs opacity-90">Support thread • Admin replies appear here</p>
+              <p className="text-xs opacity-90">Online • Typically replies instantly</p>
             </div>
           </div>
           <button
@@ -316,14 +259,8 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-          {isLoading && (
+          {isLoading && messages.length === 0 && (
             <div className="text-xs text-gray-500">Loading customer service thread...</div>
-          )}
-
-          {errorMessage && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-              {errorMessage}
-            </div>
           )}
 
           {messages.map((message) => (
@@ -334,7 +271,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
               <div
                 className={`max-w-[75%] rounded-2xl px-4 py-2 ${
                   message.sender === 'user'
-                    ? `text-white ${message.pending ? 'bg-blue-400' : 'bg-blue-600'}`
+                    ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-900 shadow-sm border border-gray-200'
                 }`}
               >
@@ -345,35 +282,60 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
                   }`}
                 >
                   {message.timestamp}
-                  {message.pending ? ' • sending...' : ''}
                 </p>
               </div>
             </div>
           ))}
-          <div ref={messagesEndRef} />
 
           {/* Info Message */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <p className="text-xs text-blue-800">
-              <strong>Note:</strong> Messages here create a support ticket for admin review. Use WhatsApp or Telegram below if you need immediate live assistance.
+              <strong>Note:</strong> All chats are monitored by admin. Messages sent here will be reviewed and responded to by our support team.
             </p>
-            <div className="mt-2 flex gap-2">
-              <a
-                href={contactLinks.whatsapp}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
-              >
-                WhatsApp
-              </a>
-              <a
-                href={contactLinks.telegram}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
-              >
-                Telegram
-              </a>
+            <div className="mt-2 flex gap-2 flex-wrap">
+              {contactLinks.whatsapp.trim() && (
+                <a
+                  href={contactLinks.whatsapp}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+                >
+                  WhatsApp 1
+                </a>
+              )}
+              {contactLinks.whatsapp2.trim() && (
+                <a
+                  href={contactLinks.whatsapp2}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+                >
+                  WhatsApp 2
+                </a>
+              )}
+              {contactLinks.telegram.trim() && (
+                <a
+                  href={contactLinks.telegram}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
+                >
+                  Telegram 1
+                </a>
+              )}
+              {contactLinks.telegram2.trim() && (
+                <a
+                  href={contactLinks.telegram2}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
+                >
+                  Telegram 2
+                </a>
+              )}
+              {!contactLinks.whatsapp.trim() && !contactLinks.whatsapp2.trim() && !contactLinks.telegram.trim() && !contactLinks.telegram2.trim() && (
+                <span className="text-xs text-blue-700">Support links are currently unavailable.</span>
+              )}
             </div>
           </div>
         </div>
@@ -400,7 +362,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
             </Button>
           </div>
           <p className="text-xs text-gray-500 mt-2 text-center">
-            Admin replies refresh automatically while this chat is open
+            💬 Customer Service is available 24/7
           </p>
         </div>
       </div>

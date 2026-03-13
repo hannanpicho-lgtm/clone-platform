@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://tpxgfjevorhdtwkesvcb.supabase.co";
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const FUNCTION_NAME = process.env.FUNCTION_NAME || "make-server-44a642d3";
 const ROUTE_PREFIX = process.env.ROUTE_PREFIX || "";
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}${ROUTE_PREFIX}`;
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRweGdmamV2b3JoZHR3a2VzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNDE3MjIsImV4cCI6MjA4NjgxNzcyMn0.K50o48WDbgmWvASexy3SCX2XfWiP_WQtCAkou49aFO8";
+const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 const PUBLIC_HEADERS = {
   "Content-Type": "application/json",
   "apikey": ANON_KEY,
@@ -12,6 +12,16 @@ const PUBLIC_HEADERS = {
 };
 
 async function test() {
+  if (!SUPABASE_URL) {
+    console.error("❌ Missing SUPABASE_URL env var");
+    process.exit(1);
+  }
+
+  if (!ANON_KEY) {
+    console.error("❌ Missing SUPABASE_ANON_KEY env var");
+    process.exit(1);
+  }
+
   console.log("🧪 Testing new backend endpoints...\n");
   const runId = Date.now();
 
