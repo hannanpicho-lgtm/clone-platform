@@ -7,6 +7,14 @@ import * as kv from "./kv_store.tsx";
 
 const app = new Hono();
 
+const NODE_ENV = (Deno.env.get('NODE_ENV') || 'development').toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
+const ALLOW_SUPER_ADMIN_KEY_BYPASS = Deno.env.get('ALLOW_SUPER_ADMIN_KEY_BYPASS') === 'true';
+const CORS_ALLOWED_ORIGINS = (Deno.env.get('CORS_ALLOWED_ORIGINS') || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 // Create singleton Supabase clients
 let serviceClient: any = null;
 let anonClient: any = null;
@@ -43,7 +51,19 @@ const getAnonClient = () => {
   return anonClient;
 };
 
-const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
+const getAdminApiKeys = (): string[] => {
+  const directKeys = [
+    Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? '',
+    Deno.env.get('ADMIN_API_KEY') ?? '',
+  ];
+
+  const additional = String(Deno.env.get('ADMIN_API_KEYS') ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([...directKeys, ...additional].filter(Boolean)));
+};
 
 const getKvRowsByPrefix = async (prefix: string): Promise<Array<{ key: string; value: any }>> => {
   const supabase = getServiceClient();
@@ -72,9 +92,10 @@ const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; resp
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKey = getAdminApiKey();
+  const expectedKeys = getAdminApiKeys();
 
-  if (expectedKey && token === expectedKey) {
+  // Accept both legacy JWT and new secret key
+  if (expectedKeys.includes(token)) {
     return { ok: true };
   }
 
@@ -85,6 +106,22 @@ const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; resp
 async function verifyJWT(token: string): Promise<{ userId: string | null; error: string | null }> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+
+  // First attempt: validate token via service client (most resilient to anon key format changes)
+  try {
+    const supabase = getServiceClient();
+    const { data: { user }, error: serviceError } = await supabase.auth.getUser(token);
+
+    if (user && !serviceError) {
+      return { userId: user.id, error: null };
+    }
+
+    if (serviceError) {
+      console.error('Service client verification failed:', serviceError.message || serviceError);
+    }
+  } catch (error) {
+    console.error('Service client JWT verification error:', error);
+  }
 
   // Primary verification: ask Supabase Auth to validate token and return current user
   // This is the most reliable path when JWT signing is asymmetric.
@@ -112,8 +149,7 @@ async function verifyJWT(token: string): Promise<{ userId: string | null; error:
     console.error('Supabase Auth API verification error:', error);
   }
   
-  // Use ANON client to verify tokens (not service client!)
-  // Tokens generated with anon key must be verified with anon key
+  // Fallback: anon client verification
   try {
     const supabase = getAnonClient();
     
@@ -160,8 +196,16 @@ app.use('*', logger(console.log));
 app.use(
   "/*",
   cors({
-    origin: "*",
-    allowHeaders: ["Content-Type", "Authorization", "apikey"],
+    origin: (origin) => {
+      if (!origin) {
+        return IS_PRODUCTION ? '' : '*';
+      }
+      if (!IS_PRODUCTION) {
+        return origin;
+      }
+      return CORS_ALLOWED_ORIGINS.includes(origin) ? origin : '';
+    },
+    allowHeaders: ["Content-Type", "Authorization", "apikey", "Idempotency-Key", "X-Idempotency-Key"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -177,7 +221,7 @@ app.get("/products", async (c) => {
     const products = await getTaskProductCatalog();
     return c.json({ products });
   } catch (error) {
-    return c.json({ error: error.message || "Failed to fetch products" }, 500);
+    return c.json({ error: "Failed to fetch products" }, 500);
   }
 });
 // Generate a unique invitation code
@@ -254,58 +298,33 @@ const verifyWithdrawalPassword = async (
 const DEFAULT_CONTACT_LINKS = {
   whatsapp: 'https://wa.me/1234567890',
   telegram: 'https://t.me/murphy_00754_support',
-};
-
-const NOTIFICATION_MAX_ITEMS = 50;
-
-const sanitizeAnnouncementLevel = (value: any): 'info' | 'success' | 'warning' => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'success') return 'success';
-  if (normalized === 'warning') return 'warning';
-  return 'info';
-};
-
-const getAnnouncementConfig = async () => {
-  const row = await kv.get('system:announcements') || {};
-  const source = Array.isArray(row?.items) ? row.items : [];
-  const items = source
-    .map((item: any) => ({
-      id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-      title: String(item?.title || '').trim(),
-      message: String(item?.message || '').trim(),
-      level: sanitizeAnnouncementLevel(item?.level),
-      popup: item?.popup !== false,
-      active: item?.active !== false,
-      createdAt: String(item?.createdAt || new Date().toISOString()),
-      expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
-    }))
-    .filter((item: any) => item.title && item.message)
-    .slice(0, NOTIFICATION_MAX_ITEMS);
-
-  return {
-    items,
-    updatedAt: row?.updatedAt || null,
-    updatedBy: row?.updatedBy || null,
-  };
-};
-
-const getUserSeenAnnouncements = async (userId: string): Promise<Set<string>> => {
-  const seen = await kv.get(`user:announcements:seen:${userId}`) || [];
-  return new Set(Array.isArray(seen) ? seen.map((value: any) => String(value || '').trim()).filter(Boolean) : []);
-};
-
-const getUserSeenBonusBadges = async (userId: string): Promise<Set<string>> => {
-  const seen = await kv.get(`user:bonus-badges:seen:${userId}`) || [];
-  return new Set(Array.isArray(seen) ? seen.map((value: any) => String(value || '').trim()).filter(Boolean) : []);
+  whatsapp2: '',
+  telegram2: '',
 };
 
 const getContactLinksConfig = async () => {
   const row = await kv.get('support:contact-links') || {};
-  const whatsapp = String(row?.whatsapp || DEFAULT_CONTACT_LINKS.whatsapp).trim();
-  const telegram = String(row?.telegram || DEFAULT_CONTACT_LINKS.telegram).trim();
+  const hasWhatsapp = Object.prototype.hasOwnProperty.call(row, 'whatsapp');
+  const hasTelegram = Object.prototype.hasOwnProperty.call(row, 'telegram');
+  const hasWhatsapp2 = Object.prototype.hasOwnProperty.call(row, 'whatsapp2');
+  const hasTelegram2 = Object.prototype.hasOwnProperty.call(row, 'telegram2');
+  const whatsapp = hasWhatsapp
+    ? String(row?.whatsapp ?? '').trim()
+    : DEFAULT_CONTACT_LINKS.whatsapp;
+  const telegram = hasTelegram
+    ? String(row?.telegram ?? '').trim()
+    : DEFAULT_CONTACT_LINKS.telegram;
+  const whatsapp2 = hasWhatsapp2
+    ? String(row?.whatsapp2 ?? '').trim()
+    : DEFAULT_CONTACT_LINKS.whatsapp2;
+  const telegram2 = hasTelegram2
+    ? String(row?.telegram2 ?? '').trim()
+    : DEFAULT_CONTACT_LINKS.telegram2;
   return {
     whatsapp,
     telegram,
+    whatsapp2,
+    telegram2,
     updatedAt: row?.updatedAt || null,
     updatedBy: row?.updatedBy || null,
   };
@@ -399,43 +418,6 @@ const getVipTaskCommissionRate = (vipTier: string): number => {
 
 const VIP_TIER_ORDER = ['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const;
 
-const DEFAULT_VIP_COMMISSION_RANGES: Record<string, { min: number; max: number }> = {
-  Normal: { min: 40, max: 60 },
-  Silver: { min: 60, max: 70 },
-  Gold: { min: 150, max: 170 },
-  Platinum: { min: 200, max: 250 },
-  Diamond: { min: 1500, max: 2000 },
-};
-
-const normalizeVipCommissionRange = (
-  input: any,
-  fallback: { min: number; max: number },
-): { min: number; max: number } => {
-  const parsedMin = Number(input?.min);
-  const parsedMax = Number(input?.max);
-  const safeMin = Number.isFinite(parsedMin) && parsedMin >= 0 ? parsedMin : fallback.min;
-  const safeMaxCandidate = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : fallback.max;
-  return {
-    min: roundCurrency(safeMin),
-    max: roundCurrency(Math.max(safeMin, safeMaxCandidate)),
-  };
-};
-
-const getVipCommissionRangeConfig = async () => {
-  const row = await kv.get('vip:commission-ranges') || {};
-  const sourceRanges = row?.ranges || row || {};
-  const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
-    acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], DEFAULT_VIP_COMMISSION_RANGES[tier]);
-    return acc;
-  }, {} as Record<string, { min: number; max: number }>);
-
-  return {
-    ranges,
-    updatedAt: row?.updatedAt || null,
-    updatedBy: row?.updatedBy || null,
-  };
-};
-
 const VIP_AUTO_UPGRADE_SET_REQUIREMENTS: Record<string, number> = {
   Normal: 3,
   Silver: 4,
@@ -467,7 +449,6 @@ const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
   const increment = Number.isInteger(Number(completedSetIncrement)) && Number(completedSetIncrement) > 0
     ? Number(completedSetIncrement)
     : 0;
-  const currentBalance = roundCurrency(Number(user?.balance ?? 0));
 
   const currentTier = normalizeVipTier(user?.vipTier || 'Normal');
   const currentTierSetProgress = Number.isInteger(Number(user?.tierSetProgress)) && Number(user?.tierSetProgress) >= 0
@@ -487,10 +468,6 @@ const applyVipAutoUpgrade = (user: any, completedSetIncrement: number) => {
     const requiredSets = getRequiredSetsForTierUpgrade(nextTier);
     const candidateNextTier = getNextVipTier(nextTier);
     if (!candidateNextTier || !Number.isFinite(requiredSets) || nextTierSetProgress < requiredSets) {
-      break;
-    }
-    const candidateTierMinBalance = getMinimumBalanceByTier(candidateNextTier);
-    if (currentBalance < candidateTierMinBalance) {
       break;
     }
 
@@ -540,22 +517,42 @@ const PREMIUM_BUNDLE_PRODUCT_NAMES = [
 
 const roundCurrency = (value: number): number => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+const resolvePrincipalBalance = (user: any, totalEarned: number): number => {
+  const storedPrincipal = Number(user?.principalBalance ?? NaN);
+  if (Number.isFinite(storedPrincipal) && storedPrincipal >= 0) {
+    return roundCurrency(storedPrincipal);
+  }
+
+  const currentBalance = Number(user?.balance ?? 0);
+  return roundCurrency(Math.max(0, currentBalance - Number(totalEarned || 0)));
+};
+
+const computeTotalEarnings = (user: any, totalEarned: number): number => {
+  const principalBalance = resolvePrincipalBalance(user, totalEarned);
+  return roundCurrency(principalBalance + Math.max(0, Number(totalEarned || 0)));
+};
+
 const TASK_PRODUCT_CATALOG_KEY = 'task-products:catalog';
 
-const TASK_PRODUCT_IMAGE_POOL = [
-  'https://images.unsplash.com/photo-1585421514738-01798e348b17?w=400',
-  'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400',
-  'https://images.unsplash.com/photo-1558002038-1055907df827?w=400',
-  'https://images.unsplash.com/photo-1588508065123-287b28e013da?w=400',
-  'https://images.unsplash.com/photo-1580480055273-228ff5388ef8?w=400',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-  'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400',
-  'https://images.unsplash.com/photo-1585515320310-259814833e62?w=400',
-  'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400',
-  'https://images.unsplash.com/photo-1595418917831-ef942bd0f6ec?w=400',
-  'https://images.unsplash.com/photo-1575311373937-040b8e1fd5b6?w=400',
-  'https://images.unsplash.com/photo-1584990347449-39f4aa4d8cf2?w=400',
+const TASK_PRODUCT_DEFAULT_CATALOG = [
+  { name: 'stainless steel black sink waterfall faucet', image: 'https://source.unsplash.com/1200x1200/?kitchen,faucet,sink' },
+  { name: 'wireless bluetooth noise cancelling headphones', image: 'https://source.unsplash.com/1200x1200/?wireless,headphones' },
+  { name: 'smart home security camera system', image: 'https://source.unsplash.com/1200x1200/?security,camera,home' },
+  { name: 'portable solar power bank charger', image: 'https://source.unsplash.com/1200x1200/?solar,powerbank,charger' },
+  { name: 'ergonomic mesh office chair', image: 'https://source.unsplash.com/1200x1200/?ergonomic,office,chair' },
+  { name: 'led desk lamp with wireless charging', image: 'https://source.unsplash.com/1200x1200/?led,desk,lamp' },
+  { name: 'stainless steel cookware set', image: 'https://source.unsplash.com/1200x1200/?cookware,stainless,steel' },
+  { name: 'digital air fryer with touch screen', image: 'https://source.unsplash.com/1200x1200/?air,fryer,kitchen' },
+  { name: 'robot vacuum cleaner with mapping', image: 'https://source.unsplash.com/1200x1200/?robot,vacuum' },
+  { name: 'electric standing desk converter', image: 'https://source.unsplash.com/1200x1200/?standing,desk' },
+  { name: 'waterproof fitness tracker watch', image: 'https://source.unsplash.com/1200x1200/?fitness,tracker,watch' },
+  { name: 'ceramic non-stick frying pan', image: 'https://source.unsplash.com/1200x1200/?frying,pan,ceramic' },
 ];
+
+const TASK_PRODUCT_IMAGE_POOL = TASK_PRODUCT_DEFAULT_CATALOG.map((item) => item.image);
+const TASK_PRODUCT_IMAGE_BY_NAME = new Map(
+  TASK_PRODUCT_DEFAULT_CATALOG.map((item) => [item.name.toLowerCase(), item.image]),
+);
 
 const TASK_PRODUCT_AI_PREFIXES = [
   'Smart', 'Adaptive', 'Dynamic', 'Optimized', 'Secure', 'Cloud', 'Digital', 'Hybrid', 'Premium', 'AI-Ready',
@@ -575,13 +572,10 @@ const getTaskAmountRangeByTier = (vipTier: string): { min: number; max: number }
   return { min: 99, max: 398 };
 };
 
-const getMinimumBalanceByTier = (vipTier: string): number => {
-  const tier = String(vipTier || 'Normal');
-  if (tier === 'Diamond') return 9999;
-  if (tier === 'Platinum') return 1999;
-  if (tier === 'Gold') return 599;
-  if (tier === 'Silver') return 399;
-  return 99;
+const getMinimumRequiredBalanceForVip = (vipTier: string): number => {
+  const amountRange = getTaskAmountRangeByTier(vipTier);
+  const tierMinimum = Math.ceil(Number(amountRange?.min || 0));
+  return Math.max(100, tierMinimum);
 };
 
 const formatTaskTimestamp = (value: Date): string => {
@@ -594,26 +588,13 @@ const formatTaskTimestamp = (value: Date): string => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
 
-const buildDefaultTaskProductCatalog = () => {
-  const defaultNames = [
-    'stainless steel black sink waterfall faucet',
-    'wireless bluetooth noise cancelling headphones',
-    'smart home security camera system',
-    'portable solar power bank charger',
-    'ergonomic mesh office chair',
-    'led desk lamp with wireless charging',
-    'stainless steel cookware set',
-    'digital air fryer with touch screen',
-    'robot vacuum cleaner with mapping',
-    'electric standing desk converter',
-    'waterproof fitness tracker watch',
-    'ceramic non-stick frying pan',
-  ];
+const isValidTaskProductImageUrl = (value: any) => /^https?:\/\//i.test(String(value || '').trim());
 
-  return defaultNames.map((name, index) => ({
+const buildDefaultTaskProductCatalog = () => {
+  return TASK_PRODUCT_DEFAULT_CATALOG.map((item, index) => ({
     id: `task_default_${index + 1}`,
-    name,
-    image: TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length],
+    name: item.name,
+    image: item.image,
     isActive: true,
     isPremiumTemplate: index < 3,
     createdAt: new Date().toISOString(),
@@ -624,12 +605,12 @@ const buildDefaultTaskProductCatalog = () => {
 const normalizeTaskProduct = (input: any, index: number) => {
   const normalizedName = String(input?.name || '').trim();
   const fallbackName = `task product ${index + 1}`;
-  const fallbackImage = TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length];
+  const normalizedImage = String(input?.image || '').trim();
 
   return {
     id: String(input?.id || `task_${Date.now()}_${index}`).trim(),
     name: normalizedName || fallbackName,
-    image: String(input?.image || fallbackImage).trim() || fallbackImage,
+    image: normalizedImage,
     isActive: input?.isActive === undefined ? true : Boolean(input?.isActive),
     isArchived: Boolean(input?.isArchived),
     isPremiumTemplate: Boolean(input?.isPremiumTemplate),
@@ -652,7 +633,28 @@ const getTaskProductCatalog = async () => {
     return defaults;
   }
 
-  return rawProducts.map((item: any, index: number) => normalizeTaskProduct(item, index));
+  const normalizedProducts = rawProducts.map((item: any, index: number) => {
+    const normalized = normalizeTaskProduct(item, index);
+    const canonicalImage = TASK_PRODUCT_IMAGE_BY_NAME.get(String(normalized.name || '').toLowerCase());
+    if (canonicalImage) {
+      return {
+        ...normalized,
+        image: canonicalImage,
+      };
+    }
+    return normalized;
+  });
+  const sanitizedProducts = normalizedProducts.filter((item: any) => {
+    if (!String(item?.name || '').trim()) return false;
+    if (!isValidTaskProductImageUrl(item?.image)) return false;
+    return true;
+  });
+
+  if (sanitizedProducts.length !== rawProducts.length) {
+    await saveTaskProductCatalog(sanitizedProducts, 'system_sanitize_images');
+  }
+
+  return sanitizedProducts;
 };
 
 const saveTaskProductCatalog = async (products: any[], updatedBy: string) => {
@@ -726,14 +728,12 @@ const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) =>
       ? premiumAmount
       : roundCurrency((amountRange.min + amountRange.max) / 2);
     const createdAt = formatTaskTimestamp(new Date());
-    // Premium products use a 12× commission multiplier on the base VIP task rate
-    const premiumComRate = roundCurrency(resolvedAmount * rate * 12);
 
     return {
       name: String(assignment?.productName || premiumProduct?.name || 'Premium Assigned Product'),
       image: String(assignment?.productImage || premiumProduct?.image || TASK_PRODUCT_IMAGE_POOL[0]),
       totalAmount: resolvedAmount,
-      profit: premiumComRate,
+      profit: roundCurrency(resolvedAmount * rate),
       creationTime: createdAt,
       ratingNo: Math.random().toString(36).substring(2, 12),
       isPremium: true,
@@ -837,81 +837,11 @@ const buildTaskState = (user: any) => {
   };
 };
 
-const PREMIUM_PROFIT_CREDIT_HISTORY_LIMIT = 20;
-
-const buildPremiumCreditKey = (user: any): string => {
-  const orderId = String(user?.premiumAssignment?.orderId || '').trim();
-  if (orderId) {
-    return `order:${orderId}`;
-  }
-
-  const encounteredAt = String(user?.premiumAssignment?.encounteredAt || '').trim();
-  const amount = roundCurrency(Number(user?.premiumAssignment?.amount ?? user?.premiumAssignment?.enteredAmount ?? 0));
-  return `encountered:${encounteredAt || 'unknown'}:amount:${amount.toFixed(2)}`;
-};
-
-const reconcilePremiumProfitForUser = async (
-  user: any,
-): Promise<{ user: any; applied: boolean; premiumProfit: number }> => {
-  if (!user || !user?.id) {
-    return { user, applied: false, premiumProfit: 0 };
-  }
-
-  const assignment = user?.premiumAssignment || null;
-  const encounteredAt = String(assignment?.encounteredAt || '').trim();
-  const isFrozen = Boolean(user?.accountFrozen ?? false);
-
-  // Eligible only after premium encounter and unfreeze.
-  if (!assignment || !encounteredAt || isFrozen) {
-    return { user, applied: false, premiumProfit: 0 };
-  }
-
-  const assignmentAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
-  if (!Number.isFinite(assignmentAmount) || assignmentAmount <= 0) {
-    return { user, applied: false, premiumProfit: 0 };
-  }
-
-  const creditHistory = Array.isArray(user?.premiumProfitCreditHistory)
-    ? user.premiumProfitCreditHistory.map((item: any) => String(item || '').trim()).filter(Boolean)
-    : [];
-  const creditKey = buildPremiumCreditKey(user);
-  if (creditHistory.includes(creditKey)) {
-    return { user, applied: false, premiumProfit: 0 };
-  }
-
-  const premiumRate = getVipTaskCommissionRate(String(user?.vipTier || 'Normal')) * 12;
-  const premiumProfit = roundCurrency(assignmentAmount * premiumRate);
-  if (!Number.isFinite(premiumProfit) || premiumProfit <= 0) {
-    return { user, applied: false, premiumProfit: 0 };
-  }
-
-  const updatedUser = {
-    ...user,
-    balance: roundCurrency(Number(user?.balance ?? 0) + premiumProfit),
-    premiumProfitCreditHistory: [...creditHistory, creditKey].slice(-PREMIUM_PROFIT_CREDIT_HISTORY_LIMIT),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await kv.set(`user:${user.id}`, updatedUser);
-
-  const userProfits = await kv.get(`profits:${user.id}`) || {
-    totalEarned: 0,
-    fromDirectChildren: 0,
-    fromIndirectReferrals: 0,
-    byLevel: {},
-  };
-  userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + premiumProfit);
-  await kv.set(`profits:${user.id}`, userProfits);
-
-  return { user: updatedUser, applied: true, premiumProfit };
-};
-
 const ADMIN_PERMISSION_ALL = '*';
 const ADMIN_ALLOWED_PERMISSIONS = [
   'users.view',
   'users.adjust_balance',
   'users.assign_premium',
-  'users.reset_password',
   'users.reset_tasks',
   'users.manage_task_limits',
   'users.unfreeze',
@@ -963,8 +893,8 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
   }
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKey = getAdminApiKey();
-  if (!expectedKey || token !== expectedKey) {
+  const expectedKeys = getAdminApiKeys();
+  if (!ALLOW_SUPER_ADMIN_KEY_BYPASS || expectedKeys.length === 0 || !expectedKeys.includes(token)) {
     return { ok: false, response: c.json({ error: 'Forbidden - Super admin key required' }, 403) };
   }
   return { ok: true };
@@ -983,9 +913,9 @@ const requireAdminPermission = async (
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKey = getAdminApiKey();
+  const expectedKeys = getAdminApiKeys();
 
-  if (expectedKey && token === expectedKey) {
+  if (ALLOW_SUPER_ADMIN_KEY_BYPASS && expectedKeys.includes(token)) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] };
   }
 
@@ -1009,21 +939,16 @@ const requireAdminPermission = async (
   return { ok: true, isSuperAdmin: false, userId, permissions };
 };
 
-const requireSupportAccess = async (
-  c: any,
-): Promise<
-  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
-  | { ok: false; response: any }
-> => {
+const requireSupportAccess = async (c: any) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKey = getAdminApiKey();
+  const expectedKeys = getAdminApiKeys();
 
-  if (expectedKey && token === expectedKey) {
+  if (ALLOW_SUPER_ADMIN_KEY_BYPASS && expectedKeys.includes(token)) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[] };
   }
 
@@ -1044,99 +969,15 @@ const requireSupportAccess = async (
 
 type AdminScopeConfig =
   | { mode: 'all' }
-  | { mode: 'none' }
+  | { mode: 'parent'; parentUserId: string }
   | { mode: 'users'; userIds: Set<string> };
-
-const buildUserTreeScope = (rootUserId: string, users: any[]): Set<string> => {
-  const normalizedRoot = String(rootUserId || '').trim();
-  const scopedIds = new Set<string>();
-  if (!normalizedRoot) {
-    return scopedIds;
-  }
-
-  const childrenByParent = new Map<string, string[]>();
-  users.forEach((user) => {
-    const userId = String(user?.id || '').trim();
-    const parentId = String(user?.parentUserId || '').trim();
-    if (!userId || !parentId) {
-      return;
-    }
-    if (!childrenByParent.has(parentId)) {
-      childrenByParent.set(parentId, []);
-    }
-    childrenByParent.get(parentId)!.push(userId);
-  });
-
-  const queue: string[] = [normalizedRoot];
-  while (queue.length > 0) {
-    const currentId = queue.shift()!;
-    if (scopedIds.has(currentId)) {
-      continue;
-    }
-    scopedIds.add(currentId);
-    const children = childrenByParent.get(currentId) || [];
-    children.forEach((childId) => {
-      if (!scopedIds.has(childId)) {
-        queue.push(childId);
-      }
-    });
-  }
-
-  return scopedIds;
-};
 
 const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null }): Promise<AdminScopeConfig> => {
   if (adminAccess.isSuperAdmin || !adminAccess.userId) {
     return { mode: 'all' };
   }
 
-  const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
-  if (!adminAccount) {
-    return { mode: 'none' };
-  }
-
-  const allUsers = await kv.getByPrefix('user:') || [];
-  const usersById = new Set((allUsers || []).map((user: any) => String(user?.id || '').trim()).filter(Boolean));
-  const ownInviteTreeScope = buildUserTreeScope(String(adminAccess.userId || ''), allUsers);
-
-  const managedUserIds = Array.isArray(adminAccount?.managedUserIds)
-    ? adminAccount.managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
-    : [];
-  if (managedUserIds.length > 0) {
-    const scopedIds = new Set<string>();
-    managedUserIds.forEach((managedId: string) => {
-      if (usersById.has(managedId)) {
-        buildUserTreeScope(managedId, allUsers).forEach((id) => scopedIds.add(id));
-      }
-    });
-    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
-    return { mode: 'users', userIds: scopedIds };
-  }
-
-  const managedParentUserId = String(adminAccount?.managedParentUserId || '').trim();
-  if (managedParentUserId) {
-    const scopedIds = buildUserTreeScope(managedParentUserId, allUsers);
-    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
-    return { mode: 'users', userIds: scopedIds };
-  }
-
-  // Fallback: infer parent root from username for legacy limited-admin accounts.
-  const normalizedUsername = String(adminAccount?.username || '').trim().toLowerCase();
-  if (normalizedUsername) {
-    const inferredRootUser = (allUsers || []).find((user: any) => String(user?.username || '').trim().toLowerCase() === normalizedUsername);
-    if (inferredRootUser?.id) {
-      const scopedIds = buildUserTreeScope(String(inferredRootUser.id), allUsers);
-      ownInviteTreeScope.forEach((id) => scopedIds.add(id));
-      return { mode: 'users', userIds: scopedIds };
-    }
-  }
-
-  // Fallback: include users who signed up using invitation codes owned by this limited-admin account.
-  if (ownInviteTreeScope.size > 0) {
-    return { mode: 'users', userIds: ownInviteTreeScope };
-  }
-
-  return { mode: 'none' };
+  return { mode: 'parent', parentUserId: String(adminAccess.userId) };
 };
 
 const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
@@ -1144,15 +985,65 @@ const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
     return true;
   }
 
-  if (scope.mode === 'none') {
-    return false;
-  }
-
   if (!user?.id) {
     return false;
   }
 
-  return scope.userIds.has(String(user.id));
+  if (scope.mode === 'users') {
+    return scope.userIds.has(String(user.id));
+  }
+
+  return String(user?.parentUserId || '') === scope.parentUserId;
+};
+
+const getAdminScopeFromAccount = (adminAccount: any): AdminScopeConfig => {
+  const managedUserIds = Array.isArray(adminAccount?.managedUserIds)
+    ? adminAccount.managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (managedUserIds.length > 0) {
+    return { mode: 'users', userIds: new Set(managedUserIds) };
+  }
+
+  const managedParentUserId = String(adminAccount?.managedParentUserId || '').trim();
+  if (managedParentUserId) {
+    return { mode: 'parent', parentUserId: managedParentUserId };
+  }
+
+  const fallbackParentUserId = String(adminAccount?.userId || '').trim();
+  if (fallbackParentUserId) {
+    return { mode: 'parent', parentUserId: fallbackParentUserId };
+  }
+
+  return { mode: 'all' };
+};
+
+const resolveFrozenNegativeAmount = (user: any): number => {
+  if (!Boolean(user?.accountFrozen)) {
+    return 0;
+  }
+
+  const balance = Number(user?.balance ?? 0);
+  if (balance < 0) {
+    return roundCurrency(Math.abs(balance));
+  }
+
+  return roundCurrency(Math.max(0, Number(user?.freezeAmount ?? 0)));
+};
+
+const resolveUserTotalEarnings = async (user: any): Promise<number> => {
+  const explicitTotalEarnings = Number(user?.totalEarnings ?? NaN);
+  if (Number.isFinite(explicitTotalEarnings) && explicitTotalEarnings >= 0) {
+    return roundCurrency(explicitTotalEarnings);
+  }
+
+  const userId = String(user?.id || '').trim();
+  if (!userId) {
+    return 0;
+  }
+
+  const profits = await kv.get(`profits:${userId}`) || { totalEarned: 0 };
+  const totalEarned = Number(profits?.totalEarned || 0);
+  return computeTotalEarnings(user, totalEarned);
 };
 
 const getRequesterIp = (c: any): string => {
@@ -1297,31 +1188,249 @@ const enforceAdminRateLimit = async (
   return { allowed: true };
 };
 
-type AdminAuditActor = { isSuperAdmin: boolean; userId: string | null };
-
-const writeAdminAuditLog = async (
+const enforcePublicRateLimit = async (
+  c: any,
   action: string,
-  actor: AdminAuditActor,
-  payload: {
-    targetUserId?: string | null;
-    targetIdentifier?: string | null;
-    meta?: Record<string, any>;
-  } = {},
-) => {
-  const createdAt = new Date().toISOString();
-  const entryId = `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const record = {
-    id: entryId,
-    action,
-    actorType: actor.isSuperAdmin ? 'super_admin' : 'limited_admin',
-    actorUserId: actor.userId || null,
-    targetUserId: payload.targetUserId || null,
-    targetIdentifier: payload.targetIdentifier || null,
-    meta: payload.meta || {},
-    createdAt,
-  };
+  limit: number,
+  windowMs: number,
+  identityOverride?: string,
+): Promise<{ allowed: true } | { allowed: false; retryAfterSec: number }> => {
+  const ip = getRequesterIp(c);
+  const identity = String(identityOverride || ip || 'unknown').trim();
+  const rateLimitKey = `public:ratelimit:${action}:${identity}`;
+  const nowMs = Date.now();
 
-  await kv.set(`admin:audit:${createdAt}:${entryId}`, record);
+  const state = await kv.get(rateLimitKey) || {};
+  const windowStartedAtMs = Number(state.windowStartedAtMs || 0);
+  const count = Number(state.count || 0);
+  const withinWindow = windowStartedAtMs > 0 && (nowMs - windowStartedAtMs) < windowMs;
+  const nextCount = withinWindow ? count + 1 : 1;
+  const nextWindowStart = withinWindow ? windowStartedAtMs : nowMs;
+
+  if (withinWindow && count >= limit) {
+    const retryAfterSec = Math.max(1, Math.ceil((windowMs - (nowMs - windowStartedAtMs)) / 1000));
+    return { allowed: false, retryAfterSec };
+  }
+
+  await kv.set(rateLimitKey, {
+    count: nextCount,
+    windowStartedAtMs: nextWindowStart,
+    updatedAtMs: nowMs,
+  });
+
+  return { allowed: true };
+};
+
+const getIdempotencyKey = (c: any): string => {
+  return String(
+    c.req.header('Idempotency-Key')
+    || c.req.header('idempotency-key')
+    || c.req.header('X-Idempotency-Key')
+    || c.req.header('x-idempotency-key')
+    || c.req.raw?.headers?.get?.('Idempotency-Key')
+    || c.req.raw?.headers?.get?.('idempotency-key')
+    || c.req.raw?.headers?.get?.('X-Idempotency-Key')
+    || c.req.raw?.headers?.get?.('x-idempotency-key')
+    || ''
+  ).trim();
+};
+
+const buildIdempotencyStoreKey = (scope: string, actorId: string, idempotencyKey: string): string => {
+  return `idempotency:${scope}:${actorId}:${idempotencyKey}`;
+};
+
+const beginIdempotentOperation = async (
+  storeKey: string,
+  fingerprint: string,
+): Promise<
+  | { state: 'started' }
+  | { state: 'replay'; responseStatus: number; responseBody: any }
+  | { state: 'in_progress' }
+  | { state: 'conflict' }
+> => {
+  const nowIso = new Date().toISOString();
+  const existing = await kv.get(storeKey);
+  if (existing) {
+    if (String(existing.fingerprint || '') !== fingerprint) {
+      return { state: 'conflict' };
+    }
+    if (existing.state === 'completed') {
+      return {
+        state: 'replay',
+        responseStatus: Number(existing.responseStatus || 200),
+        responseBody: existing.responseBody || { success: true },
+      };
+    }
+    return { state: 'in_progress' };
+  }
+
+  await kv.set(storeKey, {
+    state: 'in_progress',
+    fingerprint,
+    startedAt: nowIso,
+    updatedAt: nowIso,
+  });
+  return { state: 'started' };
+};
+
+const completeIdempotentOperation = async (
+  storeKey: string,
+  fingerprint: string,
+  responseStatus: number,
+  responseBody: any,
+): Promise<void> => {
+  const nowIso = new Date().toISOString();
+  await kv.set(storeKey, {
+    state: 'completed',
+    fingerprint,
+    responseStatus,
+    responseBody,
+    completedAt: nowIso,
+    updatedAt: nowIso,
+  });
+};
+
+const delayMs = async (ms: number): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+const acquireFinancialLock = async (
+  scope: string,
+  actorId: string,
+  maxWaitMs = 4000,
+  leaseMs = 15000,
+): Promise<(() => Promise<void>) | null> => {
+  const normalizedScope = String(scope || '').trim().toLowerCase();
+  const normalizedActor = String(actorId || '').trim();
+  if (!normalizedScope || !normalizedActor) {
+    return null;
+  }
+
+  const lockKey = `finance:lock:${normalizedScope}:${normalizedActor}`;
+  const startedAt = Date.now();
+
+  while ((Date.now() - startedAt) < maxWaitMs) {
+    const now = Date.now();
+    const existing = await kv.get(lockKey);
+    const existingExpiresAt = Number(existing?.expiresAt || 0);
+    const lockHeld = existing && Number.isFinite(existingExpiresAt) && existingExpiresAt > now;
+
+    if (!lockHeld) {
+      const token = `${now}_${Math.random().toString(36).slice(2, 8)}`;
+      const expiresAt = now + leaseMs;
+      await kv.set(lockKey, {
+        token,
+        acquiredAt: new Date(now).toISOString(),
+        expiresAt,
+      });
+
+      const verify = await kv.get(lockKey);
+      if (String(verify?.token || '') === token) {
+        return async () => {
+          const current = await kv.get(lockKey);
+          if (String(current?.token || '') === token) {
+            await kv.del(lockKey);
+          }
+        };
+      }
+    }
+
+    await delayMs(75);
+  }
+
+  return null;
+};
+
+const appendUniqueQueueId = async (queueKey: string, id: string, maxLen = 2000): Promise<string[]> => {
+  const existing = await kv.get(queueKey) || [];
+  const queue = Array.isArray(existing) ? existing.map((value: any) => String(value)) : [];
+  if (!queue.includes(id)) {
+    queue.push(id);
+  }
+  const trimmed = queue.slice(-maxLen);
+  await kv.set(queueKey, trimmed);
+  return trimmed;
+};
+
+const removeQueueId = async (queueKey: string, id: string): Promise<string[]> => {
+  const existing = await kv.get(queueKey) || [];
+  const queue = Array.isArray(existing) ? existing.map((value: any) => String(value)) : [];
+  const updated = queue.filter((value: string) => value !== id);
+  await kv.set(queueKey, updated);
+  return updated;
+};
+
+const createFinancialOperation = async (
+  type: string,
+  actorId: string,
+  metadata: Record<string, any>,
+): Promise<string> => {
+  const operationId = `finop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await kv.set(`finance:operation:${operationId}`, {
+    id: operationId,
+    type,
+    actorId,
+    status: 'in_progress',
+    metadata,
+    steps: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  return operationId;
+};
+
+const appendFinancialOperationStep = async (
+  operationId: string,
+  step: string,
+  details?: Record<string, any>,
+): Promise<void> => {
+  const key = `finance:operation:${operationId}`;
+  const current = await kv.get(key);
+  if (!current) return;
+
+  const steps = Array.isArray(current.steps) ? current.steps : [];
+  steps.push({
+    step,
+    details: details || null,
+    at: new Date().toISOString(),
+  });
+
+  await kv.set(key, {
+    ...current,
+    steps,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const finalizeFinancialOperation = async (
+  operationId: string,
+  status: 'completed' | 'failed',
+  summary?: Record<string, any>,
+): Promise<void> => {
+  const key = `finance:operation:${operationId}`;
+  const current = await kv.get(key);
+  if (!current) return;
+
+  await kv.set(key, {
+    ...current,
+    status,
+    summary: summary || null,
+    completedAt: status === 'completed' ? new Date().toISOString() : (current.completedAt || null),
+    failedAt: status === 'failed' ? new Date().toISOString() : (current.failedAt || null),
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const uniqueStringArray = (values: any[]): string[] => {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values || []) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 };
 
 const isLikelyTestUser = (user: any): boolean => {
@@ -1556,6 +1665,11 @@ const emailTemplates = {
 // Sign up endpoint
 app.post("/signup", async (c) => {
   try {
+    const rateLimit = await enforcePublicRateLimit(c, 'auth.signup', 8, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for signup. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
     const { email, password, name, username, withdrawalPassword, gender, invitationCode } = await c.req.json();
 
     const requestedUsername = String(username || name || '').trim();
@@ -1602,12 +1716,12 @@ app.post("/signup", async (c) => {
     if (error) {
       // Check if user already exists - this is a common scenario, not an error
       if (error.message.includes('already been registered')) {
-        console.log(`Info: Username ${requestedUsername} already exists - directing to sign in`);
-        return c.json({ error: 'A user with this username has already been registered' }, 400);
+        console.log(`Info: Signup blocked for existing username: ${requestedUsername}`);
+        return c.json({ error: 'Unable to create account with provided details' }, 400);
       }
       
       console.error(`Error during user signup: ${error.message}`);
-      return c.json({ error: error.message }, 400);
+      return c.json({ error: 'Unable to create account with provided details' }, 400);
     }
 
     const userId = data.user.id;
@@ -1629,6 +1743,7 @@ app.post("/signup", async (c) => {
       name: displayName,
       username: normalizedUsername,
       vipTier: 'Normal',
+      accountDisabled: false,
       gender: gender || 'male',
       withdrawalPassword: hashedWithdrawalPassword,
       invitationCode: userInvitationCode,
@@ -1636,7 +1751,7 @@ app.post("/signup", async (c) => {
       childCount: 0,
       totalProfitFromChildren: 0,
       balance: 0,
-      creditScore: 100,
+      principalBalance: 0,
       welcomeBonusGranted: false,
       dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
       extraTaskSets: 0,
@@ -1734,103 +1849,34 @@ app.get("/admin/invitation-codes", async (c) => {
       return adminAccess.response;
     }
 
-    const scope = await getAdminScopeConfig(adminAccess);
-    const canAccessOwnerUser = async (ownerUserId: any): Promise<boolean> => {
-      if (adminAccess.isSuperAdmin) return true;
-
-      const normalizedOwnerUserId = String(ownerUserId || '').trim();
-      if (!normalizedOwnerUserId) return false;
-      if (normalizedOwnerUserId === String(adminAccess.userId || '').trim()) return true;
-
-      const ownerUser = await kv.get(`user:${normalizedOwnerUserId}`);
-      if (ownerUser?.id && isUserInAdminScope(scope, ownerUser)) {
-        return true;
-      }
-
-      return false;
-    };
-
-    const userRows = await kv.getByPrefix('user:') || [];
-    const legacyUsersByCode = new Map<string, any>();
-    (userRows || []).forEach((user: any) => {
-      const legacyCode = normalizeInvitationCode(String(user?.invitationCode || ''));
-      if (legacyCode) {
-        legacyUsersByCode.set(legacyCode, user);
-      }
-    });
-
     const codeRows = await getKvRowsByPrefix('invitecode:');
-    const visibleCodes = new Map<string, any>();
-
-    const invitationCodesFromRows = await Promise.all((codeRows ?? []).map(async (row: any) => {
+    const invitationCodes = await Promise.all((codeRows ?? []).map(async (row: any) => {
       const rawKey = String(row?.key || '');
-      const code = normalizeInvitationCode(rawKey.replace('invitecode:', ''));
+      const code = rawKey.replace('invitecode:', '');
       const payload = row?.value ?? {};
-      const ownerUserId = String(payload?.userId || '').trim() || null;
-
-      const fallbackOwnerUser = legacyUsersByCode.get(code);
-      const resolvedOwnerUserId = ownerUserId || (fallbackOwnerUser?.id ? String(fallbackOwnerUser.id).trim() : null);
-      const resolvedOwnerName = payload?.name || fallbackOwnerUser?.name || 'Platform Invite';
-      const resolvedOwnerEmail = payload?.email || fallbackOwnerUser?.email || null;
+      const ownerUserId = payload?.userId || null;
 
       if (!code) {
         return null;
       }
 
-      if (!(await canAccessOwnerUser(resolvedOwnerUserId))) {
+      if (!adminAccess.isSuperAdmin && ownerUserId !== adminAccess.userId) {
         return null;
       }
 
-      const referrals = resolvedOwnerUserId ? (await kv.getByPrefix(`referral:${resolvedOwnerUserId}:`))?.length || 0 : 0;
+      const referrals = ownerUserId ? (await kv.getByPrefix(`referral:${ownerUserId}:`))?.length || 0 : 0;
       return {
         code,
-        ownerUserId: resolvedOwnerUserId,
-        ownerName: resolvedOwnerName,
-        ownerEmail: resolvedOwnerEmail,
+        ownerUserId,
+        ownerName: payload?.name || 'Platform Invite',
+        ownerEmail: payload?.email || null,
         signups: referrals,
         status: payload?.status || 'active',
-        createdAt: payload?.createdAt || fallbackOwnerUser?.createdAt || new Date().toISOString(),
+        createdAt: payload?.createdAt || new Date().toISOString(),
       };
     }));
 
-    (invitationCodesFromRows || []).forEach((item: any) => {
-      if (item?.code) {
-        visibleCodes.set(item.code, item);
-      }
-    });
-
-    // Restore legacy invitation codes stored on user profiles, even if the invitecode:* row is missing.
-    const legacyCodes = await Promise.all((userRows || []).map(async (user: any) => {
-      const legacyCode = normalizeInvitationCode(String(user?.invitationCode || ''));
-      if (!legacyCode) return null;
-      if (visibleCodes.has(legacyCode)) return null;
-
-      if (!adminAccess.isSuperAdmin && !isUserInAdminScope(scope, user) && String(user?.id || '') !== String(adminAccess.userId || '')) {
-        return null;
-      }
-
-      const referrals = user?.id ? (await kv.getByPrefix(`referral:${user.id}:`))?.length || 0 : 0;
-      return {
-        code: legacyCode,
-        ownerUserId: String(user?.id || '').trim() || null,
-        ownerName: String(user?.name || 'Platform Invite'),
-        ownerEmail: String(user?.email || '') || null,
-        signups: referrals,
-        status: 'active',
-        createdAt: String(user?.createdAt || new Date().toISOString()),
-      };
-    }));
-
-    (legacyCodes || []).forEach((item: any) => {
-      if (item?.code && !visibleCodes.has(item.code)) {
-        visibleCodes.set(item.code, item);
-      }
-    });
-
-    const invitationCodes = Array.from(visibleCodes.values())
-      .sort((a: any, b: any) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime());
-
-    return c.json({ success: true, invitationCodes });
+    return c.json({ success: true, invitationCodes: invitationCodes.filter(Boolean) });
   } catch (error) {
     console.error(`Error fetching invitation codes: ${error}`);
     return c.json({ error: 'Internal server error while fetching invitation codes' }, 500);
@@ -1914,16 +1960,8 @@ app.put("/admin/invitation-codes/status", async (c) => {
       return c.json({ error: 'Invitation code not found' }, 404);
     }
 
-    if (!adminAccess.isSuperAdmin) {
-      const scope = await getAdminScopeConfig(adminAccess);
-      const ownerUserId = String(existing?.userId || '').trim();
-      const isOwnCode = ownerUserId && ownerUserId === String(adminAccess.userId || '').trim();
-      const ownerUser = ownerUserId ? await kv.get(`user:${ownerUserId}`) : null;
-      const isScopedCode = Boolean(ownerUser?.id && isUserInAdminScope(scope, ownerUser));
-
-      if (!isOwnCode && !isScopedCode) {
-        return c.json({ error: 'Forbidden - You can only manage invitation codes in your scope' }, 403);
-      }
+    if (!adminAccess.isSuperAdmin && existing?.userId !== adminAccess.userId) {
+      return c.json({ error: 'Forbidden - You can only manage your own invitation codes' }, 403);
     }
 
     const updated = {
@@ -1950,144 +1988,6 @@ app.get('/contact-links', async (c) => {
   }
 });
 
-app.get('/announcements', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - No token provided' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const config = await getAnnouncementConfig();
-    const seenIds = await getUserSeenAnnouncements(userId);
-    const nowMs = Date.now();
-    const items = config.items
-      .filter((item: any) => item.active)
-      .filter((item: any) => {
-        if (!item.expiresAt) return true;
-        const expiresAtMs = new Date(item.expiresAt).getTime();
-        return !Number.isFinite(expiresAtMs) || expiresAtMs > nowMs;
-      })
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .map((item: any) => ({
-        ...item,
-        unread: !seenIds.has(item.id),
-      }));
-
-    return c.json({ success: true, announcements: items });
-  } catch (error) {
-    console.error(`Error fetching announcements: ${error}`);
-    return c.json({ error: 'Internal server error while fetching announcements' }, 500);
-  }
-});
-
-app.post('/announcements/ack', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - No token provided' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const ids = Array.isArray(body?.ids)
-      ? body.ids.map((value: any) => String(value || '').trim()).filter(Boolean)
-      : [];
-
-    if (ids.length === 0) {
-      return c.json({ error: 'ids is required' }, 400);
-    }
-
-    const seen = await getUserSeenAnnouncements(userId);
-    ids.forEach((id: string) => seen.add(id));
-    await kv.set(`user:announcements:seen:${userId}`, Array.from(seen).slice(-200));
-
-    return c.json({ success: true, seenCount: seen.size });
-  } catch (error) {
-    console.error(`Error acknowledging announcements: ${error}`);
-    return c.json({ error: 'Internal server error while acknowledging announcements' }, 500);
-  }
-});
-
-app.get('/bonus-badges', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - No token provided' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const logs = await kv.get(`admin:adjustments:${userId}`) || [];
-    const seenIds = await getUserSeenBonusBadges(userId);
-    const badges = (Array.isArray(logs) ? logs : [])
-      .filter((entry: any) => ['bonus', 'reward', 'topup'].includes(String(entry?.category || '').toLowerCase()))
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, NOTIFICATION_MAX_ITEMS)
-      .map((entry: any) => ({
-        id: String(entry?.id || ''),
-        category: String(entry?.category || 'bonus').toLowerCase(),
-        amount: Number(entry?.amount || 0),
-        note: entry?.note ? String(entry.note) : null,
-        createdAt: String(entry?.createdAt || new Date().toISOString()),
-        unread: !seenIds.has(String(entry?.id || '')),
-      }))
-      .filter((entry: any) => entry.id);
-
-    return c.json({ success: true, badges });
-  } catch (error) {
-    console.error(`Error fetching bonus badges: ${error}`);
-    return c.json({ error: 'Internal server error while fetching bonus badges' }, 500);
-  }
-});
-
-app.post('/bonus-badges/ack', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - No token provided' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const ids = Array.isArray(body?.ids)
-      ? body.ids.map((value: any) => String(value || '').trim()).filter(Boolean)
-      : [];
-
-    if (ids.length === 0) {
-      return c.json({ error: 'ids is required' }, 400);
-    }
-
-    const seen = await getUserSeenBonusBadges(userId);
-    ids.forEach((id: string) => seen.add(id));
-    await kv.set(`user:bonus-badges:seen:${userId}`, Array.from(seen).slice(-200));
-
-    return c.json({ success: true, seenCount: seen.size });
-  } catch (error) {
-    console.error(`Error acknowledging bonus badges: ${error}`);
-    return c.json({ error: 'Internal server error while acknowledging bonus badges' }, 500);
-  }
-});
-
 app.put('/admin/contact-links', async (c) => {
   try {
     const adminAccess = await requireAdminPermission(c, 'support.manage');
@@ -2098,9 +1998,11 @@ app.put('/admin/contact-links', async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const hasWhatsapp = Object.prototype.hasOwnProperty.call(body, 'whatsapp');
     const hasTelegram = Object.prototype.hasOwnProperty.call(body, 'telegram');
+    const hasWhatsapp2 = Object.prototype.hasOwnProperty.call(body, 'whatsapp2');
+    const hasTelegram2 = Object.prototype.hasOwnProperty.call(body, 'telegram2');
 
-    if (!hasWhatsapp && !hasTelegram) {
-      return c.json({ error: 'Provide whatsapp and/or telegram' }, 400);
+    if (!hasWhatsapp && !hasTelegram && !hasWhatsapp2 && !hasTelegram2) {
+      return c.json({ error: 'Provide one or more contact links' }, 400);
     }
 
     const currentConfig = await getContactLinksConfig();
@@ -2110,14 +2012,18 @@ app.put('/admin/contact-links', async (c) => {
     const nextTelegram = hasTelegram
       ? String(body?.telegram || '').trim()
       : String(currentConfig.telegram || '').trim();
-
-    if (!nextWhatsapp || !nextTelegram) {
-      return c.json({ error: 'whatsapp and telegram cannot be empty' }, 400);
-    }
+    const nextWhatsapp2 = hasWhatsapp2
+      ? String(body?.whatsapp2 || '').trim()
+      : String(currentConfig.whatsapp2 || '').trim();
+    const nextTelegram2 = hasTelegram2
+      ? String(body?.telegram2 || '').trim()
+      : String(currentConfig.telegram2 || '').trim();
 
     const payload = {
       whatsapp: nextWhatsapp,
       telegram: nextTelegram,
+      whatsapp2: nextWhatsapp2,
+      telegram2: nextTelegram2,
       updatedAt: new Date().toISOString(),
       updatedBy: adminAccess.userId || 'super_admin',
     };
@@ -2127,104 +2033,6 @@ app.put('/admin/contact-links', async (c) => {
   } catch (error) {
     console.error(`Error updating contact links: ${error}`);
     return c.json({ error: 'Internal server error while updating contact links' }, 500);
-  }
-});
-
-app.get('/admin/announcements', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'support.manage');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const config = await getAnnouncementConfig();
-    return c.json({ success: true, config });
-  } catch (error) {
-    console.error(`Error fetching admin announcements: ${error}`);
-    return c.json({ error: 'Internal server error while fetching announcements' }, 500);
-  }
-});
-
-app.put('/admin/announcements', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'support.manage');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const sourceItems = Array.isArray(body?.items) ? body.items : [];
-    const items = sourceItems
-      .map((item: any) => ({
-        id: String(item?.id || `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-        title: String(item?.title || '').trim(),
-        message: String(item?.message || '').trim(),
-        level: sanitizeAnnouncementLevel(item?.level),
-        popup: item?.popup !== false,
-        active: item?.active !== false,
-        createdAt: String(item?.createdAt || new Date().toISOString()),
-        expiresAt: item?.expiresAt ? String(item.expiresAt) : null,
-      }))
-      .filter((item: any) => item.title && item.message)
-      .slice(0, NOTIFICATION_MAX_ITEMS);
-
-    const payload = {
-      items,
-      updatedAt: new Date().toISOString(),
-      updatedBy: adminAccess.userId || 'super_admin',
-    };
-
-    await kv.set('system:announcements', payload);
-    return c.json({ success: true, config: payload });
-  } catch (error) {
-    console.error(`Error updating announcements: ${error}`);
-    return c.json({ error: 'Internal server error while updating announcements' }, 500);
-  }
-});
-
-app.get('/admin/vip-commission-ranges', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const config = await getVipCommissionRangeConfig();
-    return c.json({ success: true, config });
-  } catch (error) {
-    console.error(`Error fetching VIP commission ranges: ${error}`);
-    return c.json({ error: 'Internal server error while fetching VIP commission ranges' }, 500);
-  }
-});
-
-app.put('/admin/vip-commission-ranges', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const currentConfig = await getVipCommissionRangeConfig();
-    const sourceRanges = body?.ranges || {};
-
-    const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
-      const fallback = currentConfig?.ranges?.[tier] || DEFAULT_VIP_COMMISSION_RANGES[tier];
-      acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], fallback);
-      return acc;
-    }, {} as Record<string, { min: number; max: number }>);
-
-    const payload = {
-      ranges,
-      updatedAt: new Date().toISOString(),
-      updatedBy: adminAccess.userId || 'super_admin',
-    };
-
-    await kv.set('vip:commission-ranges', payload);
-    return c.json({ success: true, config: payload });
-  } catch (error) {
-    console.error(`Error updating VIP commission ranges: ${error}`);
-    return c.json({ error: 'Internal server error while updating VIP commission ranges' }, 500);
   }
 });
 
@@ -2245,12 +2053,10 @@ app.put('/admin/deposit-config', async (c) => {
       return adminAccess.response;
     }
 
-    const permissions = adminAccess.permissions || [];
-
     if (!adminAccess.isSuperAdmin) {
-      const hasAccess = permissions.includes(ADMIN_PERMISSION_ALL)
-        || permissions.includes('support.manage')
-        || permissions.includes('withdrawals.manage');
+      const hasAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage')
+        || adminAccess.permissions.includes('withdrawals.manage');
       if (!hasAccess) {
         return c.json({ error: 'Forbidden - Missing permission: support.manage or withdrawals.manage' }, 403);
       }
@@ -2355,8 +2161,8 @@ app.post('/deposits/request', async (c) => {
       resolvedCryptoNetwork = String(normalizedCryptoNetworkInput || matchedAsset?.network || depositConfig?.crypto?.network || '').trim() || null;
       resolvedDestinationWalletAddress = String(normalizedDestinationWalletAddressInput || matchedAsset?.walletAddress || depositConfig?.crypto?.walletAddress || '').trim() || null;
 
-      if (!normalizedTransactionHash) {
-        return c.json({ error: 'transactionHash is required for crypto deposits' }, 400);
+      if (!normalizedSourceWalletAddress) {
+        return c.json({ error: 'sourceWalletAddress is required for crypto deposits' }, 400);
       }
       if (!resolvedCryptoAsset) {
         return c.json({ error: 'cryptoAsset is required for crypto deposits' }, 400);
@@ -2417,6 +2223,11 @@ app.post('/deposits/request', async (c) => {
 // Sign in endpoint (handled by Supabase client, but we can add a custom route if needed)
 app.post("/signin", async (c) => {
   try {
+    const rateLimit = await enforcePublicRateLimit(c, 'auth.signin', 12, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for signin. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
     const { email, username, password } = await c.req.json();
 
     if (!password || (!email && !username)) {
@@ -2436,12 +2247,16 @@ app.post("/signin", async (c) => {
 
     if (error) {
       console.error(`Error during user signin: ${error.message}`);
-      return c.json({ error: error.message }, 400);
+      return c.json({ error: 'Invalid login credentials' }, 401);
     }
 
     const loginLocation = await resolveBestRequestLocation(c);
     const profileKey = `user:${data.user?.id || ''}`;
     const existingProfile = data.user?.id ? await kv.get(profileKey) : null;
+    if (existingProfile?.accountDisabled) {
+      await supabase.auth.signOut();
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
+    }
     if (existingProfile) {
       await kv.set(profileKey, {
         ...existingProfile,
@@ -2505,7 +2320,7 @@ app.post('/admin/signin', async (c) => {
         lastAttemptAtMs: nowMs,
       };
       await kv.set(attemptsKey, nextState);
-      return c.json({ error: error?.message || 'Invalid admin credentials' }, 403);
+      return c.json({ error: 'Invalid admin credentials' }, 403);
     }
 
     const adminAccount = await kv.get(`admin:account:${data.user.id}`);
@@ -2571,30 +2386,23 @@ app.post('/admin/signin', async (c) => {
 app.get("/profile", async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
-    
-    console.log('=== Profile Request Debug ===');
-    console.log('Auth header present:', !!authHeader);
-    
+
     if (!authHeader) {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
-    console.log('Token length:', accessToken.length);
-    console.log('Token first 20 chars:', accessToken.substring(0, 20));
-    
+
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
     
     if (error) {
       console.error(`Authorization error while fetching profile: ${error}`);
-      return c.json({ error: "Unauthorized - Invalid token", code: 401, message: error }, 401);
+      return c.json({ error: "Unauthorized - Invalid token", code: 401 }, 401);
     }
 
     // Get user profile from KV store
-    const rawProfile = await kv.get(`user:${userId}`);
-    const reconciled = await reconcilePremiumProfitForUser(rawProfile);
-    const profile = reconciled.user;
+    const profile = await kv.get(`user:${userId}`);
     
     if (!profile) {
       const supabase = getServiceClient();
@@ -2612,8 +2420,9 @@ app.get("/profile", async (c) => {
         name: metadataName || metadataUsername || 'User',
         username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
         vipTier: 'Normal',
+        accountDisabled: false,
         balance: 0,
-        creditScore: 100,
+        principalBalance: 0,
         welcomeBonusGranted: false,
         dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
         extraTaskSets: 0,
@@ -2630,41 +2439,65 @@ app.get("/profile", async (c) => {
       };
       await kv.set(`user:${userId}`, newProfile);
       console.log('Created new profile for user:', userId);
-      return c.json({ success: true, profile: newProfile });
+      return c.json({
+        success: true,
+        profile: {
+          ...newProfile,
+          totalEarnings: 0,
+        },
+      });
     }
 
-    const profileAfterReconcile = profile;
-
     const requestLocation = await resolveBestRequestLocation(c);
-    const shouldBackfillLoginMetadata = !profileAfterReconcile?.lastLoginAt
-      || !profileAfterReconcile?.lastLoginIp
-      || String(profileAfterReconcile?.lastLoginIp || '').trim().toLowerCase() === 'unknown'
-      || !profileAfterReconcile?.lastLoginCountry
-      || String(profileAfterReconcile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
+    const shouldBackfillLoginMetadata = !profile?.lastLoginAt
+      || !profile?.lastLoginIp
+      || String(profile?.lastLoginIp || '').trim().toLowerCase() === 'unknown'
+      || !profile?.lastLoginCountry
+      || String(profile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
 
-    let effectiveProfile = profileAfterReconcile;
+    let effectiveProfile = profile;
     if (shouldBackfillLoginMetadata) {
       effectiveProfile = {
-        ...profileAfterReconcile,
-        lastLoginAt: profileAfterReconcile?.lastLoginAt || new Date().toISOString(),
-        lastLoginIp: requestLocation.ip || profileAfterReconcile?.lastLoginIp || 'unknown',
-        lastLoginCountry: requestLocation.country || profileAfterReconcile?.lastLoginCountry || 'Unknown',
-        creditScore: Number.isFinite(Number(profileAfterReconcile?.creditScore)) ? Number(profileAfterReconcile.creditScore) : 100,
+        ...profile,
+        lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
+        lastLoginIp: requestLocation.ip || profile?.lastLoginIp || 'unknown',
+        lastLoginCountry: requestLocation.country || profile?.lastLoginCountry || 'Unknown',
       };
       await kv.set(`user:${userId}`, effectiveProfile);
     }
 
-    if (!Number.isFinite(Number(effectiveProfile?.creditScore))) {
+    if (effectiveProfile?.accountDisabled) {
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
+    }
+
+    const profits = await kv.get(`profits:${userId}`) || {
+      totalEarned: 0,
+      fromDirectChildren: 0,
+      fromIndirectReferrals: 0,
+      byLevel: {},
+    };
+    const totalEarned = Number(profits?.totalEarned || 0);
+    const principalBalance = resolvePrincipalBalance(effectiveProfile, totalEarned);
+    const totalEarnings = computeTotalEarnings(effectiveProfile, totalEarned);
+
+    if (Number(effectiveProfile?.principalBalance ?? NaN) !== principalBalance) {
       effectiveProfile = {
         ...effectiveProfile,
-        creditScore: 100,
+        principalBalance,
       };
       await kv.set(`user:${userId}`, effectiveProfile);
     }
 
     console.log('Profile found for user:', userId);
     const { withdrawalPassword: _withdrawalPassword, ...safeProfile } = effectiveProfile;
-    return c.json({ success: true, profile: safeProfile });
+    return c.json({
+      success: true,
+      profile: {
+        ...safeProfile,
+        principalBalance,
+        totalEarnings,
+      },
+    });
   } catch (error) {
     console.error(`Error fetching profile: ${error}`);
     return c.json({ error: "Internal server error while fetching profile" }, 500);
@@ -2711,46 +2544,6 @@ app.put("/profile/contact-email", async (c) => {
   }
 });
 
-app.put('/profile/avatar-url', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - No token provided' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const { avatarUrl } = await c.req.json();
-    const normalizedAvatarUrl = String(avatarUrl || '').trim();
-    if (normalizedAvatarUrl.length > 300000) {
-      return c.json({ error: 'Avatar is too large. Keep it under 300KB.' }, 400);
-    }
-
-    const profileKey = `user:${userId}`;
-    const existingProfile = await kv.get(profileKey);
-    if (!existingProfile) {
-      return c.json({ error: 'User profile not found' }, 404);
-    }
-
-    const updatedProfile = {
-      ...existingProfile,
-      avatarUrl: normalizedAvatarUrl || null,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await kv.set(profileKey, updatedProfile);
-    const { withdrawalPassword: _withdrawalPassword, ...safeProfile } = updatedProfile;
-    return c.json({ success: true, profile: safeProfile });
-  } catch (error) {
-    console.error(`Error updating avatar URL: ${error}`);
-    return c.json({ error: 'Internal server error while updating avatar URL' }, 500);
-  }
-});
-
 // Get user metrics (protected route)
 app.get("/metrics", async (c) => {
   try {
@@ -2792,59 +2585,9 @@ app.get("/metrics", async (c) => {
   }
 });
 
-// Update VIP tier (protected route - for admin or self-service)
+// Update VIP tier is restricted to admin-only endpoints.
 app.put("/vip-tier", async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    
-    if (!authHeader) {
-      return c.json({ error: "Unauthorized - No token provided" }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '');
-    
-    // Verify JWT token
-    const { userId, error } = await verifyJWT(accessToken);
-    
-    if (error) {
-      console.error(`Authorization error while updating VIP tier: ${error}`);
-      return c.json({ error: "Unauthorized - Invalid token" }, 401);
-    }
-
-    const { vipTier } = await c.req.json();
-
-    if (!vipTier) {
-      return c.json({ error: "VIP tier is required" }, 400);
-    }
-
-    // Get current profile
-    const profile = await kv.get(`user:${userId}`);
-    
-    if (!profile) {
-      return c.json({ error: "Profile not found" }, 404);
-    }
-
-    const timestamp = new Date().toISOString();
-    const tierChanged = String(profile?.vipTier || '') !== String(vipTier);
-
-    // VIP change resets tier-based progress and commission counters, but keeps the main balance.
-    const updatedProfile = {
-      ...profile,
-      vipTier,
-      tierSetProgress: 0,
-      currentSetTasksCompleted: tierChanged ? 0 : Number(profile?.currentSetTasksCompleted ?? 0),
-      taskSetsCompletedToday: tierChanged ? 0 : Number(profile?.taskSetsCompletedToday ?? 0),
-      currentSetDate: tierChanged ? null : (profile?.currentSetDate ?? null),
-      vipTierResetAt: tierChanged ? timestamp : (profile?.vipTierResetAt ?? null),
-      updatedAt: timestamp,
-    };
-    await kv.set(`user:${userId}`, updatedProfile);
-
-    return c.json({ success: true, profile: updatedProfile });
-  } catch (error) {
-    console.error(`Error updating VIP tier: ${error}`);
-    return c.json({ error: "Internal server error while updating VIP tier" }, 500);
-  }
+  return c.json({ error: 'Forbidden - Use admin VIP management endpoint' }, 403);
 });
 
 // Admin: list users and platform metrics
@@ -2855,18 +2598,15 @@ app.get("/admin/users", async (c) => {
       return adminAccess.response;
     }
 
-    const permissions = adminAccess.permissions || [];
-
     if (!adminAccess.isSuperAdmin) {
-      const hasUsersAccess = permissions.includes(ADMIN_PERMISSION_ALL)
-        || permissions.includes('users.view')
-        || permissions.includes('users.adjust_balance')
-        || permissions.includes('users.assign_premium')
-        || permissions.includes('users.reset_password')
-        || permissions.includes('users.reset_tasks')
-        || permissions.includes('users.manage_task_limits')
-        || permissions.includes('users.unfreeze')
-        || permissions.includes('users.update_vip');
+      const hasUsersAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('users.view')
+        || adminAccess.permissions.includes('users.adjust_balance')
+        || adminAccess.permissions.includes('users.assign_premium')
+        || adminAccess.permissions.includes('users.reset_tasks')
+        || adminAccess.permissions.includes('users.manage_task_limits')
+        || adminAccess.permissions.includes('users.unfreeze')
+        || adminAccess.permissions.includes('users.update_vip');
       if (!hasUsersAccess) {
         return c.json({ error: 'Forbidden - Missing user management permission' }, 403);
       }
@@ -2875,35 +2615,19 @@ app.get("/admin/users", async (c) => {
     const scope = await getAdminScopeConfig(adminAccess);
 
     const rawUsers = await kv.getByPrefix('user:');
-    const reconciledUsers: any[] = [];
-    for (const user of (rawUsers ?? [])) {
-      const reconciled = await reconcilePremiumProfitForUser(user);
-      reconciledUsers.push(reconciled.user || user);
-    }
-
-    const users = reconciledUsers.map((user: any) => ({
+    const users = (rawUsers ?? []).map((user: any) => ({
       id: user?.id ?? '',
       email: user?.email ?? '',
       name: user?.name ?? 'User',
-      invitationCode: user?.invitationCode ?? '',
       lastLoginAt: user?.lastLoginAt ?? null,
       lastLoginCountry: user?.lastLoginCountry ?? null,
       lastLoginIp: user?.lastLoginIp ?? null,
       vipTier: user?.vipTier ?? 'Normal',
       balance: Number(user?.balance ?? 0),
-      creditScore: Number(user?.creditScore ?? 100),
+      accountDisabled: Boolean(user?.accountDisabled ?? false),
       productsSubmitted: Number(user?.productsSubmitted ?? 0),
       accountFrozen: Boolean(user?.accountFrozen ?? false),
       freezeAmount: Number(user?.freezeAmount ?? 0),
-      premiumAssignment: user?.premiumAssignment
-        ? {
-            orderId: user?.premiumAssignment?.orderId ?? null,
-            amount: Number(user?.premiumAssignment?.amount ?? 0),
-            enteredAmount: Number(user?.premiumAssignment?.enteredAmount ?? 0),
-            previousBalance: Number(user?.premiumAssignment?.previousBalance ?? 0),
-            topUpRequired: Number(user?.premiumAssignment?.topUpRequired ?? 0),
-          }
-        : null,
       dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
       extraTaskSets: Number(user?.extraTaskSets ?? 0),
       withdrawalLimit: Number(user?.withdrawalLimit ?? 0),
@@ -2914,7 +2638,16 @@ app.get("/admin/users", async (c) => {
       createdAt: user?.createdAt ?? new Date().toISOString(),
     }));
 
-    const scopedUsers = users.filter((user: any) => isUserInAdminScope(scope, user));
+    const usersWithEarnings = await Promise.all(users.map(async (user: any) => {
+      const totalEarnings = await resolveUserTotalEarnings(user);
+      return {
+        ...user,
+        totalEarnings,
+        frozenNegativeAmount: resolveFrozenNegativeAmount(user),
+      };
+    }));
+
+    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
     const sortedUsers = scopedUsers.sort((a: any, b: any) => {
       const bCreatedAt = new Date(b?.createdAt || 0).getTime();
       const aCreatedAt = new Date(a?.createdAt || 0).getTime();
@@ -2925,7 +2658,7 @@ app.get("/admin/users", async (c) => {
       totalUsers: sortedUsers.length,
       totalRevenue: sortedUsers.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
       totalTransactions: sortedUsers.reduce((sum: number, user: any) => sum + (Number(user.productsSubmitted) || 0), 0),
-      activeUsers: sortedUsers.filter((user: any) => !user.accountFrozen).length,
+      activeUsers: sortedUsers.filter((user: any) => !user.accountFrozen && !user.accountDisabled).length,
       frozenAccounts: sortedUsers.filter((user: any) => user.accountFrozen).length,
       totalCommissionsPaid: 0,
     };
@@ -2934,88 +2667,6 @@ app.get("/admin/users", async (c) => {
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
-  }
-});
-
-// Admin: reconcile premium profit credits for all users (idempotent)
-app.post('/admin/users/reconcile-premium-balances', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.adjust_balance');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const dryRun = Boolean(body?.dryRun ?? false);
-
-    const allUsers = await kv.getByPrefix('user:') || [];
-    let scannedUsers = 0;
-    let eligibleUsers = 0;
-    let updatedUsers = 0;
-    let totalPremiumProfitCredited = 0;
-
-    for (const user of allUsers) {
-      scannedUsers += 1;
-      const assignment = user?.premiumAssignment || null;
-      const encounteredAt = String(assignment?.encounteredAt || '').trim();
-      const isFrozen = Boolean(user?.accountFrozen ?? false);
-      const amount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
-      if (!assignment || !encounteredAt || isFrozen || amount <= 0) {
-        continue;
-      }
-
-      eligibleUsers += 1;
-
-      const creditHistory = Array.isArray(user?.premiumProfitCreditHistory)
-        ? user.premiumProfitCreditHistory.map((item: any) => String(item || '').trim()).filter(Boolean)
-        : [];
-      const creditKey = buildPremiumCreditKey(user);
-      if (creditHistory.includes(creditKey)) {
-        continue;
-      }
-
-      const premiumRate = getVipTaskCommissionRate(String(user?.vipTier || 'Normal')) * 12;
-      const premiumProfit = roundCurrency(amount * premiumRate);
-      if (premiumProfit <= 0) {
-        continue;
-      }
-
-      if (!dryRun) {
-        const reconciled = await reconcilePremiumProfitForUser(user);
-        if (reconciled.applied) {
-          updatedUsers += 1;
-          totalPremiumProfitCredited = roundCurrency(totalPremiumProfitCredited + reconciled.premiumProfit);
-        }
-      } else {
-        updatedUsers += 1;
-        totalPremiumProfitCredited = roundCurrency(totalPremiumProfitCredited + premiumProfit);
-      }
-    }
-
-    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
-      meta: {
-        action: 'reconcile_premium_balances',
-        dryRun,
-        scannedUsers,
-        eligibleUsers,
-        updatedUsers,
-        totalPremiumProfitCredited,
-      },
-    });
-
-    return c.json({
-      success: true,
-      dryRun,
-      summary: {
-        scannedUsers,
-        eligibleUsers,
-        updatedUsers,
-        totalPremiumProfitCredited,
-      },
-    });
-  } catch (error) {
-    console.error(`Error reconciling premium balances: ${error}`);
-    return c.json({ error: 'Internal server error while reconciling premium balances' }, 500);
   }
 });
 
@@ -3121,84 +2772,23 @@ app.post("/admin/unfreeze", async (c) => {
 
     const currentBalance = Number(user?.balance ?? 0);
     const freezeAmount = Number(user?.freezeAmount ?? 0);
-    const assignmentAmount = roundCurrency(Number(user?.premiumAssignment?.amount ?? user?.premiumAssignment?.enteredAmount ?? 0));
-    const previousBalance = roundCurrency(Number(user?.premiumAssignment?.previousBalance ?? currentBalance));
-    const creditedPremiumAmount = assignmentAmount > 0 ? assignmentAmount : freezeAmount;
-
-    // Calculate the 12× premium commission profit earned on this product
-    const vipTierForProfit = String(user?.vipTier || 'Normal');
-    const premiumCommissionRate = getVipTaskCommissionRate(vipTierForProfit) * 12;
-    const premiumProfit = creditedPremiumAmount > 0
-      ? roundCurrency(creditedPremiumAmount * premiumCommissionRate)
-      : 0;
-
-    const nextBalance = user?.accountFrozen
-      ? roundCurrency(previousBalance + creditedPremiumAmount + premiumProfit)
+    const premiumPreviousBalance = Number(user?.premiumAssignment?.previousBalance ?? NaN);
+    const calculatedBalance = user?.accountFrozen
+      ? currentBalance + freezeAmount
       : currentBalance;
+    const nextBalance = Number.isFinite(premiumPreviousBalance)
+      ? Math.max(calculatedBalance, premiumPreviousBalance)
+      : calculatedBalance;
 
-    const unfreezeDate = new Date().toISOString().slice(0, 10);
-    const existingTodayProfit = String(user?.todayProfitDate || '') === unfreezeDate
-      ? roundCurrency(Number(user?.todayProfit || 0))
-      : 0;
-    const newTodayProfit = roundCurrency(existingTodayProfit + premiumProfit);
-
-    const preservedTaskSetsCompletedToday = Number(user?.taskSetsCompletedToday ?? 0);
-    const preservedCurrentSetTasksCompleted = Number(user?.currentSetTasksCompleted ?? 0);
-    const preservedCurrentSetDate = user?.currentSetDate ?? null;
-    const preservedProductsSubmitted = Number(user?.productsSubmitted ?? 0);
-
-    // Update frozen product record → approved, with premium profit credited
-    if (premiumProfit > 0) {
-      try {
-        const productRows = await getKvRowsByPrefix(`product:${userId}:`);
-        const frozenRow = productRows.find((row: any) => row.value?.status === 'frozen');
-        if (frozenRow) {
-          await kv.set(frozenRow.key, {
-            ...frozenRow.value,
-            status: 'approved',
-            userEarned: premiumProfit,
-            submittedAt: new Date().toISOString(),
-          });
-          // Update profits record
-          const userProfits = await kv.get(`profits:${userId}`) || {
-            totalEarned: 0, fromDirectChildren: 0, fromIndirectReferrals: 0, byLevel: {},
-          };
-          userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + premiumProfit);
-          await kv.set(`profits:${userId}`, userProfits);
-        }
-      } catch (_err) {
-        // Non-fatal — balance update proceeds regardless
-      }
-    }
-
-    // Unfreeze should only release the hold and recalculate balances.
-    // Task/profit progression remains paused and resumes from the same point.
     const updatedUser = {
       ...user,
       accountFrozen: false,
       balance: nextBalance,
       freezeAmount: 0,
-      taskSetsCompletedToday: preservedTaskSetsCompletedToday,
-      currentSetTasksCompleted: preservedCurrentSetTasksCompleted,
-      currentSetDate: preservedCurrentSetDate,
-      productsSubmitted: preservedProductsSubmitted,
-      todayProfit: newTodayProfit,
-      todayProfitDate: unfreezeDate,
       unfrozenAt: new Date().toISOString(),
     };
 
     await kv.set(key, updatedUser);
-
-    await writeAdminAuditLog('users.unfreeze', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        previousBalance: currentBalance,
-        freezeAmount,
-        creditedPremiumAmount,
-        premiumProfit,
-        nextBalance,
-      },
-    });
 
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
@@ -3207,7 +2797,7 @@ app.post("/admin/unfreeze", async (c) => {
   }
 });
 
-// Admin: assign premium deficit product to a user
+// Admin: assign premium product to a user
 app.post("/admin/premium", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -3217,7 +2807,7 @@ app.post("/admin/premium", async (c) => {
 
     const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'premium.assign', 20, 10 * 60 * 1000);
     if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for premium deficit assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const { userId, amount, position, productId } = await c.req.json();
@@ -3264,16 +2854,16 @@ app.post("/admin/premium", async (c) => {
       : null;
 
     if (normalizedProductId && !assignedProduct) {
-      return c.json({ error: 'Selected deficit product was not found in catalog' }, 400);
+      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
     }
 
     const currentBalance = Number(user?.balance ?? 0);
     const bundleDetails = buildPremiumBundleDetails(premiumAmount);
     const bundleTotal = Number(bundleDetails.bundleTotal || 0);
-    const vipPremiumRate = 0;
-    const potentialPremiumProfit = 0;
-    const balanceAfterAssignment = roundCurrency(-Math.abs(bundleTotal));
-    const projectedTopUpRequired = Math.abs(bundleTotal);
+    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const updatedUser = {
@@ -3314,7 +2904,7 @@ app.post("/admin/premium", async (c) => {
         boostedCommission: potentialPremiumProfit,
         potentialProfit: potentialPremiumProfit,
         frozen: false,
-        willFreezeOnEncounter: true,
+        willFreezeOnEncounter: projectedTopUpRequired > 0,
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
@@ -3323,8 +2913,8 @@ app.post("/admin/premium", async (c) => {
       },
     });
   } catch (error) {
-    console.error(`Error assigning premium deficit product: ${error}`);
-    return c.json({ error: 'Internal server error while assigning premium deficit product' }, 500);
+    console.error(`Error assigning premium product: ${error}`);
+    return c.json({ error: 'Internal server error while assigning premium product' }, 500);
   }
 });
 
@@ -3357,29 +2947,14 @@ app.put("/admin/vip-tier", async (c) => {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
-    const timestamp = new Date().toISOString();
-    const tierChanged = String(user?.vipTier || '') !== String(vipTier);
-
     const updatedUser = {
       ...user,
       vipTier,
       tierSetProgress: 0,
-      currentSetTasksCompleted: tierChanged ? 0 : Number(user?.currentSetTasksCompleted ?? 0),
-      taskSetsCompletedToday: tierChanged ? 0 : Number(user?.taskSetsCompletedToday ?? 0),
-      currentSetDate: tierChanged ? null : (user?.currentSetDate ?? null),
-      vipTierResetAt: tierChanged ? timestamp : (user?.vipTierResetAt ?? null),
-      updatedAt: timestamp,
+      updatedAt: new Date().toISOString(),
     };
 
     await kv.set(key, updatedUser);
-
-    await writeAdminAuditLog('users.update_vip', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        previousVipTier: String(user?.vipTier || 'Normal'),
-        nextVipTier: String(vipTier),
-      },
-    });
 
     return c.json({ success: true, user: updatedUser });
   } catch (error) {
@@ -3388,7 +2963,7 @@ app.put("/admin/vip-tier", async (c) => {
   }
 });
 
-// Admin: list all premium deficit assignments
+// Admin: list all premium assignments
 app.get("/admin/premium/list", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -3419,12 +2994,12 @@ app.get("/admin/premium/list", async (c) => {
       assignments: premiumAssignments,
     });
   } catch (error) {
-    console.error(`Error listing premium deficit assignments: ${error}`);
-    return c.json({ error: 'Internal server error while listing premium deficit assignments' }, 500);
+    console.error(`Error listing premium assignments: ${error}`);
+    return c.json({ error: 'Internal server error while listing premium assignments' }, 500);
   }
 });
 
-// Admin: revoke premium deficit assignment from a user
+// Admin: revoke premium assignment from a user
 app.post("/admin/premium/revoke", async (c) => {
   try {
     const adminCheck = await requireAdminKey(c);
@@ -3444,7 +3019,7 @@ app.post("/admin/premium/revoke", async (c) => {
     }
 
     if (!user?.premiumAssignment) {
-      return c.json({ error: 'User has no active premium deficit assignment' }, 400);
+      return c.json({ error: 'User has no active premium assignment' }, 400);
     }
 
     const oldAssignment = user.premiumAssignment;
@@ -3463,12 +3038,12 @@ app.post("/admin/premium/revoke", async (c) => {
 
     return c.json({
       success: true,
-      message: `Premium deficit assignment revoked for user ${userId}`,
+      message: `Premium assignment revoked for user ${userId}`,
       user: updatedUser,
     });
   } catch (error) {
-    console.error(`Error revoking premium deficit assignment: ${error}`);
-    return c.json({ error: 'Internal server error while revoking premium deficit assignment' }, 500);
+    console.error(`Error revoking premium assignment: ${error}`);
+    return c.json({ error: 'Internal server error while revoking premium assignment' }, 500);
   }
 });
 
@@ -3556,15 +3131,17 @@ app.post('/admin/task-products', async (c) => {
     if (!name) {
       return c.json({ error: 'name is required' }, 400);
     }
+    if (!isValidTaskProductImageUrl(image)) {
+      return c.json({ error: 'A valid image URL (http/https) is required' }, 400);
+    }
 
     const products = await getTaskProductCatalog();
     const timestamp = new Date().toISOString();
-    const fallbackImage = TASK_PRODUCT_IMAGE_POOL[products.length % TASK_PRODUCT_IMAGE_POOL.length];
 
     const newProduct = {
       id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       name,
-      image: image || fallbackImage,
+      image,
       isActive,
       isArchived: false,
       isPremiumTemplate,
@@ -3626,10 +3203,20 @@ app.put('/admin/task-products/:productId', async (c) => {
     }
 
     const target = products[targetIndex];
+    const candidateName = body?.name !== undefined ? String(body.name || '').trim() : String(target.name || '').trim();
+    const candidateImage = body?.image !== undefined ? String(body.image || '').trim() : String(target.image || '').trim();
+
+    if (!candidateName) {
+      return c.json({ error: 'name cannot be empty' }, 400);
+    }
+    if (!isValidTaskProductImageUrl(candidateImage)) {
+      return c.json({ error: 'A valid image URL (http/https) is required' }, 400);
+    }
+
     const updated = {
       ...target,
-      name: body?.name !== undefined ? String(body.name || '').trim() || target.name : target.name,
-      image: body?.image !== undefined ? String(body.image || '').trim() || target.image : target.image,
+      name: candidateName,
+      image: candidateImage,
       isActive: body?.isActive !== undefined ? Boolean(body.isActive) : target.isActive,
       isPremiumTemplate: body?.isPremiumTemplate !== undefined ? Boolean(body.isPremiumTemplate) : target.isPremiumTemplate,
       updatedAt: new Date().toISOString(),
@@ -3743,17 +3330,23 @@ app.get('/tasks/next-product', async (c) => {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
+    if (userProfile?.accountDisabled) {
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
+    }
+
     if (userProfile?.accountFrozen) {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
     }
 
-    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const vipTier = String(userProfile?.vipTier || 'Normal');
+    const minimumRequiredBalance = getMinimumRequiredBalanceForVip(vipTier);
     const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-    if (currentBalance < requiredMinimumBalance) {
+    if (currentBalance < minimumRequiredBalance) {
       return c.json({
-        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
-        requiredMinimumBalance,
+        error: `Minimum balance of $${minimumRequiredBalance.toFixed(2)} is required for ${vipTier} task submission`,
+        minimumRequiredBalance,
         currentBalance,
+        vipTier,
       }, 403);
     }
 
@@ -3792,51 +3385,8 @@ app.get('/tasks/next-product', async (c) => {
       }, 409);
     }
 
-    // Reuse an existing pending task first, so users don't accumulate duplicate in-progress rows.
-    const existingRows = await getKvRowsByPrefix(`product:${userId}:`);
-    const existingPending = existingRows
-      .map((row) => row.value)
-      .find((item: any) => item && String(item?.status || '').toLowerCase() === 'pending');
-
-    if (existingPending) {
-      return c.json({
-        success: true,
-        product: {
-          name: String(existingPending?.productName || 'Task Product'),
-          image: String(existingPending?.productImage || TASK_PRODUCT_IMAGE_POOL[0]),
-          totalAmount: Number(existingPending?.productValue || 0),
-          profit: Number(existingPending?.expectedProfit || existingPending?.userEarned || 0),
-          creationTime: formatTaskTimestamp(new Date(String(existingPending?.submittedAt || existingPending?.createdAt || new Date().toISOString()))),
-          ratingNo: String(existingPending?.taskToken || existingPending?.ratingNo || Math.random().toString(36).substring(2, 12)),
-        },
-        taskState: {
-          ...normalizedTaskState,
-          nextTaskNumber: normalizedTaskState.currentSetTasksCompleted + 1,
-          maxSetsForToday,
-          remainingSets: Math.max(0, maxSetsForToday - normalizedTaskState.taskSetsCompletedToday),
-        },
-      });
-    }
-
     const nextTaskNumber = normalizedTaskState.currentSetTasksCompleted + 1;
     const product = await buildNextTaskProduct(userProfile, nextTaskNumber);
-
-    const pendingKey = `product:${userId}:${Date.now()}`;
-    const pendingTimestamp = new Date().toISOString();
-    await kv.set(pendingKey, {
-      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      userId,
-      productName: String(product?.name || 'Task Product'),
-      productImage: String(product?.image || TASK_PRODUCT_IMAGE_POOL[0]),
-      productValue: Number(product?.totalAmount || 0),
-      expectedProfit: Number(product?.profit || 0),
-      userEarned: 0,
-      taskToken: String(product?.ratingNo || ''),
-      commissionsCascade: [],
-      status: 'pending',
-      submittedAt: pendingTimestamp,
-      createdAt: pendingTimestamp,
-    });
 
     return c.json({
       success: true,
@@ -3856,6 +3406,8 @@ app.get('/tasks/next-product', async (c) => {
 
 // Submit product with profit sharing (protected route)
 app.post("/submit-product", async (c) => {
+  let idempotencyStoreKey = '';
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     
@@ -3873,20 +3425,29 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const { productName, productValue, productImage, ratingNo } = await c.req.json();
+    const { productName, productValue } = await c.req.json();
     const normalizedName = String(productName || '').trim();
     const normalizedValue = Number(productValue || 0);
-    const normalizedImage = String(productImage || '').trim() || TASK_PRODUCT_IMAGE_POOL[0];
-    const normalizedRatingNo = String(ratingNo || '').trim();
 
     if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: "Product name and positive value are required" }, 400);
+    }
+
+    const idempotencyKey = getIdempotencyKey(c) || `auto-submit-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     // Get user profile
     const userProfile = await kv.get(`user:${userId}`);
     if (!userProfile) {
       return c.json({ error: "User profile not found" }, 404);
+    }
+
+    if (userProfile?.accountDisabled) {
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
     }
 
     const todayDate = new Date().toISOString().slice(0, 10);
@@ -3930,14 +3491,38 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
     }
 
-    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const vipTier = String(userProfile?.vipTier || 'Normal');
+    const minimumRequiredBalance = getMinimumRequiredBalanceForVip(vipTier);
     const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-    if (currentBalance < requiredMinimumBalance) {
+    if (currentBalance < minimumRequiredBalance) {
       return c.json({
-        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
-        requiredMinimumBalance,
+        error: `Minimum balance of $${minimumRequiredBalance.toFixed(2)} is required for ${vipTier} task submission`,
+        minimumRequiredBalance,
         currentBalance,
+        vipTier,
       }, 403);
+    }
+
+    const idempotencyFingerprint = JSON.stringify({
+      userId,
+      productName: normalizedName,
+      productValue: normalizedValue,
+      currentSetDate: normalizedTaskState.currentSetDate,
+      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
+    });
+    idempotencyStoreKey = buildIdempotencyStoreKey('tasks.submit_product', String(userId), idempotencyKey);
+    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
+    if (idempotencyState.state === 'conflict') {
+      return c.json({ error: 'Idempotency-Key conflict for different submit-product payload' }, 409);
+    }
+    if (idempotencyState.state === 'in_progress') {
+      return c.json({ error: 'Duplicate submit-product request is already in progress' }, 409);
+    }
+    if (idempotencyState.state === 'replay') {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+        'Idempotent-Replay': 'true',
+        'Idempotency-Key': idempotencyKey,
+      });
     }
 
     const activePremiumAssignment = userProfile?.premiumAssignment || null;
@@ -3956,8 +3541,8 @@ app.post("/submit-product", async (c) => {
     if (shouldTriggerPremiumEncounter) {
       const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const topUpRequired = roundCurrency(Math.abs(bundleTotal));
-      const balanceAfterEncounter = roundCurrency(-topUpRequired);
+      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
       const encounteredAt = new Date().toISOString();
 
       const updatedAssignment = {
@@ -3972,44 +3557,47 @@ app.post("/submit-product", async (c) => {
 
       effectivePremiumAssignment = updatedAssignment;
 
-      const frozenProfile = {
-        ...userProfile,
-        premiumAssignment: updatedAssignment,
-        accountFrozen: true,
-        freezeAmount: topUpRequired,
-        balance: balanceAfterEncounter,
-        updatedAt: encounteredAt,
-      };
-
-      await kv.set(`user:${userId}`, frozenProfile);
-      await kv.set(`product:${userId}:${Date.now()}`, {
-        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        userId,
-        productName: normalizedName,
-        productImage: normalizedImage,
-        productValue: normalizedValue,
-        userEarned: 0,
-        taskToken: normalizedRatingNo || null,
-        commissionsCascade: [],
-        status: 'frozen',
-        submittedAt: encounteredAt,
-      });
-
-      return c.json({
-        error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
-        premiumEncounter: {
-          orderId: updatedAssignment.orderId || null,
-          position: premiumPosition,
-          topUpRequired,
-          amount: bundleTotal,
-        },
-        user: {
+      if (balanceAfterEncounter < 0) {
+        const frozenProfile = {
+          ...userProfile,
+          premiumAssignment: updatedAssignment,
           accountFrozen: true,
           freezeAmount: topUpRequired,
           balance: balanceAfterEncounter,
-          premiumAssignment: updatedAssignment,
-        },
-      }, 403);
+          updatedAt: encounteredAt,
+        };
+
+        await kv.set(`user:${userId}`, frozenProfile);
+        await kv.set(`product:${userId}:${Date.now()}`, {
+          id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          userId,
+          productName: normalizedName,
+          productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
+          productValue: normalizedValue,
+          userEarned: 0,
+          commissionsCascade: [],
+          status: 'frozen',
+          submittedAt: encounteredAt,
+        });
+
+        return c.json({
+          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+          premiumEncounter: {
+            orderId: updatedAssignment.orderId || null,
+            position: premiumPosition,
+            topUpRequired,
+            amount: bundleTotal,
+          },
+          user: {
+            accountFrozen: true,
+            freezeAmount: topUpRequired,
+            balance: balanceAfterEncounter,
+            premiumAssignment: updatedAssignment,
+          },
+        }, 403);
+      }
+
+      currentBalanceForProfit = balanceAfterEncounter;
     }
 
     // Calculate profit distribution
@@ -4042,7 +3630,7 @@ app.post("/submit-product", async (c) => {
 
     // Multi-level commission cascade
     let currentParentId = userProfile.parentUserId;
-    let commissionAmount = normalizedValue * 0.2; // Start with 20% for direct parent
+    let commissionAmount = productValue * 0.2; // Start with 20% for direct parent
     let level = 1;
     const commissionLog = [];
 
@@ -4111,15 +3699,13 @@ app.post("/submit-product", async (c) => {
     await kv.set(`product:${userId}:${Date.now()}`, {
       userId,
       productName: normalizedName,
-      productImage: normalizedImage,
       productValue: normalizedValue,
       userEarned: profitAmount,
-      taskToken: normalizedRatingNo || null,
       commissionsCascade: commissionLog,
       submittedAt: new Date().toISOString(),
     });
 
-    return c.json({
+    const responseBody = {
       success: true,
       product: {
         name: normalizedName,
@@ -4138,14 +3724,28 @@ app.post("/submit-product", async (c) => {
         maxSetsForToday,
         remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
       },
+    };
+
+    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
+    return c.json(responseBody, 200, {
+      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
+    if (idempotencyStoreKey) {
+      await kv.del(idempotencyStoreKey).catch(() => undefined);
+    }
     console.error(`Error submitting product: ${error}`);
     return c.json({ error: "Internal server error while submitting product" }, 500);
+  } finally {
+    if (releaseFinancialLock) {
+      await releaseFinancialLock().catch(() => undefined);
+    }
   }
 });
 
 app.post('/tasks/complete-product', async (c) => {
+  let idempotencyStoreKey = '';
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader) {
@@ -4158,15 +3758,19 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
     }
 
-    const { productName, productValue, profit, productImage, ratingNo } = await c.req.json();
+    const { productName, productValue } = await c.req.json();
     const normalizedName = String(productName || '').trim();
     const normalizedValue = Number(productValue || 0);
-    const normalizedProfit = Number(profit || 0);
-    const normalizedImage = String(productImage || '').trim() || TASK_PRODUCT_IMAGE_POOL[0];
-    const normalizedRatingNo = String(ratingNo || '').trim();
 
     if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: 'productName and productValue are required' }, 400);
+    }
+
+    const idempotencyKey = getIdempotencyKey(c) || `auto-complete-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const userProfile = await kv.get(`user:${userId}`);
@@ -4174,17 +3778,23 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
+    if (userProfile?.accountDisabled) {
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
+    }
+
     if (userProfile?.accountFrozen) {
       return c.json({ error: 'Account is frozen. Contact customer service to continue.' }, 403);
     }
 
-    const requiredMinimumBalance = getMinimumBalanceByTier(String(userProfile?.vipTier || 'Normal'));
+    const vipTier = String(userProfile?.vipTier || 'Normal');
+    const minimumRequiredBalance = getMinimumRequiredBalanceForVip(vipTier);
     const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-    if (currentBalance < requiredMinimumBalance) {
+    if (currentBalance < minimumRequiredBalance) {
       return c.json({
-        error: `Minimum balance requirement not met for ${String(userProfile?.vipTier || 'Normal')} tier.`,
-        requiredMinimumBalance,
+        error: `Minimum balance of $${minimumRequiredBalance.toFixed(2)} is required for ${vipTier} task submission`,
+        minimumRequiredBalance,
         currentBalance,
+        vipTier,
       }, 403);
     }
 
@@ -4223,6 +3833,28 @@ app.post('/tasks/complete-product', async (c) => {
       }, 409);
     }
 
+    const idempotencyFingerprint = JSON.stringify({
+      userId,
+      productName: normalizedName,
+      productValue: normalizedValue,
+      currentSetDate: normalizedTaskState.currentSetDate,
+      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
+    });
+    idempotencyStoreKey = buildIdempotencyStoreKey('tasks.complete_product', String(userId), idempotencyKey);
+    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
+    if (idempotencyState.state === 'conflict') {
+      return c.json({ error: 'Idempotency-Key conflict for different complete-product payload' }, 409);
+    }
+    if (idempotencyState.state === 'in_progress') {
+      return c.json({ error: 'Duplicate complete-product request is already in progress' }, 409);
+    }
+    if (idempotencyState.state === 'replay') {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+        'Idempotent-Replay': 'true',
+        'Idempotency-Key': idempotencyKey,
+      });
+    }
+
     const activePremiumAssignment = userProfile?.premiumAssignment || null;
     let effectivePremiumAssignment = activePremiumAssignment;
     let currentBalanceForProfit = roundCurrency(Number(userProfile?.balance ?? 0));
@@ -4239,8 +3871,8 @@ app.post('/tasks/complete-product', async (c) => {
     if (shouldTriggerPremiumEncounter) {
       const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const topUpRequired = roundCurrency(Math.abs(bundleTotal));
-      const balanceAfterEncounter = roundCurrency(-topUpRequired);
+      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
       const encounteredAt = new Date().toISOString();
 
       const updatedAssignment = {
@@ -4255,85 +3887,39 @@ app.post('/tasks/complete-product', async (c) => {
 
       effectivePremiumAssignment = updatedAssignment;
 
-      const frozenProfile = {
-        ...userProfile,
-        premiumAssignment: updatedAssignment,
-        accountFrozen: true,
-        freezeAmount: topUpRequired,
-        balance: balanceAfterEncounter,
-        updatedAt: encounteredAt,
-      };
-
-      await kv.set(`user:${userId}`, frozenProfile);
-
-      // Promote an existing pending row to frozen, or create one if missing.
-      const pendingRows = await getKvRowsByPrefix(`product:${userId}:`);
-      const matchingPending = pendingRows.find((row: any) => {
-        const value = row?.value || {};
-        if (String(value?.status || '').toLowerCase() !== 'pending') return false;
-        if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
-        return String(value?.productName || '') === normalizedName
-          && Number(value?.productValue || 0) === normalizedValue;
-      });
-
-      if (matchingPending) {
-        await kv.set(matchingPending.key, {
-          ...matchingPending.value,
-          productName: normalizedName,
-          productImage: normalizedImage,
-          productValue: normalizedValue,
-          expectedProfit: normalizedProfit > 0
-            ? roundCurrency(normalizedProfit)
-            : roundCurrency(Number(matchingPending.value?.expectedProfit || 0)),
-          taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
-          userEarned: 0,
-          status: 'frozen',
-          submittedAt: encounteredAt,
-          updatedAt: encounteredAt,
-        });
-      } else {
-        await kv.set(`product:${userId}:${Date.now()}`, {
-          id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          userId,
-          productName: normalizedName,
-          productImage: normalizedImage,
-          productValue: normalizedValue,
-          expectedProfit: normalizedProfit > 0
-            ? roundCurrency(normalizedProfit)
-            : roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')) * 12),
-          userEarned: 0,
-          taskToken: normalizedRatingNo || null,
-          commissionsCascade: [],
-          status: 'frozen',
-          submittedAt: encounteredAt,
-        });
-      }
-
-      return c.json({
-        error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
-        premiumEncounter: {
-          orderId: updatedAssignment.orderId || null,
-          position: premiumPosition,
-          topUpRequired,
-          amount: bundleTotal,
-        },
-        user: {
+      if (balanceAfterEncounter < 0) {
+        const frozenProfile = {
+          ...userProfile,
+          premiumAssignment: updatedAssignment,
           accountFrozen: true,
           freezeAmount: topUpRequired,
           balance: balanceAfterEncounter,
-          premiumAssignment: updatedAssignment,
-        },
-      }, 403);
+          updatedAt: encounteredAt,
+        };
+
+        await kv.set(`user:${userId}`, frozenProfile);
+
+        return c.json({
+          error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
+          premiumEncounter: {
+            orderId: updatedAssignment.orderId || null,
+            position: premiumPosition,
+            topUpRequired,
+            amount: bundleTotal,
+          },
+          user: {
+            accountFrozen: true,
+            freezeAmount: topUpRequired,
+            balance: balanceAfterEncounter,
+            premiumAssignment: updatedAssignment,
+          },
+        }, 403);
+      }
+
+      currentBalanceForProfit = balanceAfterEncounter;
     }
 
-    const expectedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
-    const appliedProfit = Number.isFinite(normalizedProfit) && normalizedProfit > 0 ? roundCurrency(normalizedProfit) : expectedProfit;
-
-    // Accumulate today's profit (reset to 0 when the date changes)
-    const existingTodayProfit = String(userProfile?.todayProfitDate || '') === todayDate
-      ? roundCurrency(Number(userProfile?.todayProfit || 0))
-      : 0;
-    const newTodayProfit = roundCurrency(existingTodayProfit + appliedProfit);
+    const appliedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
 
     const updatedProfile = {
       ...userProfile,
@@ -4345,8 +3931,6 @@ app.post('/tasks/complete-product', async (c) => {
       taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
       currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
       currentSetDate: todayDate,
-      todayProfit: newTodayProfit,
-      todayProfitDate: todayDate,
       lastCompletedTaskAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -4361,46 +3945,20 @@ app.post('/tasks/complete-product', async (c) => {
     };
     userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + appliedProfit);
     await kv.set(`profits:${userId}`, userProfits);
+    const totalEarnings = computeTotalEarnings(updatedProfile, Number(userProfits.totalEarned || 0));
 
     const submittedAt = new Date().toISOString();
-    const pendingRows = await getKvRowsByPrefix(`product:${userId}:`);
-    const matchingPending = pendingRows.find((row: any) => {
-      const value = row?.value || {};
-      if (String(value?.status || '').toLowerCase() !== 'pending') return false;
-      if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
-      return String(value?.productName || '') === normalizedName
-        && Number(value?.productValue || 0) === normalizedValue;
+    await kv.set(`product:${userId}:${Date.now()}`, {
+      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      productName: normalizedName,
+      productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
+      productValue: normalizedValue,
+      userEarned: appliedProfit,
+      commissionsCascade: [],
+      status: 'approved',
+      submittedAt,
     });
-
-    if (matchingPending) {
-      await kv.set(matchingPending.key, {
-        ...matchingPending.value,
-        productName: normalizedName,
-        productImage: normalizedImage,
-        productValue: normalizedValue,
-        expectedProfit: appliedProfit,
-        userEarned: appliedProfit,
-        taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
-        commissionsCascade: [],
-        status: 'approved',
-        submittedAt,
-        updatedAt: submittedAt,
-      });
-    } else {
-      await kv.set(`product:${userId}:${Date.now()}`, {
-        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        userId,
-        productName: normalizedName,
-        productImage: normalizedImage,
-        productValue: normalizedValue,
-        expectedProfit: appliedProfit,
-        userEarned: appliedProfit,
-        taskToken: normalizedRatingNo || null,
-        commissionsCascade: [],
-        status: 'approved',
-        submittedAt,
-      });
-    }
 
     const currentSetDone = updatedProfile.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
     if (currentSetDone) {
@@ -4417,14 +3975,17 @@ app.post('/tasks/complete-product', async (c) => {
       await kv.set(`admin:reset-alerts:${userId}`, existingAlerts.slice(-50));
     }
 
-    return c.json({
+    const responseBody = {
       success: true,
       result: {
         productName: normalizedName,
         productValue: normalizedValue,
         profit: appliedProfit,
       },
-      user: updatedProfile,
+      user: {
+        ...updatedProfile,
+        totalEarnings,
+      },
       taskState: {
         dailyTaskSetLimit: updatedProfile.dailyTaskSetLimit,
         extraTaskSets: updatedProfile.extraTaskSets,
@@ -4437,10 +3998,22 @@ app.post('/tasks/complete-product', async (c) => {
         setCompleted: currentSetDone,
       },
       resetRequired: currentSetDone,
+    };
+
+    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
+    return c.json(responseBody, 200, {
+      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
+    if (idempotencyStoreKey) {
+      await kv.del(idempotencyStoreKey).catch(() => undefined);
+    }
     console.error(`Error completing product task: ${error}`);
     return c.json({ error: 'Internal server error while completing product task' }, 500);
+  } finally {
+    if (releaseFinancialLock) {
+      await releaseFinancialLock().catch(() => undefined);
+    }
   }
 });
 
@@ -4562,8 +4135,6 @@ app.get('/records', async (c) => {
 
     // Get submitted/frozen records
     const products = await kv.getByPrefix(`product:${userId}:`);
-    const vipTier = String(userProfile?.vipTier || 'Normal');
-    const baseRate = getVipTaskCommissionRate(vipTier);
     const backendRecords = (products || [])
       .filter((item: any) => item)
       .map((item: any, index: number) => {
@@ -4575,34 +4146,13 @@ app.get('/records', async (c) => {
         const status = (rawStatus === 'pending' || rawStatus === 'frozen' || rawStatus === 'approved')
           ? rawStatus
           : 'approved';
-        const totalAmount = Number(item?.productValue || item?.value || item?.totalAmount || 0);
-        const expectedProfit = roundCurrency(Number(item?.expectedProfit || 0));
-        const realizedProfit = roundCurrency(Number(item?.userEarned || item?.profit || 0));
-        const displayProfit = status === 'approved'
-          ? (realizedProfit > 0 ? realizedProfit : expectedProfit)
-          : expectedProfit;
-        const regularProfit = roundCurrency(totalAmount * baseRate);
-        const inferredMultiplier = totalAmount > 0 && regularProfit > 0
-          ? Math.max(1, Math.round((displayProfit || expectedProfit || 0) / regularProfit))
-          : 1;
-        const multiplier = inferredMultiplier >= 12 ? 12 : 1;
-        const appliedRate = roundCurrency(baseRate * multiplier * 100);
-        const profitCalculation = totalAmount > 0
-          ? multiplier > 1
-            ? `$${totalAmount.toFixed(2)} x ${(baseRate * 100).toFixed(2)}% x ${multiplier} = $${displayProfit.toFixed(2)}`
-            : `$${totalAmount.toFixed(2)} x ${appliedRate.toFixed(2)}% = $${displayProfit.toFixed(2)}`
-          : 'Waiting for product assignment';
         return {
           id: String(item?.id || `record_${index}_${safeDate.getTime()}`),
           timestamp,
           productName: String(item?.productName || item?.name || 'Product Task'),
           productImage: String(item?.productImage || item?.image || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
-          totalAmount,
-          profit: displayProfit,
-          expectedProfit,
-          commissionRate: baseRate,
-          multiplier,
-          profitCalculation,
+          totalAmount: Number(item?.productValue || item?.value || item?.totalAmount || 0),
+          profit: roundCurrency(Number(item?.userEarned || item?.profit || 0)),
           status,
           submittedAt: safeDate.toISOString(),
         };
@@ -4614,47 +4164,7 @@ app.get('/records', async (c) => {
       return bTime - aTime;
     });
 
-    // Add virtual pending rows for tasks remaining in the current set so
-    // users can see in-progress workload before each submission is started.
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const taskState = buildTaskState(userProfile);
-    const normalizedTaskState = taskState.currentSetDate === todayDate
-      ? taskState
-      : {
-          ...taskState,
-          taskSetsCompletedToday: 0,
-          currentSetTasksCompleted: 0,
-          currentSetDate: todayDate,
-        };
-    const pendingCountFromRecords = sortedRecords.filter((item: any) => String(item?.status || '').toLowerCase() === 'pending').length;
-    const remainingInSet = Math.max(0, Number(normalizedTaskState.tasksPerSet || 0) - Number(normalizedTaskState.currentSetTasksCompleted || 0));
-    const virtualPendingNeeded = Math.max(0, remainingInSet - pendingCountFromRecords);
-
-    const catalog = await getTaskProductCatalog();
-    const virtualPending = Array.from({ length: virtualPendingNeeded }).map((_, index) => {
-      const fallbackCatalogItem = catalog[index % Math.max(1, catalog.length)] || {};
-      const now = new Date();
-      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-      const taskNumber = Number(normalizedTaskState.currentSetTasksCompleted || 0) + index + 1;
-      return {
-        id: `virtual_pending_${userId}_${taskNumber}`,
-        timestamp: ts,
-        productName: `Task #${taskNumber} Pending Submission`,
-        productImage: String(fallbackCatalogItem?.image || TASK_PRODUCT_IMAGE_POOL[index % TASK_PRODUCT_IMAGE_POOL.length]),
-        totalAmount: 0,
-        profit: 0,
-        expectedProfit: 0,
-        commissionRate: baseRate,
-        multiplier: 1,
-        profitCalculation: 'Waiting for product assignment',
-        status: 'pending',
-        submittedAt: now.toISOString(),
-      };
-    });
-
-    const finalRecords = [...virtualPending, ...sortedRecords];
-
-    return c.json({ success: true, records: finalRecords });
+    return c.json({ success: true, records: sortedRecords });
   } catch (error) {
     console.error(`Error fetching records: ${error}`);
     return c.json({ error: 'Internal server error while fetching records' }, 500);
@@ -4745,11 +4255,6 @@ app.get("/earnings", async (c) => {
     const childCount = profile?.childCount || 0;
     const totalFromChildren = referrals?.reduce((sum: number, ref: any) => sum + (ref?.totalSharedProfit || 0), 0) || 0;
 
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const todayProfit = String(profile?.todayProfitDate || '') === todayDate
-      ? roundCurrency(Number(profile?.todayProfit || 0))
-      : 0;
-
     return c.json({
       success: true,
       earnings: {
@@ -4759,7 +4264,6 @@ app.get("/earnings", async (c) => {
         fromIndirectReferrals: profits?.fromIndirectReferrals || 0,
         childCount,
         totalFromChildren,
-        todayProfit,
         parentUserId: profile?.parentUserId || null,
       },
     });
@@ -4812,6 +4316,13 @@ app.get("/referrals", async (c) => {
 
 // Request withdrawal (protected route)
 app.post("/request-withdrawal", async (c) => {
+  let idempotencyStoreKey = '';
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
+  let operationId = '';
+  let reservedUserId = '';
+  let balanceBeforeReserve: number | null = null;
+  let createdWithdrawalId = '';
+  let queuedPending = false;
   try {
     const authHeader = c.req.header('Authorization');
     
@@ -4829,16 +4340,42 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const { amount, withdrawalPassword } = await c.req.json();
+    const withdrawalRateLimit = await enforcePublicRateLimit(
+      c,
+      'finance.request_withdrawal',
+      6,
+      10 * 60 * 1000,
+      `${userId}:${getRequesterIp(c)}`,
+    );
+    if (!withdrawalRateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for withdrawal requests. Try again in ${withdrawalRateLimit.retryAfterSec}s.` }, 429);
+    }
 
-    if (!amount || amount <= 0) {
+    const { amount, withdrawalPassword } = await c.req.json();
+    const requestedAmount = Number(amount);
+
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
       return c.json({ error: "Withdrawal amount must be positive" }, 400);
+    }
+
+    const idempotencyKey = getIdempotencyKey(c);
+    if (!idempotencyKey) {
+      return c.json({ error: 'Idempotency-Key header is required' }, 400);
+    }
+
+    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     // Get user profile
     const userProfile = await kv.get(`user:${userId}`);
     if (!userProfile) {
       return c.json({ error: "User profile not found" }, 404);
+    }
+
+    if (userProfile?.accountDisabled) {
+      return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
     }
 
     const todayDate = new Date().toISOString().slice(0, 10);
@@ -4855,7 +4392,18 @@ app.post("/request-withdrawal", async (c) => {
     const completedSetsToday = normalizedTaskState.taskSetsCompletedToday
       + (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet ? 1 : 0);
     const requiredSetsForWithdrawal = normalizedTaskState.dailyTaskSetLimit;
-    const meetsTaskRequirement = completedSetsToday >= requiredSetsForWithdrawal;
+
+    if (completedSetsToday < requiredSetsForWithdrawal) {
+      return c.json({
+        error: `Complete ${requiredSetsForWithdrawal} task set(s) before requesting withdrawal`,
+        taskRequirement: {
+          requiredSets: requiredSetsForWithdrawal,
+          completedSets: completedSetsToday,
+          tasksPerSet: normalizedTaskState.tasksPerSet,
+          currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
+        },
+      }, 403);
+    }
 
     const passwordCheck = await verifyWithdrawalPassword(
       String(withdrawalPassword || ''),
@@ -4872,33 +4420,69 @@ app.post("/request-withdrawal", async (c) => {
     }
 
     const approvedWithdrawalLimit = Number(userProfile?.withdrawalLimit ?? 0);
-    if (approvedWithdrawalLimit > 0 && amount > approvedWithdrawalLimit) {
+    if (approvedWithdrawalLimit > 0 && requestedAmount > approvedWithdrawalLimit) {
       return c.json({ error: `Amount exceeds approved withdrawal limit of $${approvedWithdrawalLimit.toFixed(2)}` }, 400);
     }
 
     // Check sufficient balance
-    const balance = userProfile.balance || 0;
-    if (amount > balance) {
+    const balance = roundCurrency(Number(userProfile.balance || 0));
+    if (requestedAmount > balance) {
       return c.json({ error: `Insufficient balance. Available: $${balance.toFixed(2)}` }, 400);
     }
 
+    const idempotencyFingerprint = JSON.stringify({
+      userId,
+      requestedAmount,
+      currentSetDate: normalizedTaskState.currentSetDate,
+      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
+    });
+    idempotencyStoreKey = buildIdempotencyStoreKey('withdrawal.request', String(userId), idempotencyKey);
+    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
+    if (idempotencyState.state === 'conflict') {
+      return c.json({ error: 'Idempotency-Key conflict for different withdrawal payload' }, 409);
+    }
+    if (idempotencyState.state === 'in_progress') {
+      return c.json({ error: 'Duplicate withdrawal request is already in progress' }, 409);
+    }
+    if (idempotencyState.state === 'replay') {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+        'Idempotent-Replay': 'true',
+        'Idempotency-Key': idempotencyKey,
+      });
+    }
+
+    operationId = await createFinancialOperation('withdrawal.request', String(userId), {
+      requestedAmount,
+      idempotencyKey,
+    });
+
+    const nowIso = new Date().toISOString();
+    const reservedBalance = roundCurrency(balance - requestedAmount);
+    reservedUserId = String(userId);
+    balanceBeforeReserve = balance;
+    userProfile.balance = reservedBalance;
+    userProfile.updatedAt = nowIso;
+    await kv.set(`user:${userId}`, userProfile);
+    await appendFinancialOperationStep(operationId, 'funds_reserved', {
+      userId,
+      before: balance,
+      after: reservedBalance,
+    });
+
     // Create withdrawal request
     const withdrawalId = `${userId}-${Date.now()}`;
+    createdWithdrawalId = withdrawalId;
     const withdrawalRequest = {
       id: withdrawalId,
       userId,
       userEmail: userProfile.email,
       userName: userProfile.name,
-      amount,
+      amount: requestedAmount,
       status: 'pending',
-      requiresTaskCompletionOverride: !meetsTaskRequirement,
-      taskRequirement: {
-        requiredSets: requiredSetsForWithdrawal,
-        completedSets: completedSetsToday,
-        tasksPerSet: normalizedTaskState.tasksPerSet,
-        currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
-      },
-      requestedAt: new Date().toISOString(),
+      fundsReserved: true,
+      balanceBeforeReserve: balance,
+      balanceAfterReserve: reservedBalance,
+      requestedAt: nowIso,
       approvedAt: null,
       deniedAt: null,
       denialReason: null,
@@ -4906,28 +4490,73 @@ app.post("/request-withdrawal", async (c) => {
 
     // Store withdrawal request
     await kv.set(`withdrawal:${withdrawalId}`, withdrawalRequest);
+    await appendFinancialOperationStep(operationId, 'withdrawal_record_created', {
+      withdrawalId,
+    });
 
     // Add to pending queue
-    const pendingWithdrawals = await kv.get('withdrawals:pending') || [];
-    pendingWithdrawals.push(withdrawalId);
-    await kv.set('withdrawals:pending', pendingWithdrawals);
+    await appendUniqueQueueId('withdrawals:pending', withdrawalId);
+    queuedPending = true;
+    await appendFinancialOperationStep(operationId, 'pending_queue_updated', {
+      withdrawalId,
+    });
 
     // Send email notification
     if (userProfile.email && userProfile.emailNotifications !== false) {
-      const template = emailTemplates.withdrawalRequested(userProfile.name, amount);
+      const template = emailTemplates.withdrawalRequested(userProfile.name, requestedAmount);
       await sendEmail(userProfile.email, template.subject, template.html);
     }
 
-    return c.json({
+    const responseBody = {
       success: true,
       withdrawal: withdrawalRequest,
-      message: meetsTaskRequirement
-        ? 'Withdrawal request submitted. Admin approval required.'
-        : `Withdrawal request submitted for admin review. Task sets completed: ${completedSetsToday}/${requiredSetsForWithdrawal}.`,
+      message: 'Withdrawal request submitted. Admin approval required.',
+    };
+
+    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
+    await finalizeFinancialOperation(operationId, 'completed', {
+      withdrawalId,
+      reservedAmount: requestedAmount,
+    });
+    return c.json(responseBody, 200, {
+      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
+    if (idempotencyStoreKey) {
+      await kv.del(idempotencyStoreKey).catch(() => undefined);
+    }
+
+    if (createdWithdrawalId) {
+      await kv.del(`withdrawal:${createdWithdrawalId}`).catch(() => undefined);
+    }
+    if (queuedPending && createdWithdrawalId) {
+      await removeQueueId('withdrawals:pending', createdWithdrawalId).catch(() => undefined);
+    }
+    if (reservedUserId && balanceBeforeReserve !== null) {
+      const currentUser = await kv.get(`user:${reservedUserId}`);
+      if (currentUser) {
+        currentUser.balance = balanceBeforeReserve;
+        currentUser.updatedAt = new Date().toISOString();
+        await kv.set(`user:${reservedUserId}`, currentUser).catch(() => undefined);
+      }
+    }
+    if (operationId) {
+      await appendFinancialOperationStep(operationId, 'rollback_applied', {
+        createdWithdrawalId: createdWithdrawalId || null,
+        queuedPending,
+        reservedUserId: reservedUserId || null,
+      }).catch(() => undefined);
+      await finalizeFinancialOperation(operationId, 'failed', {
+        error: String(error),
+      }).catch(() => undefined);
+    }
+
     console.error(`Error requesting withdrawal: ${error}`);
     return c.json({ error: "Internal server error while requesting withdrawal" }, 500);
+  } finally {
+    if (releaseFinancialLock) {
+      await releaseFinancialLock().catch(() => undefined);
+    }
   }
 });
 
@@ -5006,94 +4635,10 @@ app.get("/admin/withdrawals", async (c) => {
   }
 });
 
-// Admin: consolidated transaction feed (deposits, withdrawals, balance adjustments)
-app.get('/admin/transactions', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.view');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const scope = await getAdminScopeConfig(adminAccess);
-    const transactions: Array<{
-      id: string;
-      commission: number;
-      timestamp: string;
-      status: string;
-      productName: string;
-      userName: string;
-    }> = [];
-
-    const depositQueue = await kv.get('deposit:requests:queue') || [];
-    for (const requestId of depositQueue) {
-      const request = await kv.get(`deposit:request:${requestId}`);
-      if (!request) continue;
-      const owner = await kv.get(`user:${request.userId}`);
-      if (!isUserInAdminScope(scope, owner)) continue;
-
-      transactions.push({
-        id: `deposit:${request.id || requestId}`,
-        commission: roundCurrency(Number(request.amount || 0)),
-        timestamp: String(request.createdAt || request.updatedAt || new Date().toISOString()),
-        status: String(request.status || 'pending'),
-        productName: 'Deposit Request',
-        userName: String(request.userName || owner?.name || 'User'),
-      });
-    }
-
-    const pendingWithdrawalIds = await kv.get('withdrawals:pending') || [];
-    const approvedWithdrawalIds = await kv.get('withdrawals:approved') || [];
-    const deniedWithdrawalIds = await kv.get('withdrawals:denied') || [];
-    const allWithdrawalIds = Array.from(new Set([
-      ...pendingWithdrawalIds,
-      ...approvedWithdrawalIds,
-      ...deniedWithdrawalIds,
-    ]));
-
-    for (const withdrawalId of allWithdrawalIds) {
-      const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
-      if (!withdrawal) continue;
-      const owner = await kv.get(`user:${withdrawal.userId}`);
-      if (!isUserInAdminScope(scope, owner)) continue;
-
-      transactions.push({
-        id: `withdrawal:${withdrawal.id || withdrawalId}`,
-        commission: roundCurrency(-Math.abs(Number(withdrawal.amount || 0))),
-        timestamp: String(withdrawal.requestedAt || withdrawal.approvedAt || withdrawal.deniedAt || new Date().toISOString()),
-        status: String(withdrawal.status || 'pending'),
-        productName: `Withdrawal (${String(withdrawal.status || 'pending').toUpperCase()})`,
-        userName: String(withdrawal.userName || owner?.name || 'User'),
-      });
-    }
-
-    const scopedUsers = (await kv.getByPrefix('user:') || []).filter((user: any) => isUserInAdminScope(scope, user));
-    for (const user of scopedUsers) {
-      const adjustmentRows = await kv.get(`admin:adjustments:${user.id}`) || [];
-      adjustmentRows.forEach((row: any) => {
-        transactions.push({
-          id: `adjustment:${row.id || `${user.id}-${row.createdAt || Date.now()}`}`,
-          commission: roundCurrency(Number(row.amount || 0)),
-          timestamp: String(row.createdAt || new Date().toISOString()),
-          status: 'approved',
-          productName: `Balance Adjustment (${String(row.category || 'adjustment')})`,
-          userName: String(user.name || 'User'),
-        });
-      });
-    }
-
-    const sortedTransactions = transactions
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 500);
-
-    return c.json({ success: true, transactions: sortedTransactions, total: sortedTransactions.length });
-  } catch (error) {
-    console.error(`Error fetching admin transactions: ${error}`);
-    return c.json({ error: 'Internal server error while fetching transactions' }, 500);
-  }
-});
-
 // Admin: approve withdrawal request
 app.post("/admin/approve-withdrawal", async (c) => {
+  let idempotencyStoreKey = '';
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
     if (!adminAccess.ok) {
@@ -5110,9 +4655,19 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: 'withdrawalId is required' }, 400);
     }
 
+    const idempotencyKey = getIdempotencyKey(c);
+    if (!idempotencyKey) {
+      return c.json({ error: 'Idempotency-Key header is required' }, 400);
+    }
+
     const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
+    }
+
+    releaseFinancialLock = await acquireFinancialLock('user', String(withdrawal.userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
@@ -5125,27 +4680,56 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: `Cannot approve withdrawal with status: ${withdrawal.status}` }, 400);
     }
 
-    // Update user balance (deduct withdrawal amount)
+    const idempotencyFingerprint = JSON.stringify({
+      action: 'approve',
+      withdrawalId: String(withdrawalId),
+      amount: Number(withdrawal.amount || 0),
+    });
+    idempotencyStoreKey = buildIdempotencyStoreKey(
+      'withdrawal.approve',
+      String(adminAccess.userId || 'super_admin'),
+      idempotencyKey,
+    );
+    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
+    if (idempotencyState.state === 'conflict') {
+      return c.json({ error: 'Idempotency-Key conflict for different withdrawal approval payload' }, 409);
+    }
+    if (idempotencyState.state === 'in_progress') {
+      return c.json({ error: 'Duplicate approve-withdrawal request is already in progress' }, 409);
+    }
+    if (idempotencyState.state === 'replay') {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+        'Idempotent-Replay': 'true',
+        'Idempotency-Key': idempotencyKey,
+      });
+    }
+
+    const withdrawalAmount = roundCurrency(Number(withdrawal.amount || 0));
+
+    // Update user balance only if funds were not reserved at request time.
     const userProfile = await kv.get(`user:${withdrawal.userId}`);
     if (userProfile) {
-      userProfile.balance = (userProfile.balance || 0) - withdrawal.amount;
+      const currentBalance = roundCurrency(Number(userProfile.balance || 0));
+      if (!withdrawal.fundsReserved) {
+        if (withdrawalAmount > currentBalance) {
+          return c.json({ error: 'Cannot approve withdrawal due to insufficient available balance' }, 409);
+        }
+        userProfile.balance = roundCurrency(currentBalance - withdrawalAmount);
+      }
       await kv.set(`user:${withdrawal.userId}`, userProfile);
     }
 
     // Update withdrawal request
     withdrawal.status = 'approved';
     withdrawal.approvedAt = new Date().toISOString();
+    withdrawal.fundsReserved = Boolean(withdrawal.fundsReserved);
     await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
 
     // Remove from pending queue
-    const pendingIds = await kv.get('withdrawals:pending') || [];
-    const updated = pendingIds.filter((id: string) => id !== withdrawalId);
-    await kv.set('withdrawals:pending', updated);
+    await removeQueueId('withdrawals:pending', withdrawalId);
 
     // Add to approved queue
-    const approvedIds = await kv.get('withdrawals:approved') || [];
-    approvedIds.push(withdrawalId);
-    await kv.set('withdrawals:approved', approvedIds);
+    await appendUniqueQueueId('withdrawals:approved', withdrawalId);
 
     // Send email notification
     if (withdrawal.userEmail && userProfile?.emailNotifications !== false) {
@@ -5153,27 +4737,33 @@ app.post("/admin/approve-withdrawal", async (c) => {
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
 
-    await writeAdminAuditLog('withdrawals.approve', adminAccess, {
-      targetUserId: String(withdrawal.userId || ''),
-      meta: {
-        withdrawalId: String(withdrawalId),
-        amount: Number(withdrawal.amount || 0),
-      },
-    });
-
-    return c.json({
+    const responseBody = {
       success: true,
       withdrawal,
       message: `Withdrawal of $${withdrawal.amount.toFixed(2)} approved for ${withdrawal.userName}`,
+    };
+
+    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
+    return c.json(responseBody, 200, {
+      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
+    if (idempotencyStoreKey) {
+      await kv.del(idempotencyStoreKey).catch(() => undefined);
+    }
     console.error(`Error approving withdrawal: ${error}`);
     return c.json({ error: "Internal server error while approving withdrawal" }, 500);
+  } finally {
+    if (releaseFinancialLock) {
+      await releaseFinancialLock().catch(() => undefined);
+    }
   }
 });
 
 // Admin: deny withdrawal request
 app.post("/admin/deny-withdrawal", async (c) => {
+  let idempotencyStoreKey = '';
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
     if (!adminAccess.ok) {
@@ -5190,9 +4780,19 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: 'withdrawalId is required' }, 400);
     }
 
+    const idempotencyKey = getIdempotencyKey(c);
+    if (!idempotencyKey) {
+      return c.json({ error: 'Idempotency-Key header is required' }, 400);
+    }
+
     const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
+    }
+
+    releaseFinancialLock = await acquireFinancialLock('user', String(withdrawal.userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
@@ -5205,6 +4805,37 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: `Cannot deny withdrawal with status: ${withdrawal.status}` }, 400);
     }
 
+    const idempotencyFingerprint = JSON.stringify({
+      action: 'deny',
+      withdrawalId: String(withdrawalId),
+      denialReason: String(denialReason || '').trim(),
+    });
+    idempotencyStoreKey = buildIdempotencyStoreKey(
+      'withdrawal.deny',
+      String(adminAccess.userId || 'super_admin'),
+      idempotencyKey,
+    );
+    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
+    if (idempotencyState.state === 'conflict') {
+      return c.json({ error: 'Idempotency-Key conflict for different withdrawal denial payload' }, 409);
+    }
+    if (idempotencyState.state === 'in_progress') {
+      return c.json({ error: 'Duplicate deny-withdrawal request is already in progress' }, 409);
+    }
+    if (idempotencyState.state === 'replay') {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+        'Idempotent-Replay': 'true',
+        'Idempotency-Key': idempotencyKey,
+      });
+    }
+
+    const userProfile = await kv.get(`user:${withdrawal.userId}`);
+    if (userProfile && withdrawal.fundsReserved) {
+      userProfile.balance = roundCurrency(Number(userProfile.balance || 0) + roundCurrency(Number(withdrawal.amount || 0)));
+      userProfile.updatedAt = new Date().toISOString();
+      await kv.set(`user:${withdrawal.userId}`, userProfile);
+    }
+
     // Update withdrawal request
     withdrawal.status = 'denied';
     withdrawal.deniedAt = new Date().toISOString();
@@ -5212,17 +4843,10 @@ app.post("/admin/deny-withdrawal", async (c) => {
     await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
 
     // Remove from pending queue
-    const pendingIds = await kv.get('withdrawals:pending') || [];
-    const updated = pendingIds.filter((id: string) => id !== withdrawalId);
-    await kv.set('withdrawals:pending', updated);
+    await removeQueueId('withdrawals:pending', withdrawalId);
 
     // Add to denied queue
-    const deniedIds = await kv.get('withdrawals:denied') || [];
-    deniedIds.push(withdrawalId);
-    await kv.set('withdrawals:denied', deniedIds);
-
-    // Get user profile for email
-    const userProfile = await kv.get(`user:${withdrawal.userId}`);
+    await appendUniqueQueueId('withdrawals:denied', withdrawalId);
 
     // Send email notification
     if (withdrawal.userEmail && userProfile?.emailNotifications !== false) {
@@ -5230,23 +4854,26 @@ app.post("/admin/deny-withdrawal", async (c) => {
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
 
-    await writeAdminAuditLog('withdrawals.deny', adminAccess, {
-      targetUserId: String(withdrawal.userId || ''),
-      meta: {
-        withdrawalId: String(withdrawalId),
-        amount: Number(withdrawal.amount || 0),
-        denialReason: withdrawal.denialReason || null,
-      },
-    });
-
-    return c.json({
+    const responseBody = {
       success: true,
       withdrawal,
       message: `Withdrawal request denied for ${withdrawal.userName}`,
+    };
+
+    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
+    return c.json(responseBody, 200, {
+      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
+    if (idempotencyStoreKey) {
+      await kv.del(idempotencyStoreKey).catch(() => undefined);
+    }
     console.error(`Error denying withdrawal: ${error}`);
     return c.json({ error: "Internal server error while denying withdrawal" }, 500);
+  } finally {
+    if (releaseFinancialLock) {
+      await releaseFinancialLock().catch(() => undefined);
+    }
   }
 });
 
@@ -5294,10 +4921,17 @@ app.post('/admin/users/adjust-balance', async (c) => {
     const previousBalance = Number(userProfile.balance || 0);
     const nextBalance = previousBalance + adjustmentAmount;
     const timestamp = new Date().toISOString();
+    const profitsRecord = await kv.get(`profits:${userId}`) || { totalEarned: 0 };
+    const totalEarned = Number(profitsRecord?.totalEarned || 0);
+    const basePrincipal = resolvePrincipalBalance(userProfile, totalEarned);
+    const nextPrincipalBalance = adjustmentCategory === 'topup' && adjustmentAmount > 0
+      ? roundCurrency(basePrincipal + adjustmentAmount)
+      : basePrincipal;
 
     const updatedProfile = {
       ...userProfile,
       balance: nextBalance,
+      principalBalance: nextPrincipalBalance,
       updatedAt: timestamp,
     };
 
@@ -5316,17 +4950,6 @@ app.post('/admin/users/adjust-balance', async (c) => {
     });
     await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
 
-    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        amount: adjustmentAmount,
-        category: adjustmentCategory,
-        note: normalizedNote || null,
-        previousBalance,
-        newBalance: nextBalance,
-      },
-    });
-
     return c.json({
       success: true,
       user: updatedProfile,
@@ -5343,6 +4966,132 @@ app.post('/admin/users/adjust-balance', async (c) => {
   }
 });
 
+// Admin: disable/enable user account (super admin only)
+app.put('/admin/users/account-status', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const userId = String(body?.userId || '').trim();
+    const disabled = Boolean(body?.disabled);
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const key = `user:${userId}`;
+    const user = await kv.get(key);
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const updatedUser = {
+      ...user,
+      accountDisabled: disabled,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(key, updatedUser);
+
+    return c.json({
+      success: true,
+      user: updatedUser,
+      status: disabled ? 'disabled' : 'active',
+    });
+  } catch (error) {
+    console.error(`Error updating user account status: ${error}`);
+    return c.json({ error: 'Internal server error while updating user account status' }, 500);
+  }
+});
+
+// Admin: delete user account and related records (super admin only)
+app.delete('/admin/users/:userId', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const userId = String(c.req.param('userId') || '').trim();
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const userKey = `user:${userId}`;
+    const user = await kv.get(userKey);
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const supabase = getServiceClient();
+    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
+    if (authDeleteError && !String(authDeleteError.message || '').toLowerCase().includes('not found')) {
+      return c.json({ error: 'Failed to delete user auth account' }, 400);
+    }
+
+    await kv.del(userKey).catch(() => undefined);
+    await kv.del(`profits:${userId}`).catch(() => undefined);
+    await kv.del(`metrics:${userId}`).catch(() => undefined);
+    await kv.del(`admin:adjustments:${userId}`).catch(() => undefined);
+    await kv.del(`deposit:requests:user:${userId}`).catch(() => undefined);
+
+    const inviteRows = await getKvRowsByPrefix('invitecode:');
+    for (const row of inviteRows) {
+      if (String(row?.value?.userId || '') === userId) {
+        await kv.del(row.key).catch(() => undefined);
+      }
+    }
+
+    const referralRows = await getKvRowsByPrefix('referral:');
+    for (const row of referralRows) {
+      const parentId = String(row?.value?.parentId || '');
+      const childId = String(row?.value?.childId || '');
+      if (parentId === userId || childId === userId) {
+        await kv.del(row.key).catch(() => undefined);
+      }
+    }
+
+    const userRecordRows = await getKvRowsByPrefix(`record:${userId}:`);
+    for (const row of userRecordRows) {
+      await kv.del(row.key).catch(() => undefined);
+    }
+
+    const withdrawalRows = await getKvRowsByPrefix('withdrawal:');
+    const deletedWithdrawalIds: string[] = [];
+    for (const row of withdrawalRows) {
+      if (String(row?.value?.userId || '') === userId) {
+        const withdrawalId = String(row?.value?.id || '').trim();
+        if (withdrawalId) {
+          deletedWithdrawalIds.push(withdrawalId);
+        }
+        await kv.del(row.key).catch(() => undefined);
+      }
+    }
+
+    if (deletedWithdrawalIds.length > 0) {
+      const pending = (await kv.get('withdrawals:pending') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
+      const approved = (await kv.get('withdrawals:approved') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
+      const denied = (await kv.get('withdrawals:denied') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
+      await kv.set('withdrawals:pending', pending);
+      await kv.set('withdrawals:approved', approved);
+      await kv.set('withdrawals:denied', denied);
+    }
+
+    return c.json({
+      success: true,
+      deleted: true,
+      userId,
+      message: 'User account deleted successfully',
+    });
+  } catch (error) {
+    console.error(`Error deleting user account: ${error}`);
+    return c.json({ error: 'Internal server error while deleting user account' }, 500);
+  }
+});
+
 // Admin: assign premium product to one user (quick action)
 app.post('/admin/users/assign-premium', async (c) => {
   try {
@@ -5353,7 +5102,7 @@ app.post('/admin/users/assign-premium', async (c) => {
 
     const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'premium.assign', 20, 10 * 60 * 1000);
     if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for premium deficit assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+      return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -5365,10 +5114,10 @@ app.post('/admin/users/assign-premium', async (c) => {
     const normalizedProductId = String(body?.productId || '').trim();
 
     if (body?.amount === undefined || body?.amount === null || body?.amount === '') {
-      return c.json({ error: 'amount is required for premium deficit assignment' }, 400);
+      return c.json({ error: 'amount is required for premium assignment' }, 400);
     }
     if (body?.position === undefined || body?.position === null || body?.position === '') {
-      return c.json({ error: 'position is required for premium deficit assignment' }, 400);
+      return c.json({ error: 'position is required for premium assignment' }, 400);
     }
     const amount = Number(body.amount);
     const requestedPosition = Number(body.position);
@@ -5393,7 +5142,7 @@ app.post('/admin/users/assign-premium', async (c) => {
       : null;
 
     if (normalizedProductId && !assignedProduct) {
-      return c.json({ error: 'Selected deficit product was not found in catalog' }, 400);
+      return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
@@ -5420,10 +5169,10 @@ app.post('/admin/users/assign-premium', async (c) => {
     const currentBalance = Number(user?.balance ?? 0);
     const bundleDetails = buildPremiumBundleDetails(amount);
     const bundleTotal = Number(bundleDetails.bundleTotal || 0);
-    const vipPremiumRate = 0;
-    const potentialPremiumProfit = 0;
-    const balanceAfterAssignment = roundCurrency(-Math.abs(bundleTotal));
-    const projectedTopUpRequired = Math.abs(bundleTotal);
+    const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+    const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+    const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const updatedUser = {
       ...user,
@@ -5457,17 +5206,6 @@ app.post('/admin/users/assign-premium', async (c) => {
 
     await kv.set(key, updatedUser);
 
-    await writeAdminAuditLog('users.assign_premium', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        requestedPosition,
-        effectivePosition,
-        amount,
-        bundleTotal,
-        orderId: premiumOrderId,
-      },
-    });
-
     return c.json({
       success: true,
       user: updatedUser,
@@ -5475,7 +5213,7 @@ app.post('/admin/users/assign-premium', async (c) => {
         boostedCommission: potentialPremiumProfit,
         potentialProfit: potentialPremiumProfit,
         frozen: false,
-        willFreezeOnEncounter: true,
+        willFreezeOnEncounter: projectedTopUpRequired > 0,
         orderId: premiumOrderId,
         bundleTotal,
         topUpRequired: projectedTopUpRequired,
@@ -5564,14 +5302,6 @@ app.post('/admin/users/reset-task-set', async (c) => {
 
     await kv.set(profileKey, updatedProfile);
 
-    await writeAdminAuditLog('users.reset_tasks', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        mode: resetMode,
-        taskSetsCompletedToday: updatedProfile.taskSetsCompletedToday,
-      },
-    });
-
     return c.json({
       success: true,
       user: updatedProfile,
@@ -5600,80 +5330,6 @@ app.post('/admin/users/reset-task-set', async (c) => {
   }
 });
 
-// Admin: reset a user's login password
-app.post('/admin/users/reset-password', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.reset_password');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.reset_password', 20, 10 * 60 * 1000);
-    if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for password reset. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const identifier = String(body?.userId || '').trim();
-    const newPassword = String(body?.newPassword || '').trim();
-
-    if (!identifier) {
-      return c.json({ error: 'userId is required' }, 400);
-    }
-
-    if (newPassword.length < 6) {
-      return c.json({ error: 'newPassword must be at least 6 characters' }, 400);
-    }
-
-    let targetUser = await kv.get(`user:${identifier}`);
-    if (!targetUser) {
-      const allUsers = await kv.getByPrefix('user:') || [];
-      const normalizedIdentifier = identifier.toLowerCase();
-      targetUser = allUsers.find((user: any) => {
-        const byId = String(user?.id || '').trim().toLowerCase() === normalizedIdentifier;
-        const byUsername = String(user?.username || '').trim().toLowerCase() === normalizedIdentifier;
-        const byEmail = String(user?.email || '').trim().toLowerCase() === normalizedIdentifier;
-        return byId || byUsername || byEmail;
-      }) || null;
-    }
-
-    if (!targetUser?.id) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, targetUser)) {
-      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
-    }
-
-    const supabase = getServiceClient();
-    const { error: authError } = await supabase.auth.admin.updateUserById(String(targetUser.id), {
-      password: newPassword,
-    });
-
-    if (authError) {
-      return c.json({ error: authError.message || 'Failed to reset password' }, 400);
-    }
-
-    await writeAdminAuditLog('users.reset_password', adminAccess, {
-      targetUserId: String(targetUser.id),
-      targetIdentifier: identifier,
-      meta: {
-        passwordChanged: true,
-      },
-    });
-
-    return c.json({
-      success: true,
-      userId: String(targetUser.id),
-      message: 'Password reset successfully',
-    });
-  } catch (error) {
-    console.error(`Error resetting user password: ${error}`);
-    return c.json({ error: 'Internal server error while resetting password' }, 500);
-  }
-});
-
 // Admin: update user task limits (daily sets + extra sets)
 app.put('/admin/users/task-limits', async (c) => {
   try {
@@ -5682,7 +5338,7 @@ app.put('/admin/users/task-limits', async (c) => {
       return adminAccess.response;
     }
 
-    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore } = await c.req.json();
+    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit } = await c.req.json();
     if (!userId) {
       return c.json({ error: 'userId is required' }, 400);
     }
@@ -5703,11 +5359,6 @@ app.put('/admin/users/task-limits', async (c) => {
       return c.json({ error: 'withdrawalLimit must be a non-negative number' }, 400);
     }
 
-    const parsedCreditScore = Number(creditScore ?? 100);
-    if (!Number.isFinite(parsedCreditScore) || parsedCreditScore < 0 || parsedCreditScore > 100) {
-      return c.json({ error: 'creditScore must be a number between 0 and 100' }, 400);
-    }
-
     const profileKey = `user:${userId}`;
     const userProfile = await kv.get(profileKey);
     if (!userProfile) {
@@ -5724,21 +5375,10 @@ app.put('/admin/users/task-limits', async (c) => {
       dailyTaskSetLimit: baseLimit,
       extraTaskSets: extraSets,
       withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
-      creditScore: roundCurrency(parsedCreditScore),
       updatedAt: new Date().toISOString(),
     };
 
     await kv.set(profileKey, updatedProfile);
-
-    await writeAdminAuditLog('users.manage_task_limits', adminAccess, {
-      targetUserId: String(userId),
-      meta: {
-        dailyTaskSetLimit: baseLimit,
-        extraTaskSets: extraSets,
-        withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
-        creditScore: roundCurrency(parsedCreditScore),
-      },
-    });
 
     return c.json({
       success: true,
@@ -5747,7 +5387,6 @@ app.put('/admin/users/task-limits', async (c) => {
         dailyTaskSetLimit: baseLimit,
         extraTaskSets: extraSets,
         withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
-        creditScore: roundCurrency(parsedCreditScore),
         maxSetsPerDay: baseLimit + extraSets,
       },
     });
@@ -5798,15 +5437,10 @@ app.post('/admin/accounts', async (c) => {
     });
 
     if (error || !data?.user?.id) {
-      return c.json({ error: error?.message || 'Failed to create admin user' }, 400);
+      return c.json({ error: 'Failed to create admin user' }, 400);
     }
 
     const adminUserId = data.user.id;
-    const existingUsers = await kv.getByPrefix('user:') || [];
-    const inferredManagedParent = (existingUsers || []).find((user: any) => {
-      const userUsername = String(user?.username || '').trim().toLowerCase();
-      return userUsername && userUsername === normalizedUsername;
-    });
     const record = {
       userId: adminUserId,
       username: normalizedUsername,
@@ -5815,8 +5449,8 @@ app.post('/admin/accounts', async (c) => {
       role: 'limited_admin',
       active: true,
       permissions: adminPermissions,
-      managedParentUserId: inferredManagedParent?.id ? String(inferredManagedParent.id) : null,
-      managedUserIds: [],
+      revokedAt: null,
+      createdBy: 'super_admin',
       createdAt: new Date().toISOString(),
     };
 
@@ -5857,20 +5491,71 @@ app.get('/admin/accounts', async (c) => {
     }
 
     const rows = await kv.getByPrefix('admin:account:');
-    const admins = (rows || []).map((row: any) => ({
-      userId: row?.userId,
-      username: row?.username,
-      displayName: row?.displayName,
-      authEmail: row?.authEmail,
-      active: row?.active !== false,
-      permissions: sanitizeAdminPermissions(row?.permissions),
-      managedParentUserId: row?.managedParentUserId || null,
-      managedUserIds: Array.isArray(row?.managedUserIds) ? row.managedUserIds : [],
-      createdAt: row?.createdAt,
-      updatedAt: row?.updatedAt || null,
+    const allUsers = await kv.getByPrefix('user:');
+
+    const usersWithEarnings = await Promise.all((allUsers || []).map(async (user: any) => {
+      const totalEarnings = await resolveUserTotalEarnings(user);
+      return {
+        ...user,
+        totalEarnings,
+        frozenNegativeAmount: resolveFrozenNegativeAmount(user),
+      };
     }));
 
-    return c.json({ success: true, admins });
+    const admins = (rows || []).map((row: any) => {
+      const scope = getAdminScopeFromAccount(row);
+      const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
+      const usersCreated = scopedUsers.length;
+      const totalEarningsFromUsers = roundCurrency(
+        scopedUsers.reduce((sum: number, user: any) => sum + Number(user?.totalEarnings || 0), 0),
+      );
+      const negativeTotal = roundCurrency(
+        scopedUsers.reduce((sum: number, user: any) => {
+          const balance = Number(user?.balance ?? 0);
+          return sum + (balance < 0 ? Math.abs(balance) : 0);
+        }, 0),
+      );
+      const frozenNegativeTotal = roundCurrency(
+        scopedUsers.reduce((sum: number, user: any) => sum + Number(user?.frozenNegativeAmount || 0), 0),
+      );
+      const revoked = Boolean(row?.revokedAt);
+
+      return {
+        userId: row?.userId,
+        username: row?.username,
+        displayName: row?.displayName,
+        authEmail: row?.authEmail,
+        active: row?.active !== false,
+        status: revoked ? 'revoked' : (row?.active === false ? 'disabled' : 'active'),
+        permissions: sanitizeAdminPermissions(row?.permissions),
+        usersCreated,
+        totalEarningsFromUsers,
+        negativeTotal,
+        frozenNegativeTotal,
+        createdAt: row?.createdAt,
+        updatedAt: row?.updatedAt || null,
+        revokedAt: row?.revokedAt || null,
+      };
+    });
+
+    const accountability = {
+      totalLimitedAdmins: admins.length,
+      activeLimitedAdmins: admins.filter((admin: any) => admin.status === 'active').length,
+      disabledLimitedAdmins: admins.filter((admin: any) => admin.status === 'disabled').length,
+      revokedLimitedAdmins: admins.filter((admin: any) => admin.status === 'revoked').length,
+      totalUsersCreated: admins.reduce((sum: number, admin: any) => sum + Number(admin?.usersCreated || 0), 0),
+      totalEarningsFromManagedUsers: roundCurrency(
+        admins.reduce((sum: number, admin: any) => sum + Number(admin?.totalEarningsFromUsers || 0), 0),
+      ),
+      totalNegativeExposure: roundCurrency(
+        admins.reduce((sum: number, admin: any) => sum + Number(admin?.negativeTotal || 0), 0),
+      ),
+      totalFrozenNegativeExposure: roundCurrency(
+        admins.reduce((sum: number, admin: any) => sum + Number(admin?.frozenNegativeTotal || 0), 0),
+      ),
+    };
+
+    return c.json({ success: true, admins, accountability });
   } catch (error) {
     console.error(`Error listing admin accounts: ${error}`);
     return c.json({ error: 'Internal server error while listing admin accounts' }, 500);
@@ -5895,7 +5580,7 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
       return c.json({ error: 'Admin account not found' }, 404);
     }
 
-    const { permissions, active, displayName, managedParentUserId, managedUserIds } = await c.req.json();
+    const { permissions, active, displayName } = await c.req.json();
     const nextPermissions = permissions === undefined
       ? sanitizeAdminPermissions(existing.permissions)
       : sanitizeAdminPermissions(permissions);
@@ -5904,22 +5589,13 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
       return c.json({ error: 'At least one valid permission is required' }, 400);
     }
 
-    const nextManagedParentUserId = managedParentUserId === undefined
-      ? (existing.managedParentUserId || null)
-      : (String(managedParentUserId || '').trim() || null);
-    const nextManagedUserIds = managedUserIds === undefined
-      ? (Array.isArray(existing.managedUserIds) ? existing.managedUserIds : [])
-      : (Array.isArray(managedUserIds)
-          ? managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
-          : []);
-
+    const nextActive = active === undefined ? existing.active !== false : Boolean(active);
     const updated = {
       ...existing,
       permissions: nextPermissions,
-      active: active === undefined ? existing.active !== false : Boolean(active),
+      active: nextActive,
+      revokedAt: nextActive ? null : existing?.revokedAt || null,
       displayName: displayName ? String(displayName).trim() : existing.displayName,
-      managedParentUserId: nextManagedParentUserId,
-      managedUserIds: nextManagedUserIds,
       updatedAt: new Date().toISOString(),
     };
 
@@ -5931,6 +5607,72 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
   }
 });
 
+// Admin: revoke limited admin account access (super admin only)
+app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const adminUserId = c.req.param('adminUserId');
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    const existing = await kv.get(`admin:account:${adminUserId}`);
+    if (!existing) {
+      return c.json({ error: 'Admin account not found' }, 404);
+    }
+
+    const updated = {
+      ...existing,
+      active: false,
+      permissions: BASELINE_LIMITED_ADMIN_PERMISSIONS,
+      revokedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(`admin:account:${adminUserId}`, updated);
+    return c.json({ success: true, admin: updated });
+  } catch (error) {
+    console.error(`Error revoking admin account: ${error}`);
+    return c.json({ error: 'Internal server error while revoking admin account' }, 500);
+  }
+});
+
+// Admin: delete limited admin account (super admin only)
+app.delete('/admin/accounts/:adminUserId', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const adminUserId = c.req.param('adminUserId');
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    const existing = await kv.get(`admin:account:${adminUserId}`);
+    if (!existing) {
+      return c.json({ error: 'Admin account not found' }, 404);
+    }
+
+    const supabase = getServiceClient();
+    const { error: deleteError } = await supabase.auth.admin.deleteUser(adminUserId);
+    if (deleteError && !String(deleteError.message || '').toLowerCase().includes('not found')) {
+      return c.json({ error: 'Failed to delete admin auth user' }, 400);
+    }
+
+    await kv.del(`admin:account:${adminUserId}`);
+    return c.json({ success: true, deleted: true, adminUserId });
+  } catch (error) {
+    console.error(`Error deleting admin account: ${error}`);
+    return c.json({ error: 'Internal server error while deleting admin account' }, 500);
+  }
+});
+
 // Admin: aggregated critical alerts (withdrawals, support queue, frozen accounts, referrals)
 app.get("/admin/alerts", async (c) => {
   try {
@@ -5939,13 +5681,11 @@ app.get("/admin/alerts", async (c) => {
       return adminAccess.response;
     }
 
-    const permissions = adminAccess.permissions || [];
-
     if (!adminAccess.isSuperAdmin) {
-      const canViewAlerts = permissions.includes(ADMIN_PERMISSION_ALL)
-        || permissions.includes('users.view')
-        || permissions.includes('support.manage')
-        || permissions.includes('withdrawals.manage');
+      const canViewAlerts = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('users.view')
+        || adminAccess.permissions.includes('support.manage')
+        || adminAccess.permissions.includes('withdrawals.manage');
       if (!canViewAlerts) {
         return c.json({ error: 'Forbidden - Missing alert visibility permission' }, 403);
       }
@@ -6061,8 +5801,8 @@ app.get("/admin/alerts", async (c) => {
         id: `premium_assignment:${premiumUser.id}`,
         type: 'premium_assignment',
         severity: isActive ? 'info' : 'high',
-        title: 'Premium deficit assignment created',
-        message: `${premiumUser.name || 'User'} premium deficit assignment ${premiumAssignment?.orderId || 'N/A'} is ${isActive ? 'active' : 'inactive (frozen)'}`,
+        title: 'Premium order assigned',
+        message: `${premiumUser.name || 'User'} premium order ${premiumAssignment?.orderId || 'N/A'} is ${isActive ? 'active' : 'inactive (frozen)'}`,
         createdAt: premiumAssignment?.assignedAt || premiumUser?.updatedAt || premiumUser?.createdAt || nowIso,
         status: isActive ? 'new' : 'action_required',
         meta: {
@@ -6149,55 +5889,6 @@ app.get("/admin/alerts", async (c) => {
   } catch (error) {
     console.error(`Error fetching admin alerts: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin alerts' }, 500);
-  }
-});
-
-// Admin: retrieve audit log entries for sensitive admin actions
-app.get('/admin/audit-log', async (c) => {
-  try {
-    const adminAccess = await requireSupportAccess(c);
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const permissions = adminAccess.permissions || [];
-
-    if (!adminAccess.isSuperAdmin) {
-      const canViewAudit = permissions.includes(ADMIN_PERMISSION_ALL)
-        || permissions.includes('users.view')
-        || permissions.includes('support.manage')
-        || permissions.includes('withdrawals.manage');
-      if (!canViewAudit) {
-        return c.json({ error: 'Forbidden - Missing audit visibility permission' }, 403);
-      }
-    }
-
-    const rawLimit = Number(c.req.query('limit') || 100);
-    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 100;
-    const scope = await getAdminScopeConfig(adminAccess);
-
-    const auditRows = await getKvRowsByPrefix('admin:audit:');
-    const scopedLogs = (auditRows || [])
-      .map((row: any) => row?.value)
-      .filter((entry: any) => {
-        if (!entry) return false;
-        if (adminAccess.isSuperAdmin) return true;
-
-        const targetUserId = String(entry?.targetUserId || '').trim();
-        if (!targetUserId) {
-          return String(entry?.actorUserId || '').trim() === String(adminAccess.userId || '').trim();
-        }
-
-        const scopedUser = { id: targetUserId };
-        return isUserInAdminScope(scope, scopedUser);
-      })
-      .sort((a: any, b: any) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
-      .slice(0, limit);
-
-    return c.json({ success: true, logs: scopedLogs, total: scopedLogs.length });
-  } catch (error) {
-    console.error(`Error fetching admin audit log: ${error}`);
-    return c.json({ error: 'Internal server error while fetching audit log' }, 500);
   }
 });
 
@@ -6341,15 +6032,14 @@ app.get("/analytics/leaderboard", async (c) => {
     const allUsers = await kv.getByPrefix('user:');
     
     const leaderboard = (allUsers || [])
-      .filter((u): u is any => u !== null && u !== undefined && u.id)
+      .filter((u): u is any => u && u.totalProfitFromChildren !== undefined)
       .map((user) => ({
         userId: user.id,
         name: user.name,
-        totalProfitFromChildren: Number(user.totalProfitFromChildren || 0),
-        childCount: Number(user.childCount || 0),
+        totalProfitFromChildren: user.totalProfitFromChildren || 0,
+        childCount: user.childCount || 0,
         vipTier: user.vipTier || 'Normal',
       }))
-      .filter((u) => u.totalProfitFromChildren > 0 || u.childCount > 0)
       .sort((a, b) => b.totalProfitFromChildren - a.totalProfitFromChildren)
       .slice(0, 50); // Top 50
 
@@ -6770,6 +6460,9 @@ app.post("/support-tickets/:id/reply", async (c) => {
     };
 
     ticket.replies.push(reply);
+    if (ticket.status === 'resolved') {
+      ticket.status = 'open';
+    }
     ticket.updatedAt = new Date().toISOString();
 
     await kv.set(`ticket:${ticketId}`, ticket);
@@ -6785,6 +6478,58 @@ app.post("/support-tickets/:id/reply", async (c) => {
   }
 });
 
+// Admin: update support ticket status
+app.put('/admin/support-tickets/:id/status', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    if (!adminAccess.isSuperAdmin) {
+      const hasSupportAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage');
+      if (!hasSupportAccess) {
+        return c.json({ error: 'Forbidden - Missing permission: support.manage' }, 403);
+      }
+    }
+
+    const ticketId = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const rawStatus = String(body?.status || '').trim().toLowerCase();
+    const status = rawStatus === 'in_progress' ? 'in-progress' : rawStatus;
+
+    if (!['open', 'in-progress', 'resolved'].includes(status)) {
+      return c.json({ error: 'Invalid status. Use open, in-progress, or resolved.' }, 400);
+    }
+
+    const ticket = await kv.get(`ticket:${ticketId}`);
+    if (!ticket) {
+      return c.json({ error: 'Ticket not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    const ticketOwner = await kv.get(`user:${ticket.userId}`);
+    if (!isUserInAdminScope(scope, ticketOwner)) {
+      return c.json({ error: 'Forbidden - Ticket is outside your admin scope' }, 403);
+    }
+
+    ticket.status = status;
+    ticket.updatedAt = new Date().toISOString();
+
+    await kv.set(`ticket:${ticketId}`, ticket);
+
+    return c.json({
+      success: true,
+      ticket,
+      message: 'Ticket status updated successfully',
+    });
+  } catch (error) {
+    console.error(`Error updating support ticket status: ${error}`);
+    return c.json({ error: 'Internal server error while updating support ticket status' }, 500);
+  }
+});
+
 // Admin: list support tickets (all active admins can review customer service queue)
 app.get('/admin/support-tickets', async (c) => {
   try {
@@ -6793,11 +6538,9 @@ app.get('/admin/support-tickets', async (c) => {
       return adminAccess.response;
     }
 
-    const permissions = adminAccess.permissions || [];
-
     if (!adminAccess.isSuperAdmin) {
-      const hasSupportAccess = permissions.includes(ADMIN_PERMISSION_ALL)
-        || permissions.includes('support.manage');
+      const hasSupportAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage');
       if (!hasSupportAccess) {
         return c.json({ error: 'Forbidden - Missing permission: support.manage' }, 403);
       }
@@ -6890,6 +6633,242 @@ app.post('/admin/support-tickets/:id/reply', async (c) => {
   } catch (error) {
     console.error(`Error replying as admin: ${error}`);
     return c.json({ error: 'Internal server error while replying to support ticket' }, 500);
+  }
+});
+
+// Admin: reconcile financial withdrawal state and stale operation records (super admin only)
+app.post('/admin/finance/reconcile-withdrawals', async (c) => {
+  try {
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = body?.dryRun !== false;
+    const staleMinutes = Number.isFinite(Number(body?.staleMinutes))
+      ? Math.max(5, Number(body.staleMinutes))
+      : 30;
+    const staleThresholdMs = Date.now() - (staleMinutes * 60 * 1000);
+
+    const withdrawals = await kv.getByPrefix('withdrawal:') || [];
+    const withdrawalById = new Map<string, any>();
+    for (const withdrawal of withdrawals) {
+      const id = String(withdrawal?.id || '').trim();
+      if (!id) continue;
+      withdrawalById.set(id, withdrawal);
+    }
+
+    const pendingRaw = await kv.get('withdrawals:pending') || [];
+    const approvedRaw = await kv.get('withdrawals:approved') || [];
+    const deniedRaw = await kv.get('withdrawals:denied') || [];
+
+    const pending = uniqueStringArray(pendingRaw);
+    const approved = uniqueStringArray(approvedRaw);
+    const denied = uniqueStringArray(deniedRaw);
+
+    const expectedPending = Array.from(withdrawalById.values())
+      .filter((item: any) => String(item?.status || '') === 'pending')
+      .map((item: any) => String(item.id));
+    const expectedApproved = Array.from(withdrawalById.values())
+      .filter((item: any) => String(item?.status || '') === 'approved')
+      .map((item: any) => String(item.id));
+    const expectedDenied = Array.from(withdrawalById.values())
+      .filter((item: any) => String(item?.status || '') === 'denied')
+      .map((item: any) => String(item.id));
+
+    const pendingSet = new Set(pending);
+    const approvedSet = new Set(approved);
+    const deniedSet = new Set(denied);
+
+    const nextPending = uniqueStringArray(expectedPending).filter((id) => !approvedSet.has(id) && !deniedSet.has(id));
+    const nextApproved = uniqueStringArray(expectedApproved).filter((id) => !deniedSet.has(id));
+    const nextDenied = uniqueStringArray(expectedDenied);
+
+    const queueChanges = {
+      pending: {
+        before: pending,
+        after: nextPending,
+        removed: pending.filter((id) => !nextPending.includes(id)),
+        added: nextPending.filter((id) => !pending.includes(id)),
+      },
+      approved: {
+        before: approved,
+        after: nextApproved,
+        removed: approved.filter((id) => !nextApproved.includes(id)),
+        added: nextApproved.filter((id) => !approved.includes(id)),
+      },
+      denied: {
+        before: denied,
+        after: nextDenied,
+        removed: denied.filter((id) => !nextDenied.includes(id)),
+        added: nextDenied.filter((id) => !denied.includes(id)),
+      },
+    };
+
+    if (!dryRun) {
+      await kv.set('withdrawals:pending', nextPending);
+      await kv.set('withdrawals:approved', nextApproved);
+      await kv.set('withdrawals:denied', nextDenied);
+    }
+
+    const operations = await kv.getByPrefix('finance:operation:') || [];
+    const staleInProgress = (operations || []).filter((operation: any) => {
+      if (String(operation?.status || '') !== 'in_progress') return false;
+      const startedAtMs = new Date(String(operation?.createdAt || operation?.updatedAt || '')).getTime();
+      return Number.isFinite(startedAtMs) && startedAtMs > 0 && startedAtMs < staleThresholdMs;
+    });
+
+    const markedStaleOperationIds: string[] = [];
+    if (!dryRun) {
+      for (const operation of staleInProgress) {
+        const operationId = String(operation?.id || '').trim();
+        if (!operationId) continue;
+        await finalizeFinancialOperation(operationId, 'failed', {
+          reason: `Marked stale after ${staleMinutes} minutes by reconciliation task`,
+          autoRecovered: false,
+        });
+        markedStaleOperationIds.push(operationId);
+      }
+    }
+
+    return c.json({
+      success: true,
+      dryRun,
+      staleMinutes,
+      withdrawalTotals: {
+        total: withdrawalById.size,
+        pending: expectedPending.length,
+        approved: expectedApproved.length,
+        denied: expectedDenied.length,
+      },
+      queueChanges,
+      staleOperations: {
+        detected: staleInProgress.map((operation: any) => String(operation?.id || '')).filter(Boolean),
+        markedFailed: markedStaleOperationIds,
+      },
+    });
+  } catch (error) {
+    console.error(`Error reconciling withdrawal state: ${error}`);
+    return c.json({ error: 'Internal server error while reconciling withdrawal state' }, 500);
+  }
+});
+
+// Live Chat: Send message
+app.post("/chat/messages", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error) return c.json({ error }, 401);
+
+    const { conversationId, message } = await c.req.json();
+    const user = await kv.get(`user:${userId}`);
+
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const msg = {
+      id: messageId,
+      conversationId,
+      userId,
+      userName: user.name,
+      message,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+
+    // Save message
+    await kv.set(`message:${messageId}`, msg);
+
+    // Add to conversation
+    const convMessages = await kv.get(`chat:messages:${conversationId}`) || [];
+    convMessages.push(messageId);
+    await kv.set(`chat:messages:${conversationId}`, convMessages);
+
+    return c.json({ success: true, message: msg });
+  } catch (error) {
+    console.error(`Error sending message: ${error}`);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// Live Chat: Get conversations
+app.get("/chat/conversations", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error) return c.json({ error }, 401);
+
+    const convIds = await kv.get(`chat:conversations:${userId}`) || [];
+    const conversations = [];
+
+    for (const convId of convIds) {
+      const conv = await kv.get(`chat:conversation:${convId}`);
+      if (conv) {
+        // Get last message
+        const messageIds = await kv.get(`chat:messages:${convId}`) || [];
+        const lastMsgId = messageIds[messageIds.length - 1];
+        const lastMsg = lastMsgId ? await kv.get(`message:${lastMsgId}`) : null;
+
+        conversations.push({
+          ...conv,
+          lastMessage: lastMsg,
+          messageCount: messageIds.length,
+        });
+      }
+    }
+
+    return c.json({
+      success: true,
+      conversations: conversations.sort((a: any, b: any) => 
+        new Date(b.lastMessage?.createdAt || b.createdAt).getTime() - 
+        new Date(a.lastMessage?.createdAt || a.createdAt).getTime()
+      ),
+    });
+  } catch (error) {
+    console.error(`Error fetching conversations: ${error}`);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// Live Chat: Get messages in conversation
+app.get("/chat/messages", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error) return c.json({ error }, 401);
+
+    const conversationId = c.req.query('conversationId');
+    const messageIds = await kv.get(`chat:messages:${conversationId}`) || [];
+    const messages = [];
+
+    for (const msgId of messageIds) {
+      const msg = await kv.get(`message:${msgId}`);
+      if (msg) messages.push(msg);
+    }
+
+    return c.json({
+      success: true,
+      messages: messages.sort((a: any, b: any) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      ),
+    });
+  } catch (error) {
+    console.error(`Error fetching messages: ${error}`);
+    return c.json({ error: "Internal server error" }, 500);
   }
 });
 
@@ -6996,281 +6975,6 @@ app.get("/faq/search", async (c) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// CHECK-IN SYSTEM
-// ─────────────────────────────────────────────────────────────
-
-const DEFAULT_CHECKIN_CONFIG = {
-  milestones: [
-    { day: 3,  reward: 500 },
-    { day: 5,  reward: 1000 },
-    { day: 15, reward: 1500 },
-    { day: 30, reward: 2000 },
-  ],
-  termsAndConditions: [
-    'Every user is required to complete 5 sets a day to be entitled.',
-    'Withdraw sets incentives are to be reflected on your account successively: 3, 5, 15 & 30 days.',
-  ],
-};
-
-const getCheckinConfig = async () => {
-  const stored = await kv.get('config:checkin') || {};
-  const milestones = Array.isArray(stored?.milestones) ? stored.milestones : DEFAULT_CHECKIN_CONFIG.milestones;
-  const terms = Array.isArray(stored?.termsAndConditions) ? stored.termsAndConditions : DEFAULT_CHECKIN_CONFIG.termsAndConditions;
-  return { milestones, termsAndConditions: terms };
-};
-
-// GET /check-in/status — returns user's current streak and milestone progress
-app.get('/check-in/status', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) return c.json({ error: 'Unauthorized' }, 401);
-    const { userId, error } = await verifyJWT(authHeader.replace('Bearer ', ''));
-    if (error || !userId) return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-
-    const profile = await kv.get(`user:${userId}`);
-    if (!profile) return c.json({ error: 'User not found' }, 404);
-
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const streak = Number(profile?.checkInStreak || 0);
-    const lastDate = String(profile?.lastCheckInDate || '');
-    const claimedMilestones: number[] = Array.isArray(profile?.claimedCheckInMilestones) ? profile.claimedCheckInMilestones : [];
-    const config = await getCheckinConfig();
-
-    const checkedInToday = lastDate === todayDate;
-    const nextMilestone = config.milestones.find((m: any) => !claimedMilestones.includes(m.day) && m.day > streak) || null;
-
-    return c.json({
-      success: true,
-      checkIn: {
-        streak,
-        lastCheckInDate: lastDate || null,
-        checkedInToday,
-        claimedMilestones,
-        milestones: config.milestones,
-        nextMilestone,
-        termsAndConditions: config.termsAndConditions,
-      },
-    });
-  } catch (err) {
-    console.error('Error fetching check-in status:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
-// POST /check-in — record today's check-in, award milestone rewards
-app.post('/check-in', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) return c.json({ error: 'Unauthorized' }, 401);
-    const { userId, error } = await verifyJWT(authHeader.replace('Bearer ', ''));
-    if (error || !userId) return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-
-    const profile = await kv.get(`user:${userId}`);
-    if (!profile) return c.json({ error: 'User not found' }, 404);
-
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const lastDate = String(profile?.lastCheckInDate || '');
-
-    if (lastDate === todayDate) {
-      return c.json({ error: 'Already checked in today', alreadyCheckedIn: true }, 409);
-    }
-
-    // Calculate new streak — consecutive day increments by 1; gap resets to 1
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayDate = yesterday.toISOString().slice(0, 10);
-    const currentStreak = Number(profile?.checkInStreak || 0);
-    const newStreak = lastDate === yesterdayDate ? currentStreak + 1 : 1;
-
-    const config = await getCheckinConfig();
-    const claimedMilestones: number[] = Array.isArray(profile?.claimedCheckInMilestones) ? [...profile.claimedCheckInMilestones] : [];
-
-    // Check for newly earned milestone
-    const earnedMilestone = config.milestones.find(
-      (m: any) => m.day === newStreak && !claimedMilestones.includes(m.day)
-    ) || null;
-
-    let newBalance = roundCurrency(Number(profile?.balance || 0));
-    if (earnedMilestone) {
-      newBalance = roundCurrency(newBalance + earnedMilestone.reward);
-      claimedMilestones.push(earnedMilestone.day);
-
-      // Log as bonus badge notification
-      const existingBadges = await kv.get(`bonus-badges:${userId}`) || [];
-      existingBadges.unshift({
-        id: `chk_${Date.now()}`,
-        category: 'reward',
-        amount: earnedMilestone.reward,
-        note: `Check-In Day ${earnedMilestone.day} reward`,
-        createdAt: new Date().toISOString(),
-        unread: true,
-      });
-      await kv.set(`bonus-badges:${userId}`, existingBadges.slice(0, 100));
-    }
-
-    const updatedProfile = {
-      ...profile,
-      checkInStreak: newStreak,
-      lastCheckInDate: todayDate,
-      claimedCheckInMilestones: claimedMilestones,
-      balance: newBalance,
-      updatedAt: new Date().toISOString(),
-    };
-    await kv.set(`user:${userId}`, updatedProfile);
-
-    const nextMilestone = config.milestones.find(
-      (m: any) => !claimedMilestones.includes(m.day) && m.day > newStreak
-    ) || null;
-
-    return c.json({
-      success: true,
-      checkIn: {
-        streak: newStreak,
-        lastCheckInDate: todayDate,
-        checkedInToday: true,
-        claimedMilestones,
-        milestones: config.milestones,
-        nextMilestone,
-        earnedMilestone,
-        newBalance,
-      },
-    });
-  } catch (err) {
-    console.error('Error processing check-in:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
-// ADMIN REWARDS / ACTIVITY CONFIG
-// ─────────────────────────────────────────────────────────────
-
-const DEFAULT_MEMBERSHIP_CONFIG = {
-  levels: [
-    {
-      level: 1,
-      name: 'Level 1',
-      icon: '🥈',
-      gradient: 'from-gray-600 to-gray-700',
-      headline: 'Level 1 Users Are Assigned General Usage Access To Data Collection',
-      features: [
-        'Applicable to most data collection situations of light to medium level of usage involving the products',
-        'Profits of 0.5% per set - 35 sets per day',
-        'Obtain profits of up to $300K per month',
-        'Up to 90 withdrawal timing a day',
-        'Allow access support for assistance',
-      ],
-    },
-    {
-      level: 2,
-      name: 'Level 2',
-      icon: '🥈',
-      gradient: 'from-gray-500 to-gray-600',
-      headline: 'Level 2 Users Are Assigned General Usage Access To Data Collection',
-      features: [
-        'Applicable to most data collection situations of light to medium level of usage involving the products',
-        'Profits of 0.75% per set - 40 sets per day',
-        'Up to 120 commission timing a day',
-        'Unlock access support for assistance',
-      ],
-    },
-    {
-      level: 3,
-      name: 'Level 3',
-      icon: '🥇',
-      gradient: 'from-yellow-500 to-yellow-600',
-      headline: 'Level 3 Users Are Assigned General Usage Access To Data Collection',
-      features: [
-        'Applicable to most data collection situations of light to medium level of usage involving the products',
-        'Profits of 1% per set - 45 sets per day',
-        'Up to 180 commission timing a day',
-        'Unlock access support for assistance',
-      ],
-    },
-  ],
-};
-
-// GET /admin/rewards/config — returns check-in milestones + membership tiers
-app.get('/admin/rewards/config', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.view');
-    if (!adminAccess.ok) return adminAccess.response;
-
-    const checkinConfig = await getCheckinConfig();
-    const membershipConfig = await kv.get('config:membership') || DEFAULT_MEMBERSHIP_CONFIG;
-
-    return c.json({
-      success: true,
-      config: {
-        checkIn: checkinConfig,
-        membership: membershipConfig,
-      },
-    });
-  } catch (err) {
-    console.error('Error fetching rewards config:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
-// PUT /admin/rewards/config — updates check-in milestones and/or membership tiers
-app.put('/admin/rewards/config', async (c) => {
-  try {
-    const adminAccess = await requireAdminPermission(c, 'users.adjust_balance');
-    if (!adminAccess.ok) return adminAccess.response;
-
-    const body = await c.req.json().catch(() => ({}));
-
-    if (body?.checkIn) {
-      const incoming = body.checkIn;
-      const current = await getCheckinConfig();
-
-      const milestones = Array.isArray(incoming?.milestones)
-        ? incoming.milestones
-            .filter((m: any) => Number.isInteger(Number(m?.day)) && Number(m?.day) > 0 && Number.isFinite(Number(m?.reward)) && Number(m?.reward) >= 0)
-            .map((m: any) => ({ day: Number(m.day), reward: roundCurrency(Number(m.reward)) }))
-            .sort((a: any, b: any) => a.day - b.day)
-        : current.milestones;
-
-      const terms = Array.isArray(incoming?.termsAndConditions)
-        ? incoming.termsAndConditions.map((t: any) => String(t || '').trim()).filter(Boolean)
-        : current.termsAndConditions;
-
-      await kv.set('config:checkin', { milestones, termsAndConditions: terms });
-    }
-
-    if (body?.membership) {
-      const incomingLevels = body.membership?.levels;
-      if (Array.isArray(incomingLevels)) {
-        const sanitizedLevels = incomingLevels.map((level: any) => ({
-          level: Number(level?.level || 0),
-          name: String(level?.name || ''),
-          icon: String(level?.icon || ''),
-          gradient: String(level?.gradient || ''),
-          headline: String(level?.headline || ''),
-          features: Array.isArray(level?.features) ? level.features.map((f: any) => String(f || '').trim()).filter(Boolean) : [],
-        }));
-        await kv.set('config:membership', { levels: sanitizedLevels });
-      }
-    }
-
-    await writeAdminAuditLog('users.adjust_balance', adminAccess, {
-      meta: { action: 'rewards_config_update', updatedSections: Object.keys(body) },
-    });
-
-    const checkinConfig = await getCheckinConfig();
-    const membershipConfig = await kv.get('config:membership') || DEFAULT_MEMBERSHIP_CONFIG;
-
-    return c.json({
-      success: true,
-      config: { checkIn: checkinConfig, membership: membershipConfig },
-    });
-  } catch (err) {
-    console.error('Error updating rewards config:', err);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
-
 // Route compatibility fallback
 // Supports legacy prefixed URLs by internally forwarding to canonical routes.
 app.all("*", async (c) => {
@@ -7320,7 +7024,7 @@ app.all("*", async (c) => {
 app.options('/*', (c) => {
   return c.text('', 204, {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization, Idempotency-Key, X-Idempotency-Key',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   });
 });

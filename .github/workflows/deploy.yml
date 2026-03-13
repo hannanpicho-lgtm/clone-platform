@@ -33,6 +33,18 @@ jobs:
         env:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+
+      - name: Run regression guards
+        run: npm run test:regression-guards
+        env:
+          FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+
+      - name: Run user task-flow canary
+        run: npm run test:canary:user-task
+        env:
+          FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_ADMIN_API_KEY: ${{ secrets.SUPABASE_ADMIN_API_KEY }}
   
   build:
     name: Build Artifacts
@@ -111,6 +123,18 @@ jobs:
         env:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+
+      - name: Post-Deployment Canary Guards
+        run: npm run test:regression-guards
+        env:
+          FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+
+      - name: Post-Deployment User Flow Canary
+        run: npm run test:canary:user-task
+        env:
+          FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_ADMIN_API_KEY: ${{ secrets.SUPABASE_ADMIN_API_KEY }}
       
       - name: Create Deployment
         uses: actions/github-script@v6

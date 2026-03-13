@@ -67,7 +67,25 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
         }
       );
 
-      if (!superAdminResponse || !superAdminResponse.ok) {
+      let superAdminValidated = Boolean(superAdminResponse && superAdminResponse.ok);
+
+      // Some production deployments disable the validate endpoint; fall back to an authenticated admin read.
+      if (!superAdminValidated && superAdminResponse?.status === 404) {
+        const fallbackResponse = await safeFetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/accounts`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${normalizedSecret}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        superAdminValidated = Boolean(fallbackResponse && fallbackResponse.ok);
+      }
+
+      if (!superAdminValidated) {
         const errorData = superAdminResponse ? await superAdminResponse.json().catch(() => ({})) : {};
         setError(errorData?.error || 'Invalid super admin key');
         setIsLoading(false);
