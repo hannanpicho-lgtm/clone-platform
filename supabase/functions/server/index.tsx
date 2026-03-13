@@ -3630,7 +3630,7 @@ app.post("/submit-product", async (c) => {
 
     // Multi-level commission cascade
     let currentParentId = userProfile.parentUserId;
-    let commissionAmount = productValue * 0.2; // Start with 20% for direct parent
+      let commissionAmount = normalizedValue * 0.2; // Start with 20% for direct parent
     let level = 1;
     const commissionLog = [];
 
@@ -6187,6 +6187,7 @@ app.get("/bonus-payouts", async (c) => {
 
 // Bonus Payouts: Claim a bonus
 app.post("/bonus-payouts/claim", async (c) => {
+  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader) {
@@ -6198,10 +6199,15 @@ app.post("/bonus-payouts/claim", async (c) => {
     if (error) return c.json({ error }, 401);
 
     const { bonusId } = await c.req.json();
+    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
+    if (!releaseFinancialLock) {
+      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
+    }
+
     const user = await kv.get(`user:${userId}`);
     if (!user) return c.json({ error: "User not found" }, 404);
 
-    // Fetch claimed bonuses
+    // Fetch claimed bonuses (re-read inside lock to prevent TOCTOU race)
     const claimedBonuses = await kv.get(`bonuses:claimed:${userId}`) || [];
     if (claimedBonuses.some((b: any) => b.id === bonusId)) {
       return c.json({ error: "Bonus already claimed" }, 400);
@@ -6267,6 +6273,8 @@ app.post("/bonus-payouts/claim", async (c) => {
   } catch (error) {
     console.error(`Error claiming bonus: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
+  } finally {
+    if (releaseFinancialLock) await releaseFinancialLock();
   }
 });
 

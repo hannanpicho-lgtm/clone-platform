@@ -18,6 +18,7 @@
     "test:premium": "node test-premium-endpoints.js",
     "test:audit:endpoints": "node scripts/audit-endpoint-contracts.mjs",
     "test:canary:user-task": "node scripts/canary-user-task-flow.mjs",
+      "test:audit:production": "node scripts/production-audit-tests.mjs",
     "support:links": "node scripts/set-support-links.mjs",
     "test:regression-guards": "node scripts/regression-guards.mjs",
     "test:smoke": "npm run test:endpoints && npm run test:customer-service && npm run test:premium",
