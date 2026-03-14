@@ -134,7 +134,7 @@ Cloudflare Pages automatically deploys whenever you:
 **Solution**:
 - First deployment is often slower
 - Subsequent loads should be faster
-- Check Cloudflare Pages's performance dashboard
+- Check the Cloudflare Pages performance dashboard
 
 ---
 
