@@ -7,6 +7,7 @@ import {
   Search, Edit2, Trash2, CheckCircle, XCircle, AlertCircle, 
   TrendingUp, Lock, Globe, Database, MessageSquare, Ticket, Copy, UserPlus
 } from 'lucide-react';
+import { supabaseUrl } from '/utils/supabase/info';
 
 interface AdminUser {
   id: string;
@@ -60,22 +61,12 @@ interface CustomerServiceCase {
   lastUpdate: string;
 }
 
+// Products state
+const [products, setProducts] = useState<any[]>([]);
+const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+
 export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
-  const functionHost = (() => {
-    const configured = String(import.meta.env.VITE_FUNCTION_HOST || '').trim();
-    if (configured) {
-      return configured.replace(/\/$/, '');
-    }
-    return window.location.hostname.includes('localhost')
-      ? 'http://localhost:54321'
-      : 'https://tpxgfjevorhdtwkesvcb.supabase.co';
-  })();
-
-  const functionBaseUrl = `${functionHost}/functions/v1/make-server-44a642d3`;
-
-  const [products, setProducts] = useState<any[]>([]);
-  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
-
+  const functionsBaseUrl = `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'products' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
@@ -94,13 +85,15 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchProducts = async () => {
       setIsLoadingProducts(true);
       try {
-        const response = await fetch(`${functionBaseUrl}/products`, {
+        const response = await fetch(`${functionsBaseUrl}/make-server-44a642d3/products`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
         });
+        console.log('Product fetch response status:', response.status);
         if (response.ok) {
           const data = await response.json();
+          console.log('Product fetch data:', data);
           setProducts(Array.isArray(data.products) ? data.products : []);
         } else {
           setProducts([]);
@@ -204,7 +197,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchSupportTickets = async () => {
       setIsLoadingSupport(true);
       try {
-        const response = await fetch(`${functionBaseUrl}/support-tickets`, {
+        const response = await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
@@ -223,7 +216,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
             })));
           } else {
             // Seed demo ticket if none found
-            await fetch(`${functionBaseUrl}/support-tickets`, {
+            await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
               method: 'POST',
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
@@ -237,7 +230,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
               }),
             });
             // Re-fetch tickets
-            const seededResponse = await fetch(`${functionBaseUrl}/support-tickets`, {
+            const seededResponse = await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
               },
@@ -813,7 +806,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                             setIsReplying(true);
                             try {
                               const response = await fetch(
-                                `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -846,7 +839,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                             setIsReplying(true);
                             try {
                               const response = await fetch(
-                                `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -888,7 +881,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                           setIsReplying(true);
                           try {
                             const response = await fetch(
-                              `${functionBaseUrl}/admin/support-tickets/${selectedTicket.id}/reply`,
+                              `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                               {
                                 method: 'POST',
                                 headers: {

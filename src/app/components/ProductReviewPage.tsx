@@ -1,11 +1,9 @@
 import { useState } from 'react';
-import { Button } from './ui/button';
-import { Menu, Bell, Star } from 'lucide-react';
+import { Menu, Bell, ShoppingCart, Star } from 'lucide-react';
 
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
   onCancel: () => void;
-  isSubmitting?: boolean;
   product: {
     name: string;
     image: string;
@@ -16,20 +14,18 @@ interface ProductReviewPageProps {
   };
 }
 
-export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = false }: ProductReviewPageProps) {
+export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReviewPageProps) {
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
   const [reviewType, setReviewType] = useState('');
   const [reviewText, setReviewText] = useState('');
 
   const handleSubmit = () => {
-    if (isSubmitting) return;
     onSubmit(rating, reviewText, reviewType);
   };
 
   return (
     <div className="fixed inset-0 z-[100] bg-gradient-to-br from-blue-700 via-blue-600 to-cyan-500 overflow-y-auto">
-      {/* Header */}
       <header className="bg-[#1a1d2e] text-white sticky top-0 z-50">
         <div className="flex items-center justify-between px-4 py-3">
           <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
@@ -43,67 +39,64 @@ export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = 
                 0
               </span>
             </button>
+            <button className="p-2 relative hover:bg-white/10 rounded-lg transition-colors">
+              <ShoppingCart className="h-5 w-5" />
+              <span className="absolute top-1 right-1 bg-white text-[#1a1d2e] text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                0
+              </span>
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Content */}
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        {/* Product Info */}
-        <div className="text-center mb-6">
-          {/* Product Image */}
-          <div className="mb-4 flex justify-center">
-            <div className="w-32 h-32 bg-white rounded-lg shadow-lg overflow-hidden">
-              <img 
-                src={product.image} 
+      <div className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="mb-5 flex justify-center">
+            <div className="w-44 h-44 sm:w-52 sm:h-52 bg-gray-100 rounded-xl shadow-lg overflow-hidden">
+              <img
+                src={product.image}
                 alt={product.name}
                 className="w-full h-full object-cover"
               />
             </div>
           </div>
 
-          {/* Product Name */}
-          <h2 className="text-xl font-bold text-gray-900 mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4 px-2">
             {product.name}
           </h2>
 
-          {/* Total Amount and Profit */}
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-2 gap-4 sm:gap-8 mb-4 max-w-xl mx-auto">
             <div>
               <p className="text-sm text-gray-700 mb-1">Total amount</p>
-              <p className="text-2xl font-bold text-red-600">
-                $ {product.totalAmount.toFixed(0)}
+              <p className="text-2xl sm:text-3xl font-bold text-red-600">
+                ${product.totalAmount.toFixed(0)}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-700 mb-1">Profit</p>
-              <p className="text-2xl font-bold text-red-600">
+              <p className="text-2xl sm:text-3xl font-bold text-red-600">
                 ${product.profit.toFixed(2)}
               </p>
             </div>
           </div>
 
-          {/* Creation Time */}
           <div className="mb-2">
             <p className="text-sm text-gray-700">Creation Time</p>
             <p className="text-gray-900 font-semibold">{product.creationTime}</p>
           </div>
 
-          {/* Rating Number */}
           <div>
             <p className="text-sm text-gray-700">Rating No.</p>
             <p className="text-gray-900 font-semibold">{product.ratingNo}</p>
           </div>
         </div>
 
-        {/* Rating Card */}
-        <div className="bg-cyan-400 rounded-lg p-6 shadow-xl border-4 border-cyan-300">
-          <h3 className="text-center text-xl font-bold text-gray-900 mb-4">
+        <div className="bg-cyan-400 rounded-lg p-4 sm:p-5 shadow-xl border-4 border-cyan-300 max-w-2xl mx-auto">
+          <h3 className="text-center text-lg sm:text-xl font-bold text-gray-900 mb-3">
             Rate Us Now
           </h3>
 
-          {/* Star Rating */}
-          <div className="flex justify-center gap-3 mb-6">
+          <div className="flex justify-center gap-2 sm:gap-3 mb-4">
             {[1, 2, 3, 4, 5].map((star) => (
               <button
                 key={star}
@@ -113,22 +106,21 @@ export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = 
                 className="transition-transform hover:scale-110 active:scale-95"
               >
                 <Star
-                  className={`h-10 w-10 ${
+                  className={`h-8 w-8 sm:h-9 sm:w-9 ${
                     star <= (hoveredRating || rating)
                       ? 'fill-gray-900 text-gray-900'
-                      : 'fill-white text-gray-900'
+                      : 'fill-gray-100 text-gray-900'
                   }`}
                 />
               </button>
             ))}
           </div>
 
-          {/* Review Options */}
-          <div className="mb-6">
-            <p className="text-center font-semibold text-gray-900 mb-4">
+          <div className="mb-4">
+            <p className="text-center font-semibold text-gray-900 mb-3 text-sm sm:text-base">
               Describe your Review (optional)
             </p>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="radio"
@@ -138,7 +130,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = 
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Excellent! I personally used it too, very Applicable
                 </span>
               </label>
@@ -151,7 +143,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = 
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Normal! Not used often but know the Product
                 </span>
               </label>
@@ -164,28 +156,31 @@ export function ProductReviewPage({ onSubmit, onCancel, product, isSubmitting = 
                   onChange={(e) => setReviewType(e.target.value)}
                   className="w-4 h-4"
                 />
-                <span className="text-white text-sm">
+                <span className="text-white text-xs sm:text-sm">
                   Opps! Not used or heard it before
                 </span>
               </label>
             </div>
           </div>
 
-          {/* Text Input */}
           <textarea
             value={reviewText}
             onChange={(e) => setReviewText(e.target.value)}
             placeholder="type here"
-            className="w-full h-24 px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:outline-none resize-none mb-4"
+            className="w-full h-20 sm:h-24 px-4 py-3 rounded-lg border-2 border-gray-300 bg-gray-100 focus:border-blue-500 focus:outline-none resize-none mb-3"
           />
 
-          {/* Submit Button */}
           <button
             onClick={handleSubmit}
-            disabled={isSubmitting}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition-colors active:scale-95"
           >
-            {isSubmitting ? 'Submitting...' : 'Submit'}
+            Submit
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full mt-2 bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold py-2.5 rounded-lg transition-colors"
+          >
+            Cancel
           </button>
         </div>
       </div>

@@ -12,3 +12,4 @@ export const publicAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGci
 
 // Optional: full Supabase URL (useful for local `supabase start`)
 export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || `https://${projectId}.supabase.co`;
+export const functionsBaseUrl = `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;

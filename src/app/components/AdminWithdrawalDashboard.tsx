@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
-import { AlertCircle, CheckCircle, Clock, DollarSign, Users, Bell } from 'lucide-react';
-import { toast } from 'sonner';
+import { AlertCircle, CheckCircle, Clock, DollarSign, Users } from 'lucide-react';
+import { functionsBaseUrl } from '/utils/supabase/info';
 
 interface WithdrawalRequest {
   id: string;
@@ -21,15 +21,13 @@ interface AdminWithdrawalDashboardProps {
   adminKey: string;
 }
 
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const BASE_URL = functionsBaseUrl;
 
 export function AdminWithdrawalDashboard({ adminKey }: AdminWithdrawalDashboardProps) {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const previousWithdrawalCountRef = useRef(0);
-  const previousWithdrawalsRef = useRef<WithdrawalRequest[]>([]);
   
   // Modal states
   const [approveModal, setApproveModal] = useState<{ id: string; userName: string; amount: number } | null>(null);
@@ -38,29 +36,6 @@ export function AdminWithdrawalDashboard({ adminKey }: AdminWithdrawalDashboardP
   
   // Processing states
   const [processingId, setProcessingId] = useState<string | null>(null);
-
-  // Play notification sound
-  const playNotificationSound = () => {
-    try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (err) {
-      console.error('Error playing notification sound:', err);
-    }
-  };
 
   // Fetch pending withdrawals
   const fetchWithdrawals = async () => {
@@ -79,49 +54,7 @@ export function AdminWithdrawalDashboard({ adminKey }: AdminWithdrawalDashboardP
         return;
       }
       
-      const fetchedWithdrawals = data.withdrawals || [];
-      
-      // Check for new withdrawals (on first load, previousWithdrawalCountRef.current will be 0)
-      if (previousWithdrawalCountRef.current > 0 && fetchedWithdrawals.length > previousWithdrawalCountRef.current) {
-        // Find new withdrawals
-        const newWithdrawals = fetchedWithdrawals.filter(
-          (w: WithdrawalRequest) => !previousWithdrawalsRef.current.find(pw => pw.id === w.id)
-        );
-        
-        // Show notification for each new withdrawal
-        newWithdrawals.forEach((withdrawal: WithdrawalRequest) => {
-          playNotificationSound();
-          toast.success(
-            `💰 New Withdrawal Request: ${withdrawal.userName} - $${withdrawal.amount.toFixed(2)}`,
-            {
-              duration: 10000,
-              position: 'top-right',
-              icon: <Bell className="w-5 h-5 text-blue-600" />,
-            }
-          );
-          
-          // Use browser notification if available
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('💰 New Withdrawal Request', {
-              body: `${withdrawal.userName} requested $${withdrawal.amount.toFixed(2)}`,
-              icon: '/icon.png',
-              tag: `withdrawal-${withdrawal.id}`,
-              requireInteraction: true,
-            });
-          }
-        });
-      }
-      
-      // Request notification permission on first successful fetch
-      if (previousWithdrawalCountRef.current === 0 && 'Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-      
-      // Update refs
-      previousWithdrawalCountRef.current = fetchedWithdrawals.length;
-      previousWithdrawalsRef.current = fetchedWithdrawals;
-      
-      setWithdrawals(fetchedWithdrawals);
+      setWithdrawals(data.withdrawals || []);
     } catch (err) {
       console.error('Error fetching withdrawals:', err);
       setError('Failed to fetch withdrawals');

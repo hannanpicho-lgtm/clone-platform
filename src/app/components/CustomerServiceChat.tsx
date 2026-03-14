@@ -24,12 +24,10 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
-  const isRefreshingRef = useRef(false);
-  const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string; whatsapp2: string; telegram2: string }>({
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string }>({
     whatsapp: 'https://wa.me/1234567890',
     telegram: 'https://t.me/tanknewmedia_support',
-    whatsapp2: '',
-    telegram2: '',
   });
 
   const baseUrl = useMemo(() => `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`, []);
@@ -69,9 +67,12 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     return mapped;
   };
 
-  const loadContactLinks = async () => {
+  const loadTicketState = async () => {
     try {
-      const linksResponse = await fetch(`${baseUrl}/contact-links`, {
+      setIsLoading(true);
+      const resolvedBase = baseUrl;
+
+      const linksResponse = await fetch(`${resolvedBase}/contact-links`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (linksResponse.ok) {
@@ -80,26 +81,9 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
           setContactLinks({
             whatsapp: String(linksData.config.whatsapp || 'https://wa.me/1234567890'),
             telegram: String(linksData.config.telegram || 'https://t.me/tanknewmedia_support'),
-            whatsapp2: String(linksData.config.whatsapp2 || ''),
-            telegram2: String(linksData.config.telegram2 || ''),
           });
         }
       }
-    } catch {
-    }
-  };
-
-  const loadTicketState = async (silent = false) => {
-    if (isRefreshingRef.current) {
-      return;
-    }
-
-    isRefreshingRef.current = true;
-    try {
-      if (!silent) {
-        setIsLoading(true);
-      }
-      const resolvedBase = baseUrl;
 
       const ticketsResponse = await fetch(`${resolvedBase}/support-tickets`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -111,7 +95,12 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
       const ticketsData = await ticketsResponse.json().catch(() => ({}));
       const tickets = Array.isArray(ticketsData?.tickets) ? ticketsData.tickets : [];
-      const activeTicket = tickets.find((ticket: any) => ticket?.status !== 'resolved') || tickets[0] || null;
+      const sortedTickets = [...tickets].sort((a: any, b: any) => {
+        const bTime = new Date(String(b?.updatedAt || b?.createdAt || 0)).getTime();
+        const aTime = new Date(String(a?.updatedAt || a?.createdAt || 0)).getTime();
+        return bTime - aTime;
+      });
+      const activeTicket = sortedTickets.find((ticket: any) => ticket?.status !== 'resolved') || sortedTickets[0] || null;
 
       if (activeTicket?.id) {
         setActiveTicketId(String(activeTicket.id));
@@ -123,21 +112,19 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
     } catch {
       setMessages(mapTicketToMessages(null));
     } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
-      isRefreshingRef.current = false;
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadContactLinks();
-    loadTicketState(false);
-    const interval = setInterval(() => {
-      loadTicketState(true);
-    }, 7000);
+    loadTicketState();
+    const interval = setInterval(loadTicketState, 7000);
     return () => clearInterval(interval);
   }, [accessToken]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages]);
 
   const handleSendMessage = () => {
     if (!inputMessage.trim() || isSending) return;
@@ -259,7 +246,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-          {isLoading && messages.length === 0 && (
+          {isLoading && (
             <div className="text-xs text-gray-500">Loading customer service thread...</div>
           )}
 
@@ -286,56 +273,30 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
               </div>
             </div>
           ))}
+          <div ref={messagesEndRef} />
 
           {/* Info Message */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <p className="text-xs text-blue-800">
               <strong>Note:</strong> All chats are monitored by admin. Messages sent here will be reviewed and responded to by our support team.
             </p>
-            <div className="mt-2 flex gap-2 flex-wrap">
-              {contactLinks.whatsapp.trim() && (
-                <a
-                  href={contactLinks.whatsapp}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
-                >
-                  WhatsApp 1
-                </a>
-              )}
-              {contactLinks.whatsapp2.trim() && (
-                <a
-                  href={contactLinks.whatsapp2}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
-                >
-                  WhatsApp 2
-                </a>
-              )}
-              {contactLinks.telegram.trim() && (
-                <a
-                  href={contactLinks.telegram}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
-                >
-                  Telegram 1
-                </a>
-              )}
-              {contactLinks.telegram2.trim() && (
-                <a
-                  href={contactLinks.telegram2}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
-                >
-                  Telegram 2
-                </a>
-              )}
-              {!contactLinks.whatsapp.trim() && !contactLinks.whatsapp2.trim() && !contactLinks.telegram.trim() && !contactLinks.telegram2.trim() && (
-                <span className="text-xs text-blue-700">Support links are currently unavailable.</span>
-              )}
+            <div className="mt-2 flex gap-2">
+              <a
+                href={contactLinks.whatsapp}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+              >
+                WhatsApp
+              </a>
+              <a
+                href={contactLinks.telegram}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-700"
+              >
+                Telegram
+              </a>
             </div>
           </div>
         </div>

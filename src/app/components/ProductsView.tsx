@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Card, CardContent } from './ui/card';
+import { getVipTierConfig } from './vipConfig';
 
 interface ProductsViewProps {
   vipTier: string;
@@ -17,6 +18,16 @@ interface ProductsViewProps {
   freezeAmount?: number;
   activePremiumAssignment?: {
     orderId?: string;
+    amount?: number;
+    enteredAmount?: number;
+    bundleProductCount?: number;
+    bundleItems?: Array<{
+      name: string;
+      type: 'premium' | 'individual';
+      amount: number;
+    }>;
+    previousBalance?: number;
+    balanceAfterAssignment?: number;
     topUpRequired?: number;
     assignedAt?: string;
     encounteredAt?: string | null;
@@ -55,63 +66,50 @@ export function ProductsView({
   onClearActionNotice,
 }: ProductsViewProps) {
   const [uiMessage, setUiMessage] = useState('');
-  
-  const getTasksPerSet = () => {
-    switch (vipTier) {
-      case 'Diamond':
-        return 55;
-      case 'Platinum':
-        return 50;
-      case 'Gold':
-        return 45;
-      case 'Silver':
-        return 40;
-      default:
-        return 35;
-    }
-  };
-
-  const maxProducts = getTasksPerSet();
-  const commissionRate = vipTier === 'Diamond' ? 0.015 : vipTier === 'Platinum' ? 0.0125 : vipTier === 'Gold' ? 0.01 : vipTier === 'Silver' ? 0.0075 : 0.005;
-  
-  // Minimum balance required to start tasks (hard rule)
-  const getMinimumBalance = () => {
-    switch(vipTier) {
-      case 'Diamond':
-        return 9999;
-      case 'Platinum':
-        return 1999;
-      case 'Gold':
-        return 599;
-      case 'Silver':
-        return 399;
-      default:
-        return 100;
-    }
-  };
-  
-  const minimumBalance = getMinimumBalance();
+  const tierConfig = getVipTierConfig(vipTier);
+  const maxProducts = tierConfig.productsPerSet;
+  const commissionRate = tierConfig.commissionRate;
+  const minimumBalance = tierConfig.minimumBalance;
   const hasMinimumBalance = balance >= minimumBalance;
   const completedTasksInCurrentSet = Math.max(0, Math.min(maxProducts, Number(currentSetTasksCompleted || 0)));
   const canStartBasedOnBalance = hasMinimumBalance;
   
-  // VIP tier product amount ranges based on tier pricing
-  const getProductAmountRange = () => {
-    switch(vipTier) {
-      case 'Diamond':
-        return { min: 9999, max: 19998 }; // Diamond tier: $9,999 - $19,998
-      case 'Platinum':
-        return { min: 1999, max: 9998 }; // Platinum tier: $1,999 - $9,998
-      case 'Gold':
-        return { min: 599, max: 1998 }; // Gold tier: $599 - $1,998
-      case 'Silver':
-        return { min: 399, max: 598 }; // Silver tier: $399 - $598
-      default:
-        return { min: 99, max: 398 }; // Normal tier: $99 - $398
-    }
-  };
-  
-  const productRange = getProductAmountRange();
+  const productRange = { min: tierConfig.productMin, max: tierConfig.productMax };
+  const assignmentBundleItems = Array.isArray(activePremiumAssignment?.bundleItems)
+    ? activePremiumAssignment!.bundleItems
+    : [];
+  const bundleTotalValue = assignmentBundleItems.length > 0
+    ? assignmentBundleItems.reduce((sum, item) => sum + Number(item?.amount || 0), 0)
+    : Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? freezeAmount ?? 0);
+  const topUpFromServer = Number(activePremiumAssignment?.topUpRequired ?? 0);
+  const inferredTopUpFromBalance = Math.max(0, -Number(balance || 0));
+  const fallbackTopUp = Math.max(topUpFromServer, inferredTopUpFromBalance);
+  const balanceBeforeAssignment = Number.isFinite(Number(activePremiumAssignment?.previousBalance))
+    ? Number(activePremiumAssignment?.previousBalance)
+    : Math.max(0, bundleTotalValue - fallbackTopUp);
+  const calculatedTopUpRaw = bundleTotalValue - balanceBeforeAssignment;
+  const calculatedTopUp = Math.max(0, calculatedTopUpRaw);
+  const displayedNegative = calculatedTopUp > 0 ? -calculatedTopUp : Number(balance || 0);
+  const topUpToDisplay = Math.max(calculatedTopUp, fallbackTopUp);
+  const premiumProductValue = Math.max(
+    0,
+    Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? freezeAmount ?? 0),
+  );
+  const hasPremiumSnapshot = Boolean(accountFrozen) && premiumProductValue > 0;
+  const balanceBeforePremium = Number.isFinite(Number(activePremiumAssignment?.previousBalance))
+    ? Number(activePremiumAssignment?.previousBalance)
+    : Number(balance || 0);
+  const displayBalance = hasPremiumSnapshot
+    ? (balanceBeforePremium + premiumProductValue)
+    : Number(balance || 0);
+  const frozenCurrentBalance = hasPremiumSnapshot ? balanceBeforePremium : null;
+  const displayTodaysCommission = hasPremiumSnapshot
+    ? (premiumProductValue + Number(todaysProfit || 0))
+    : Math.max(0, Number(todaysProfit || 0));
+  const activeHoldAmount = premiumProductValue > 0
+    ? premiumProductValue
+    : Math.max(Number(freezeAmount || 0), Number(topUpToDisplay || 0), -Number(balance || 0));
+  const displayHoldAmount = accountFrozen ? -Math.max(0, activeHoldAmount) : 0;
   
   // Sample product names
   const productNames = [
@@ -350,15 +348,8 @@ export function ProductsView({
               </div>
             </div>
 
-            {/* Minimum Balance Rule */}
-            <div className="mb-3 bg-blue-50 border-l-4 border-blue-500 p-3 rounded">
-              <p className="text-sm font-medium text-blue-800">
-                Minimum required balance for {vipTier} tier: <span className="font-bold">${minimumBalance.toFixed(2)}</span>
-              </p>
-              <p className="text-xs text-blue-700 mt-1">Current balance: ${balance.toFixed(2)}</p>
-            </div>
-
-            {!canStartBasedOnBalance && (
+            {/* Minimum Balance Warning */}
+            {!canStartBasedOnBalance && !accountFrozen && (
               <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded">
                 <div className="flex items-start">
                   <div className="flex-shrink-0">
@@ -368,7 +359,7 @@ export function ProductsView({
                   </div>
                   <div className="ml-3">
                     <p className="text-sm font-medium text-red-800">
-                      Insufficient Balance: You need at least <span className="font-bold">${minimumBalance.toFixed(2)}</span> to start/submit tasks for {vipTier} tier.
+                      Insufficient Balance: You need at least <span className="font-bold">${minimumBalance.toFixed(2)}</span> to start tasks for {vipTier} tier.
                     </p>
                     <p className="text-xs text-red-700 mt-1">
                       Please deposit funds to continue. Current balance: ${balance.toFixed(2)}
@@ -380,32 +371,19 @@ export function ProductsView({
 
             {/* Start Button */}
             {accountFrozen && (
-              <div className="mb-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-2 py-1 shadow-lg rounded-md">
-                <div className="flex items-center gap-1.5">
-                  <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <div className="mb-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-3 py-2 shadow-lg rounded-md">
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                   </svg>
                   <div className="flex-1">
-                    <h3 className="text-[10px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
-                    <p className="text-[9px] opacity-90 leading-tight">
-                      Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount ?? 0)).toFixed(2)}
-                    </p>
-                    {activePremiumAssignment?.orderId && (
-                      <p className="text-[9px] opacity-90 leading-tight mt-0.5">
-                        Order: {activePremiumAssignment.orderId}
-                        {activePremiumAssignment?.encounteredAt
-                          ? ` · ${new Date(activePremiumAssignment.encounteredAt).toLocaleString()}`
-                          : (activePremiumAssignment?.assignedAt ? ` · ${new Date(activePremiumAssignment.assignedAt).toLocaleString()}` : '')}
-                      </p>
-                    )}
-                    {activePremiumAssignment?.encounteredTaskNumber && (
-                      <p className="text-[9px] opacity-90 leading-tight">Encountered at task #{activePremiumAssignment.encounteredTaskNumber}</p>
-                    )}
+                    <h3 className="text-xs font-bold leading-tight">ACCOUNT FROZEN</h3>
+                    <p className="text-[11px] opacity-95 leading-tight mt-0.5">Please contact Customer Service.</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => onContactSupport?.()}
-                    className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[9px] px-1.5 py-0.5 h-auto rounded"
+                    className="bg-white text-purple-600 hover:bg-gray-100 font-bold text-[10px] px-2 py-1 h-auto rounded"
                   >
                     📞 Contact Customer Service
                   </button>
@@ -418,14 +396,18 @@ export function ProductsView({
                 onClick={handleStart}
                 disabled={completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen}
                 className={`
-                  w-32 h-32 rounded-full shadow-2xl
+                  group relative w-36 h-36 rounded-full border-4
                   flex items-center justify-center
-                  text-white text-xl font-bold
-                  transition-all duration-300
-                  ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600 hover:scale-105 active:scale-95'}
+                  text-white text-2xl font-black tracking-wide
+                  transition-all duration-300 ease-out
+                  ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen
+                    ? 'bg-gray-400 border-gray-300 cursor-not-allowed shadow-md'
+                    : 'bg-gradient-to-br from-teal-400 via-cyan-500 to-blue-600 border-white/70 shadow-[0_12px_30px_rgba(14,116,144,0.45)] hover:scale-110 hover:shadow-[0_16px_40px_rgba(2,132,199,0.55)] active:scale-95'}
                 `}
               >
-                {completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start'}
+                <span className={`${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen ? '' : 'drop-shadow-lg group-hover:tracking-widest transition-all duration-300'}`}>
+                  {completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start'}
+                </span>
               </button>
             </div>
 
@@ -487,10 +469,10 @@ export function ProductsView({
               </motion.div>
             )}
 
-            {/* Balance Display */}
-            <div className="grid grid-cols-2 border-t-4 border-black">
-              {/* Asset Balance */}
-              <div className="border-r-2 border-black py-6 px-4 text-center">
+            {/* Financial Summary */}
+            <div className="grid grid-cols-1 md:grid-cols-3 border-t-4 border-black">
+              {/* Balance */}
+              <div className="md:border-r-2 border-black py-6 px-4 text-center">
                 <div className="flex justify-center mb-2">
                   <div className="w-12 h-12 bg-blue-900 rounded-full flex items-center justify-center">
                     <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -499,13 +481,19 @@ export function ProductsView({
                     </svg>
                   </div>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">Asset Balance</h3>
-                <p className="text-2xl font-bold text-gray-900 mb-2">${balance.toFixed(2)}</p>
-                <p className="text-xs text-gray-600">Daily profit will be added to Asset</p>
+                <h3 className="font-bold text-gray-900 mb-2">Balance</h3>
+                <p className="text-2xl font-bold text-gray-900 mb-2">${displayBalance.toFixed(2)}</p>
+                {frozenCurrentBalance !== null && (
+                  <div className="mb-2 rounded-lg border-2 border-blue-300 bg-blue-50 px-3 py-2">
+                    <p className="text-sm font-bold uppercase tracking-wide text-blue-900">Current Balance</p>
+                    <p className="text-2xl font-black text-blue-900">${frozenCurrentBalance.toFixed(2)}</p>
+                  </div>
+                )}
+                <p className="text-xs text-gray-600">Balance = current balance + premium value.</p>
               </div>
 
-              {/* Today's Profit */}
-              <div className="py-6 px-4 text-center">
+              {/* Today's Commission */}
+              <div className="md:border-r-2 border-black border-t md:border-t-0 border-black py-6 px-4 text-center">
                 <div className="flex justify-center mb-2">
                   <div className="w-12 h-12 bg-white border-2 border-gray-300 rounded-full flex items-center justify-center">
                     <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -513,9 +501,21 @@ export function ProductsView({
                     </svg>
                   </div>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">Today's Profit</h3>
-                <p className="text-2xl font-bold text-gray-900 mb-2">${todaysProfit.toFixed(2)}</p>
-                <p className="text-xs text-gray-600">Today's Profit to be reset daily</p>
+                <h3 className="font-bold text-gray-900 mb-2">Today's Commission</h3>
+                <p className="text-2xl font-bold text-gray-900 mb-2">${displayTodaysCommission.toFixed(2)}</p>
+                <p className="text-xs text-gray-600">Commission = premium value + today's earned profit.</p>
+              </div>
+
+              {/* Hold Amount */}
+              <div className="border-t md:border-t-0 border-black py-6 px-4 text-center">
+                <div className="flex justify-center mb-2">
+                  <div className="w-12 h-12 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center">
+                    <span className="text-xl">❄</span>
+                  </div>
+                </div>
+                <h3 className="font-bold text-gray-900 mb-2">Hold Amount</h3>
+                <p className={`text-2xl font-bold mb-2 ${displayHoldAmount < 0 ? 'text-red-600' : 'text-gray-900'}`}>${displayHoldAmount.toFixed(2)}</p>
+                <p className="text-xs text-gray-600">Negative value indicates active premium hold amount.</p>
               </div>
             </div>
           </CardContent>
