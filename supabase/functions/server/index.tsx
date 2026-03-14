@@ -1063,7 +1063,6 @@ const getRequesterIp = (c: any): string => {
 const getRequesterCountry = (c: any): string => {
   const countryCode = String(
     c.req.header('cf-ipcountry') ||
-    c.req.header('x-vercel-ip-country') ||
     c.req.header('x-country-code') ||
     '',
   ).trim().toUpperCase();
@@ -1358,6 +1357,34 @@ const removeQueueId = async (queueKey: string, id: string): Promise<string[]> =>
   const updated = queue.filter((value: string) => value !== id);
   await kv.set(queueKey, updated);
   return updated;
+};
+
+const buildWithdrawalStoreKey = (withdrawalId: string): string => `withdrawal:${String(withdrawalId || '').trim()}`;
+
+const buildUserWithdrawalIndexKey = (userId: string): string => `withdrawals:user:${String(userId || '').trim()}`;
+
+const appendUserWithdrawalIndex = async (userId: string, withdrawalId: string): Promise<string[]> => {
+  return appendUniqueQueueId(buildUserWithdrawalIndexKey(userId), String(withdrawalId), 5000);
+};
+
+const removeUserWithdrawalIndex = async (userId: string, withdrawalId: string): Promise<string[]> => {
+  return removeQueueId(buildUserWithdrawalIndexKey(userId), String(withdrawalId));
+};
+
+const listWithdrawalsByUserId = async (userId: string): Promise<any[]> => {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const indexedIds = uniqueStringArray(await kv.get(buildUserWithdrawalIndexKey(normalizedUserId)) || []);
+  if (indexedIds.length > 0) {
+    const records = await kv.mget(indexedIds.map((id) => buildWithdrawalStoreKey(id)));
+    return (records || []).filter((entry: any) => String(entry?.userId || '') === normalizedUserId);
+  }
+
+  const fallback = await kv.getByPrefix('withdrawal:');
+  return (fallback || []).filter((entry: any) => String(entry?.userId || '') === normalizedUserId);
 };
 
 const createFinancialOperation = async (
@@ -4489,7 +4516,8 @@ app.post("/request-withdrawal", async (c) => {
     };
 
     // Store withdrawal request
-    await kv.set(`withdrawal:${withdrawalId}`, withdrawalRequest);
+    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawalRequest);
+    await appendUserWithdrawalIndex(String(userId), withdrawalId);
     await appendFinancialOperationStep(operationId, 'withdrawal_record_created', {
       withdrawalId,
     });
@@ -4527,7 +4555,10 @@ app.post("/request-withdrawal", async (c) => {
     }
 
     if (createdWithdrawalId) {
-      await kv.del(`withdrawal:${createdWithdrawalId}`).catch(() => undefined);
+      await kv.del(buildWithdrawalStoreKey(createdWithdrawalId)).catch(() => undefined);
+      if (reservedUserId) {
+        await removeUserWithdrawalIndex(reservedUserId, createdWithdrawalId).catch(() => undefined);
+      }
     }
     if (queuedPending && createdWithdrawalId) {
       await removeQueueId('withdrawals:pending', createdWithdrawalId).catch(() => undefined);
@@ -4579,9 +4610,7 @@ app.get("/withdrawal-history", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    // Get all withdrawals for this user
-    const allWithdrawals = await kv.getByPrefix('withdrawal:');
-    const userWithdrawals = (allWithdrawals || [])
+    const userWithdrawals = (await listWithdrawalsByUserId(String(userId)))
       .filter((w: any) => w?.userId === userId)
       .sort((a: any, b: any) => 
         new Date(b?.requestedAt || 0).getTime() - new Date(a?.requestedAt || 0).getTime()
@@ -4660,7 +4689,7 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: 'Idempotency-Key header is required' }, 400);
     }
 
-    const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+    const withdrawal = await kv.get(buildWithdrawalStoreKey(withdrawalId));
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
     }
@@ -4723,7 +4752,7 @@ app.post("/admin/approve-withdrawal", async (c) => {
     withdrawal.status = 'approved';
     withdrawal.approvedAt = new Date().toISOString();
     withdrawal.fundsReserved = Boolean(withdrawal.fundsReserved);
-    await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
+    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawal);
 
     // Remove from pending queue
     await removeQueueId('withdrawals:pending', withdrawalId);
@@ -4785,7 +4814,7 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: 'Idempotency-Key header is required' }, 400);
     }
 
-    const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
+    const withdrawal = await kv.get(buildWithdrawalStoreKey(withdrawalId));
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
     }
@@ -4840,7 +4869,7 @@ app.post("/admin/deny-withdrawal", async (c) => {
     withdrawal.status = 'denied';
     withdrawal.deniedAt = new Date().toISOString();
     withdrawal.denialReason = denialReason || 'Not specified';
-    await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
+    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawal);
 
     // Remove from pending queue
     await removeQueueId('withdrawals:pending', withdrawalId);
