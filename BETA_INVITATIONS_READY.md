@@ -1,7 +1,7 @@
 # Beta Tester Invitations - Ready to Send
 
 **Deployment Date:** February 23, 2026  
-**Platform URL:** https://iridescent-basbousa-b72341.netlify.app  
+**Platform URL:** https://tanknewmedia.work  
 **Admin Access:** /admin (password: admin123)  
 **Daily Standup:** 5 PM EST (starting today)
 
@@ -22,13 +22,13 @@ Hi HP,
 Great news! You've been selected as a **beta tester** for Clone Platform. We're launching today and need your feedback.
 
 **Get Started:**
-1. Visit: https://iridescent-basbousa-b72341.netlify.app
+1. Visit: https://tanknewmedia.work
 2. Sign up with any email and password
 3. Start exploring and submitting products
 4. Share your invitation code with others to test referrals
 
 **Admin Access (if needed):**
-- URL: https://iridescent-basbousa-b72341.netlify.app/admin
+- URL: https://tanknewmedia.work/admin
 - Password: admin123
 
 **What to Test:**
@@ -64,13 +64,13 @@ Hi Hansen,
 Exciting news! You're invited to beta test Clone Platform starting TODAY. We need your help finding bugs and testing on mobile.
 
 **Get Started:**
-1. Visit: https://iridescent-basbousa-b72341.netlify.app
+1. Visit: https://tanknewmedia.work
 2. Sign up with any email and password
 3. Explore on your phone/tablet
 4. Test all features and report what breaks
 
 **Admin Access (if needed):**
-- URL: https://iridescent-basbousa-b72341.netlify.app/admin
+- URL: https://tanknewmedia.work/admin
 - Password: admin123
 
 **What to Test:**
@@ -106,7 +106,7 @@ Thanks for testing! 🙌
 
 **Right Now:**
 - [x] Fix admin dashboard (AdminDashboard showing all features)
-- [x] Deploy to Netlify
+- [x] Deploy to Cloudflare Pages
 - [ ] Send invitations to 2 beta testers
 - [ ] Set up daily standup meeting
 - [ ] Monitor backend for any issues

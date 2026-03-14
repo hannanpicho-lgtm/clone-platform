@@ -30,9 +30,9 @@ All backend infrastructure is production-ready and tested. Frontend is built and
 - **Build Size**: 752 KB JS, 160 KB CSS (gzipped)
 - **Modules**: 2,093 transformed
 - **Build Time**: 14.87 seconds
-- **Target**: Vercel (recommended)
+- **Target**: Cloudflare Pages (recommended)
 - **Deployment Time**: ~5 minutes
-- **Status**: GUIDE PROVIDED (QUICK_VERCEL_DEPLOYMENT.md)
+- **Status**: GUIDE PROVIDED (QUICK_CLOUDFLARE_DEPLOYMENT.md)
 
 ### ✅ Database
 - **Service**: Supabase PostgreSQL + KV Store
@@ -80,7 +80,7 @@ All backend infrastructure is production-ready and tested. Frontend is built and
 ✅ Scale-up strategy for public launch  
 
 ### What You Need to Do (24 Hours)
-1. **Deploy Frontend** (5 min) - Use QUICK_VERCEL_DEPLOYMENT.md
+1. **Deploy Frontend** (5 min) - Use QUICK_CLOUDFLARE_DEPLOYMENT.md
 2. **Test Production Frontend** (10 min) - Sign up, baseline testing
 3. **Select Beta Users** (30 min) - Fill BETA_USER_SELECTION_TEMPLATE.md
 4. **Create Beta Accounts** (15 min) - Via frontend signup
@@ -156,7 +156,7 @@ Mar 1+:
 ## Critical Path Items
 
 ### Before Beta Launch (Required)
-- [ ] Frontend deployed to Vercel ← **YOUR NEXT STEP**
+- [ ] Frontend deployed to Cloudflare Pages ← **YOUR NEXT STEP**
 - [ ] Test frontend loads correctly
 - [ ] Verify backend connectivity from frontend
 - [ ] Create beta user accounts
@@ -185,7 +185,7 @@ Mar 1+:
 ### Deployment & Launch
 - ✅ FINAL_SUMMARY.md - Production status overview
 - ✅ FRONTEND_DEPLOYMENT_GUIDE.md - 4 deployment options
-- ✅ QUICK_VERCEL_DEPLOYMENT.md - Fast Vercel setup (5 min)
+- ✅ QUICK_CLOUDFLARE_DEPLOYMENT.md - Fast Cloudflare Pages setup (5 min)
 - ✅ BETA_LAUNCH_PLAN.md - Complete launch strategy
 - ✅ BETA_USER_SELECTION_TEMPLATE.md - User selection & tracking
 
@@ -253,9 +253,9 @@ Mar 1+:
 ## Next Immediate Actions
 
 ### Right Now (Next 30 minutes)
-1. **Review QUICK_VERCEL_DEPLOYMENT.md** (2 min read)
-2. **Start Vercel deployment** (follow 9 steps in guide)
-3. **Wait for Vercel to build** (1-2 minutes)
+1. **Review QUICK_CLOUDFLARE_DEPLOYMENT.md** (2 min read)
+2. **Start Cloudflare Pages deployment** (follow 9 steps in guide)
+3. **Wait for Cloudflare Pages to build** (1-2 minutes)
 4. **Test frontend loads** (1 minute)
 
 ### Next 2 Hours
@@ -275,7 +275,7 @@ Mar 1+:
 ## Resource Links
 
 ### Quick Reference
-- **Frontend URL**: https://your-vercel-app.vercel.app (add after deployment)
+- **Frontend URL**: https://your-Cloudflare Pages-app.pages.dev (add after deployment)
 - **Backend URL**: https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3
 - **Admin Email**: admin@cloneplatform.com
 - **Admin Password**: AdminPass@123
@@ -283,7 +283,7 @@ Mar 1+:
 - **Supabase Project**: tpxgfjevorhdtwkesvcb
 
 ### Key Guides
-1. QUICK_VERCEL_DEPLOYMENT.md - Follow this next (5 min)
+1. QUICK_CLOUDFLARE_DEPLOYMENT.md - Follow this next (5 min)
 2. BETA_USER_SELECTION_TEMPLATE.md - Fill this after (30 min)
 3. BETA_LAUNCH_PLAN.md - Reference this week (detailed plan)
 4. FRONTEND_DEPLOYMENT_GUIDE.md - Alternative deployment options
@@ -343,7 +343,7 @@ You've built a complete, production-ready platform in one session:
 ## Questions?
 
 Refer to:
-1. **Deployment questions** → QUICK_VERCEL_DEPLOYMENT.md
+1. **Deployment questions** → QUICK_CLOUDFLARE_DEPLOYMENT.md
 2. **API questions** → API_REFERENCE.md
 3. **Operations questions** → OPERATIONS_RUNBOOK.md
 4. **Launch questions** → BETA_LAUNCH_PLAN.md

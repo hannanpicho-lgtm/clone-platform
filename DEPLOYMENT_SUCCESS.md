@@ -166,7 +166,7 @@ https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3
 ```
 
 **Dashboard** (Frontend):
-- Deploy `dist/` folder to Vercel, Netlify, or Supabase Hosting
+- Deploy `dist/` folder to Cloudflare Pages or Supabase Hosting
 - Or run locally: `npm run dev`
 
 **Admin Panel**:

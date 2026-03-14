@@ -1,9 +1,9 @@
 # Day 1 Beta Smoke Test (10 Minutes)
 
 **Date:** February 23, 2026  
-**Environment:** Production (Netlify)  
-**App URL:** https://iridescent-basbousa-b72341.netlify.app  
-**Admin URL:** https://iridescent-basbousa-b72341.netlify.app/admin
+**Environment:** Production (Cloudflare Pages)  
+**App URL:** https://tanknewmedia.work  
+**Admin URL:** https://tanknewmedia.work/admin
 
 ---
 

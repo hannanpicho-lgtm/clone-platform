@@ -118,7 +118,7 @@ Fill in the blanks below with your selected beta users. Mix of different user ty
 ## Beta User Creation Instructions
 
 ### Using Frontend UI
-1. Go to your deployed app: https://your-app.vercel.app
+1. Go to your deployed app: https://your-app.pages.dev
 2. Click "Sign Up"
 3. Enter user details:
    - Email: [from list above]

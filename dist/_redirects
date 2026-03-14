@@ -1,3 +1,0 @@
-/admin    https://tank-admin-portal.tanknewmedia.work    302
-/admin/*  https://tank-admin-portal.tanknewmedia.work/:splat    302
-/*        /index.html                                   200

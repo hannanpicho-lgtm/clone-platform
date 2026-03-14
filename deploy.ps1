@@ -201,7 +201,7 @@ if ($DryRun) {
     Write-Host ""
     Write-Host "$Yellow[PLAN] Deployment would proceed with:$Reset"
     Write-Host "  1. Deploy Edge Function: npx supabase functions deploy make-server-44a642d3 --no-verify-jwt"
-    Write-Host "  2. Deploy Frontend: dist/ -> your static host (non-Netlify)"
+    Write-Host "  2. Deploy Frontend: dist/ -> Cloudflare Pages (or another static host)"
     Write-Host "  3. Run post-deployment tests"
     Write-Host "  4. Health check verification"
     Write-Host ""

@@ -4,8 +4,8 @@
 **Environment:** Production
 
 ## Live Links
-- **App:** https://iridescent-basbousa-b72341.netlify.app
-- **Admin:** https://iridescent-basbousa-b72341.netlify.app/admin
+- **App:** https://tanknewmedia.work
+- **Admin:** https://tanknewmedia.work/admin
 - **API Base:** https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3
 - **API Health:** https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3/health
 

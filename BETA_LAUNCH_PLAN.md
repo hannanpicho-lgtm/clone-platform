@@ -12,7 +12,7 @@
 - [x] JWT authentication working
 
 ### Frontend ✅
-- [x] Deployed to Netlify
+- [x] Deployed to Cloudflare Pages
 - [x] Frontend loads without errors
 - [x] Can sign up as new user
 - [x] Can sign in as admin
@@ -101,7 +101,7 @@ Congratulations! You've been selected as a beta tester for the all-new Clone Pla
 🎯 Your Beta Access
 - Start Date: Feb 24, 2026
 - Duration: 2 weeks
-- Live URL: https://your-app-url.vercel.app
+- Live URL: https://your-app-url.pages.dev
 
 👤 Your Login Credentials
 Email: [their email]

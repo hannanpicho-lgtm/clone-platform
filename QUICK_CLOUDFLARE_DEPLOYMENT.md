@@ -1,25 +1,25 @@
-# 🚀 Quick Vercel Deployment Checklist (5 Minutes)
+# 🚀 Quick Cloudflare Pages Deployment Checklist (5 Minutes)
 
 ## Step 1: Prepare (30 seconds)
 - [ ] Ensure frontend is built: `npm run build` ✅ (already done)
-- [ ] Commit all code to GitHub: `git add . && git commit -m "Ready for Vercel"`
+- [ ] Commit all code to GitHub: `git add . && git commit -m "Ready for Cloudflare Pages"`
 - [ ] Push to main: `git push origin main`
 - [ ] GitHub account ready with repo access
 
 ---
 
-## Step 2: Create Vercel Account (1 minute)
-- [ ] Go to https://vercel.com/signup
+## Step 2: Create Cloudflare Pages Account (1 minute)
+- [ ] Go to https://dash.cloudflare.com/sign-up
 - [ ] Sign up with GitHub (recommended)
-- [ ] Authorize Vercel to access your GitHub
+- [ ] Authorize Cloudflare Pages to access your GitHub
 - [ ] Verify email if needed
 
 ---
 
 ## Step 3: Import Project (1 minute)
-- [ ] Go to https://vercel.com/new
+- [ ] Go to https://dash.cloudflare.com/?to=/:account/pages
 - [ ] Select your GitHub repository
-- [ ] Vercel auto-detects:
+- [ ] Cloudflare Pages auto-detects:
   - ✅ Framework: **Vite**
   - ✅ Root directory: **.** (correct)
   - ✅ Build command: `npm run build` (correct)
@@ -33,7 +33,7 @@
 ## Step 4: Add Environment Variables (1 minute)
 *After first deployment completes, go back and add env vars for production*
 
-**In Vercel Dashboard**:
+**In Cloudflare Pages Dashboard**:
 1. Click your project
 2. Settings → Environment Variables
 3. Add these variables:
@@ -44,15 +44,15 @@
 | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRweGdmamV2b3JoZHR3a2VzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNDE3MjIsImV4cCI6MjA4NjgxNzcyMn0.K50o48WDbgmWvASexy3SCX2XfWiP_WQtCAkou49aFO8` |
 
 4. Click "Save"
-5. Vercel automatically redeploys with new variables
+5. Cloudflare Pages automatically redeploys with new variables
 
 ---
 
 ## Step 5: Get Your Live URL (30 seconds)
-**In Vercel Dashboard**:
+**In Cloudflare Pages Dashboard**:
 - [ ] Deployments tab shows live URL
-- [ ] Format: `https://your-project-name.vercel.app`
-- [ ] Example: `https://clone-platform.vercel.app`
+- [ ] Format: `https://your-project-name.pages.dev`
+- [ ] Example: `https://clone-platform.pages.dev`
 
 **Copy this URL** - you'll need it for:
 - Beta user invitations
@@ -93,18 +93,18 @@ Expected output: `{"status":"ok"}`
 ## Step 8: Optional - Custom Domain (5 minutes)
 *If you have your own domain:*
 
-1. Vercel Dashboard → Domains
+1. Cloudflare Pages Dashboard → Domains
 2. Add your domain (e.g., app.cloneplatform.com)
-3. Follow DNS setup (Vercel shows exact steps)
+3. Follow DNS setup (Cloudflare Pages shows exact steps)
 4. Wait 5-10 minutes for DNS propagation
 5. Domain now points to your live app
 
 ---
 
 ## Step 9: Auto-Deploy Setup (Optional)
-Vercel automatically deploys whenever you:
+Cloudflare Pages automatically deploys whenever you:
 1. Push to main branch: `git push origin main`
-2. Check Vercel dashboard for "Deployment in progress"
+2. Check Cloudflare Pages dashboard for "Deployment in progress"
 3. App updates live in 1-2 minutes
 
 ---
@@ -113,7 +113,7 @@ Vercel automatically deploys whenever you:
 
 ### Issue: Page shows 404
 **Solution**: 
-- Check build logs in Vercel
+- Check build logs in Cloudflare Pages
 - Ensure `dist/` folder was created
 - Run `npm run build` locally and check for errors
 
@@ -134,14 +134,14 @@ Vercel automatically deploys whenever you:
 **Solution**:
 - First deployment is often slower
 - Subsequent loads should be faster
-- Check Vercel's performance dashboard
+- Check Cloudflare Pages's performance dashboard
 
 ---
 
 ## What's Next After Deployment
 
 ✅ **You now have**:
-- Live frontend at `https://your-app.vercel.app`
+- Live frontend at `https://your-app.pages.dev`
 - Automatic deployments on code changes
 - Production URL for beta users
 
@@ -158,7 +158,7 @@ Vercel automatically deploys whenever you:
 
 | Item | Value |
 |------|-------|
-| Your Frontend URL | https://your-app.vercel.app |
+| Your Frontend URL | https://your-app.pages.dev |
 | Backend URL | https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3 |
 | Health Check | /health |
 | Admin Email | admin@cloneplatform.com |
@@ -176,4 +176,4 @@ Vercel automatically deploys whenever you:
 
 ---
 
-Go to https://vercel.com/new and let's get live! 🚀
+Go to https://dash.cloudflare.com/?to=/:account/pages and let's get live! 🚀

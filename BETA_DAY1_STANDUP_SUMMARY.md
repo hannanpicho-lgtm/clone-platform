@@ -3,7 +3,7 @@
 **Date:** February 23, 2026  
 **Time:** 5:00 PM EST  
 **Environment:** Production  
-**Live URL:** https://iridescent-basbousa-b72341.netlify.app  
+**Live URL:** https://tanknewmedia.work  
 
 ---
 
@@ -15,7 +15,7 @@
 ---
 
 ## What Was Completed Today
-- Production deployment is live and published on Netlify.
+- Production deployment is live and published on Cloudflare Pages.
 - Previous build failures were resolved (dependency/runtime issue fixed).
 - Admin panel update is live: **Overview** tab now appears in the admin UI.
 - Beta operations docs were aligned and prepared for execution:
@@ -63,4 +63,4 @@ Use this section after running `BETA_DAY1_SMOKE_TEST_10MIN.md`.
 ---
 
 ## Suggested Message to Team
-"Day 1 beta launch is live. Netlify deployment is published, admin Overview update is confirmed, and all launch docs are prepared. Next: complete the 10-minute smoke test and send beta invitations to hp and hansen immediately."
+"Day 1 beta launch is live. Cloudflare Pages deployment is published, admin Overview update is confirmed, and all launch docs are prepared. Next: complete the 10-minute smoke test and send beta invitations to hp and hansen immediately."

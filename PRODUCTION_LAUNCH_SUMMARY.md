@@ -348,7 +348,7 @@ npx supabase functions deploy make-server-44a642d3 --no-verify-jwt
 ```bash
 npm run build
 # Deploy dist/ folder to:
-# - Vercel, Netlify, or any static host
+# - Cloudflare Pages or any static host
 # - Or Supabase Hosting
 ```
 

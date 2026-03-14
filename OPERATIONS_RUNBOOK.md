@@ -142,7 +142,7 @@ curl -X POST https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-4
 # Build frontend
 npm run build
 
-# Start dev server (or deploy to Vercel/Netlify)
+# Start dev server (or deploy to Cloudflare Pages)
 npm run dev
 
 # Manual test in browser:

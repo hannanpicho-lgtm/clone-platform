@@ -8,11 +8,11 @@
 
 ## Deployment Options
 
-### Option 1: Vercel (Recommended - 2 minutes)
+### Option 1: Cloudflare Pages (Recommended - 2 minutes)
 **Best for**: Automatic deployments, easiest setup
 
-1. **Create Vercel Account**
-   - Go to https://vercel.com/signup
+1. **Create Cloudflare Pages Account**
+   - Go to https://dash.cloudflare.com/sign-up
    - Sign in with GitHub (recommended)
 
 2. **Import Project**
@@ -24,7 +24,7 @@
    - Install command: `npm install`
 
 3. **Environment Variables**
-   - Add in Vercel Dashboard → Settings → Environment Variables:
+   - Add in Cloudflare Pages Dashboard → Settings → Environment Variables:
    ```
    VITE_SUPABASE_URL=https://tpxgfjevorhdtwkesvcb.supabase.co
    VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRweGdmamV2b3JoZHR3a2VzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyNDE3MjIsImV4cCI6MjA4NjgxNzcyMn0.K50o48WDbgmWvASexy3SCX2XfWiP_WQtCAkou49aFO8
@@ -33,15 +33,15 @@
 4. **Deploy**
    - Click "Deploy"
    - Wait 1-2 minutes
-   - Get production URL (e.g., https://clone-platform.vercel.app)
+   - Get production URL (e.g., https://clone-platform.pages.dev)
 
 ---
 
-### Option 2: Netlify (2 minutes)
+### Option 2: Cloudflare Pages (2 minutes)
 **Best for**: Simpler UI, great free tier
 
-1. **Go to Netlify**
-   - https://netlify.com
+1. **Go to Cloudflare Pages**
+   - https://dash.cloudflare.com/
    - Sign in with GitHub
 
 2. **Connect Repository**
@@ -104,7 +104,7 @@
 
 ---
 
-## Quick Setup (Vercel)
+## Quick Setup (Cloudflare Pages)
 
 ```bash
 # 1. Ensure dist/ is built
@@ -115,31 +115,31 @@ git add .
 git commit -m "Ready for production"
 git push origin main
 
-# 3. Connect to Vercel
-# - Go to https://vercel.com/import
+# 3. Connect to Cloudflare Pages
+# - Go to https://dash.cloudflare.com/?to=/:account/pages
 # - Select your repo
 # - Add VITE_* env vars from above
 # - Deploy
 
 # 4. Get production URL
-# - Vercel dashboard shows your live URL
+# - Cloudflare Pages dashboard shows your live URL
 ```
 
 ---
 
 ## Custom Domain Setup
 
-### For Vercel:
-1. Vercel Dashboard → Settings → Domains
+### For Cloudflare Pages:
+1. Cloudflare Pages Dashboard → Settings → Domains
 2. Add your domain (e.g., app.cloneplatform.com)
 3. Follow DNS setup instructions
 4. Wait 5-10 minutes for DNS propagation
 
-### For Netlify:
-1. Netlify Dashboard → Domain management
+### For Cloudflare Pages:
+1. Cloudflare Pages Dashboard → Domain management
 2. Add custom domain
 3. Update DNS records
-4. Netlify shows current records
+4. Cloudflare Pages shows current records
 
 ---
 
@@ -162,7 +162,7 @@ git push origin main
 
 ```bash
 # Test the deployed site
-curl https://your-app.vercel.app/
+curl https://your-app.pages.dev/
 # Should return HTML, not error
 
 # Check health endpoint
@@ -176,8 +176,8 @@ curl https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3/
 
 If deployment has issues:
 
-1. **Vercel**: Click "Deployments" → Previous version → "Redeploy"
-2. **Netlify**: Click "Deploys" → Previous deploy → "Restore"
+1. **Cloudflare Pages**: Click "Deployments" → Previous version → "Redeploy"
+2. **Cloudflare Pages**: Click "Deploys" → Previous deploy → "Restore"
 3. **GitHub Pages**: Revert last commit and push
 
 ---
@@ -194,4 +194,4 @@ If deployment has issues:
 ---
 
 **Estimated Time**: 2-5 minutes depending on option chosen
-**Recommendation**: Use **Vercel** - it's fastest and most reliable
+**Recommendation**: Use **Cloudflare Pages** - it's fastest and most reliable

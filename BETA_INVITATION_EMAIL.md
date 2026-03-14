@@ -39,7 +39,7 @@ You've been selected as a **[Product Submitter / Referral Builder / Mobile Teste
 
 ### 🚀 Getting Started
 
-**Platform URL:** [https://iridescent-basbousa-b72341.netlify.app](https://iridescent-basbousa-b72341.netlify.app)
+**Platform URL:** [https://tanknewmedia.work](https://tanknewmedia.work)
 
 **How to Sign Up:**
 1. Visit the link above
@@ -49,7 +49,7 @@ You've been selected as a **[Product Submitter / Referral Builder / Mobile Teste
 5. Start submitting products!
 
 **Admin Dashboard (if applicable):**
-- URL: [https://iridescent-basbousa-b72341.netlify.app/admin](https://iridescent-basbousa-b72341.netlify.app/admin)
+- URL: [https://tanknewmedia.work/admin](https://tanknewmedia.work/admin)
 - Password: `admin123`
 
 ---

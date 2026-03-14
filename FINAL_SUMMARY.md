@@ -340,7 +340,7 @@ npm run test:smoke
 
 ### Immediate (Next 24 hours)
 1. **Deploy Frontend**
-   - Push dist/ to Vercel, Netlify, or Supabase Hosting
+   - Push dist/ to Cloudflare Pages or Supabase Hosting
    - Configure custom domain
    - Enable SSL/TLS
 

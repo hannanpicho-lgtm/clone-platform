@@ -13,7 +13,7 @@ This guide helps you test all the key features and provide valuable feedback to 
 
 **Tasks:**
 1. **Sign Up**
-   - Go to https://iridescent-basbousa-b72341.netlify.app
+   - Go to https://tanknewmedia.work
    - Click "Sign Up"
    - Fill in: Email, Password, Name, Preferred Gender
    - Complete signup

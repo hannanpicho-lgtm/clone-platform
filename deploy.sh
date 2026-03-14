@@ -168,7 +168,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo ""
     echo "📋 Deployment would proceed with:"
     echo "  1. Deploy Edge Function: npx supabase functions deploy $FUNCTION_NAME --no-verify-jwt"
-    echo "  2. Deploy Frontend: dist/ → your static host (non-Netlify)"
+    echo "  2. Deploy Frontend: dist/ -> Cloudflare Pages (or another static host)"
     echo "  3. Run post-deployment tests"
     echo "  4. Health check verification"
     echo ""

@@ -10,7 +10,7 @@
 
 ### System Verification
 - [x] Backend deployed and running (27/27 tests passing)
-- [x] Frontend deployed to Netlify
+- [x] Frontend deployed to Cloudflare Pages
 - [x] Admin dashboard accessible at `/admin`
 - [x] Client-side routing working (redirects configured)
 - [x] Database connected and operational
