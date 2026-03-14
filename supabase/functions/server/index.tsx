@@ -1079,6 +1079,32 @@ const getRequestLocation = (c: any): { ip: string; country: string } => ({
   country: getRequesterCountry(c),
 });
 
+type ServerLogLevel = 'info' | 'warn' | 'error';
+
+const logServerEvent = (
+  level: ServerLogLevel,
+  event: string,
+  details: Record<string, unknown> = {},
+): void => {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    ...details,
+  };
+
+  const serialized = JSON.stringify(entry);
+  if (level === 'error') {
+    console.error(serialized);
+    return;
+  }
+  if (level === 'warn') {
+    console.warn(serialized);
+    return;
+  }
+  console.log(serialized);
+};
+
 const toCountryDisplayName = (countryCodeOrName: string): string => {
   const value = String(countryCodeOrName || '').trim();
   if (!value) return 'Unknown';
@@ -4582,7 +4608,7 @@ app.post("/request-withdrawal", async (c) => {
       }).catch(() => undefined);
     }
 
-    console.error(`Error requesting withdrawal: ${error}`);
+    logServerEvent('error', 'withdrawal.request.failed', { error: String(error) });
     return c.json({ error: "Internal server error while requesting withdrawal" }, 500);
   } finally {
     if (releaseFinancialLock) {
@@ -4624,7 +4650,7 @@ app.get("/withdrawal-history", async (c) => {
       totalPending: userWithdrawals.filter((w: any) => w?.status === 'pending').length,
     });
   } catch (error) {
-    console.error(`Error fetching withdrawal history: ${error}`);
+    logServerEvent('error', 'withdrawal.history.failed', { error: String(error) });
     return c.json({ error: "Internal server error while fetching withdrawal history" }, 500);
   }
 });
@@ -4780,7 +4806,7 @@ app.post("/admin/approve-withdrawal", async (c) => {
     if (idempotencyStoreKey) {
       await kv.del(idempotencyStoreKey).catch(() => undefined);
     }
-    console.error(`Error approving withdrawal: ${error}`);
+    logServerEvent('error', 'withdrawal.approve.failed', { error: String(error) });
     return c.json({ error: "Internal server error while approving withdrawal" }, 500);
   } finally {
     if (releaseFinancialLock) {
@@ -4897,7 +4923,7 @@ app.post("/admin/deny-withdrawal", async (c) => {
     if (idempotencyStoreKey) {
       await kv.del(idempotencyStoreKey).catch(() => undefined);
     }
-    console.error(`Error denying withdrawal: ${error}`);
+    logServerEvent('error', 'withdrawal.deny.failed', { error: String(error) });
     return c.json({ error: "Internal server error while denying withdrawal" }, 500);
   } finally {
     if (releaseFinancialLock) {
@@ -6786,7 +6812,7 @@ app.post('/admin/finance/reconcile-withdrawals', async (c) => {
       },
     });
   } catch (error) {
-    console.error(`Error reconciling withdrawal state: ${error}`);
+    logServerEvent('error', 'withdrawal.reconcile.failed', { error: String(error) });
     return c.json({ error: 'Internal server error while reconciling withdrawal state' }, 500);
   }
 });
