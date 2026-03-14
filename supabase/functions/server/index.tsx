@@ -183,7 +183,7 @@ async function verifyJWT(token: string): Promise<{ userId: string | null; error:
       }
     }
   } catch (error) {
-    console.error('Manual JWT verification failed:', error.message);
+    console.error('Manual JWT verification failed:', String(error));
   }
 
   return { userId: null, error: 'Invalid or expired token' };
@@ -854,6 +854,20 @@ const ADMIN_ALLOWED_PERMISSIONS = [
 
 type AdminPermission = typeof ADMIN_ALLOWED_PERMISSIONS[number] | '*';
 
+type AdminAccessGranted = {
+  ok: true;
+  isSuperAdmin: boolean;
+  userId: string | null;
+  permissions: AdminPermission[];
+};
+
+type AdminAccessDenied = {
+  ok: false;
+  response: any;
+};
+
+type AdminAccessResult = AdminAccessGranted | AdminAccessDenied;
+
 const BASELINE_LIMITED_ADMIN_PERMISSIONS: AdminPermission[] = [
   'users.view',
   'users.adjust_balance',
@@ -903,10 +917,7 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
 const requireAdminPermission = async (
   c: any,
   requiredPermission: AdminPermission,
-): Promise<
-  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
-  | { ok: false; response: any }
-> => {
+): Promise<AdminAccessResult> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
@@ -939,7 +950,7 @@ const requireAdminPermission = async (
   return { ok: true, isSuperAdmin: false, userId, permissions };
 };
 
-const requireSupportAccess = async (c: any) => {
+const requireSupportAccess = async (c: any): Promise<AdminAccessResult> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
@@ -1269,7 +1280,7 @@ const beginIdempotentOperation = async (
   fingerprint: string,
 ): Promise<
   | { state: 'started' }
-  | { state: 'replay'; responseStatus: number; responseBody: any }
+  | { state: 'replay'; responseStatus: any; responseBody: any }
   | { state: 'in_progress' }
   | { state: 'conflict' }
 > => {
@@ -3592,7 +3603,7 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: 'Duplicate submit-product request is already in progress' }, 409);
     }
     if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
         'Idempotent-Replay': 'true',
         'Idempotency-Key': idempotencyKey,
       });
@@ -3922,7 +3933,7 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'Duplicate complete-product request is already in progress' }, 409);
     }
     if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
         'Idempotent-Replay': 'true',
         'Idempotency-Key': idempotencyKey,
       });
@@ -4518,7 +4529,7 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: 'Duplicate withdrawal request is already in progress' }, 409);
     }
     if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
         'Idempotent-Replay': 'true',
         'Idempotency-Key': idempotencyKey,
       });
@@ -4773,7 +4784,7 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: 'Duplicate approve-withdrawal request is already in progress' }, 409);
     }
     if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
         'Idempotent-Replay': 'true',
         'Idempotency-Key': idempotencyKey,
       });
@@ -4898,7 +4909,7 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: 'Duplicate deny-withdrawal request is already in progress' }, 409);
     }
     if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus, {
+      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
         'Idempotent-Replay': 'true',
         'Idempotency-Key': idempotencyKey,
       });
@@ -5770,7 +5781,7 @@ app.get("/admin/alerts", async (c) => {
 
     const alerts: Array<{
       id: string;
-      type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral';
+      type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral' | 'premium_assignment';
       severity: 'critical' | 'high' | 'medium' | 'info';
       title: string;
       message: string;
@@ -7105,11 +7116,11 @@ app.all("*", async (c) => {
 
 // Add explicit CORS preflight handler for all routes
 app.options('/*', (c) => {
-  return c.text('', 204, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization, Idempotency-Key, X-Idempotency-Key',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  });
+  const headers = new Headers();
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, apikey, Authorization, Idempotency-Key, X-Idempotency-Key');
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  return new Response('', { status: 204, headers });
 });
 
 Deno.serve(app.fetch);
