@@ -31,7 +31,7 @@ export function BackendStatusIndicator() {
         setStatus('offline');
       }
     } catch (error) {
-      console.log('Backend health check failed:', error);
+      console.error('Backend health check failed:', error);
       setStatus('offline');
     }
   };

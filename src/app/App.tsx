@@ -6,8 +6,6 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getSupabaseClient } from '/utils/supabase/client';
 
-console.log("App.tsx loaded");
-
 export default function App() {
   const envAdminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').toLowerCase() === 'true';
   const isAdminPortalHost = typeof window !== 'undefined'
