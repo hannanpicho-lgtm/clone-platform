@@ -18,7 +18,7 @@
     "test:premium": "node test-premium-endpoints.js",
     "test:audit:endpoints": "node scripts/audit-endpoint-contracts.mjs",
     "test:canary:user-task": "node scripts/canary-user-task-flow.mjs",
-      "test:audit:production": "node scripts/production-audit-tests.mjs",
+    "test:audit:production": "node scripts/production-audit-tests.mjs",
     "support:links": "node scripts/set-support-links.mjs",
     "test:regression-guards": "node scripts/regression-guards.mjs",
     "test:smoke": "npm run test:endpoints && npm run test:customer-service && npm run test:premium",
@@ -27,7 +27,8 @@
     "deploy:skip-tests": "powershell -ExecutionPolicy Bypass -File deploy.ps1 -SkipTests -Force",
     "rollback": "powershell -ExecutionPolicy Bypass -File rollback.ps1",
     "validate": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1",
-    "validate:strict": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1 -Strict"
+    "validate:strict": "powershell -ExecutionPolicy Bypass -File validate-deployment.ps1 -Strict",
+    "backup:project": "powershell -ExecutionPolicy Bypass -NoProfile -File ../Backup-Project.ps1 -ProjectPath . -Description"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -92,6 +93,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "4.7.0",
+    "playwright": "^1.58.2",
     "supabase": "^2.76.15",
     "tailwindcss": "4.1.12",
     "vite": "^6.4.1"

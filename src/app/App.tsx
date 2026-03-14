@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
-import { AdminLogin } from './components/AdminLogin';
-import { AdminDashboard } from './components/AdminDashboard';
+import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getSupabaseClient } from '/utils/supabase/client';
 
@@ -12,17 +11,8 @@ export default function App() {
   const isAdminRoute = typeof window !== 'undefined'
     ? (window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/'))
     : false;
-  const shouldRenderAdminPortal = isAdminRoute;
-  const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-  const [adminAccessToken, setAdminAccessToken] = useState<string | null>(null);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(true);
-  const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
-  const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
-  const [gateInput, setGateInput] = useState('');
-  const [gateError, setGateError] = useState('');
 
   // Use singleton Supabase client
   const supabase = getSupabaseClient();
@@ -59,13 +49,7 @@ export default function App() {
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
-    if (shouldRenderAdminPortal) {
-      if (!adminGateKey) {
-        setAdminGateUnlocked(true);
-      } else {
-        const unlocked = typeof window !== 'undefined' && window.sessionStorage.getItem('admin_gate_unlocked') === 'true';
-        setAdminGateUnlocked(Boolean(unlocked));
-      }
+    if (isAdminRoute) {
       setIsCheckingSession(false);
     } else {
       checkSession();
@@ -75,7 +59,7 @@ export default function App() {
       console.error = originalConsoleError;
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
-  }, []);
+  }, [isAdminRoute]);
 
   const checkSession = async () => {
     try {
@@ -106,44 +90,6 @@ export default function App() {
     setAccessToken(token);
   };
 
-  const handleAdminLoginSuccess = (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => {
-    setAdminAccessToken(auth?.accessToken || null);
-    setIsSuperAdmin(Boolean(auth?.isSuperAdmin));
-    setAdminPermissions(Array.isArray(auth?.permissions) ? auth.permissions : []);
-    setIsAdminAuthenticated(true);
-  };
-
-  const handleAdminLogout = () => {
-    setIsAdminAuthenticated(false);
-    setAdminAccessToken(null);
-    setAdminPermissions([]);
-    setIsSuperAdmin(true);
-    if (isAdminRoute) {
-      window.location.href = '/admin';
-    } else {
-      window.location.href = '/';
-    }
-  };
-
-  const handleAdminGateUnlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminGateKey) {
-      setAdminGateUnlocked(true);
-      return;
-    }
-
-    if (gateInput.trim() !== adminGateKey) {
-      setGateError('Invalid access key');
-      return;
-    }
-
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem('admin_gate_unlocked', 'true');
-    }
-    setGateError('');
-    setAdminGateUnlocked(true);
-  };
-
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
@@ -166,42 +112,9 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen">
-        {shouldRenderAdminPortal ? (
-          !adminGateUnlocked ? (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-              <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 shadow-2xl">
-                <h1 className="text-2xl font-bold text-white text-center mb-2">Admin Portal Access</h1>
-                <p className="text-sm text-purple-200 text-center mb-6">Enter portal access key to continue</p>
-                <form onSubmit={handleAdminGateUnlock} className="space-y-4">
-                  <input
-                    type="password"
-                    value={gateInput}
-                    onChange={(e) => setGateInput(e.target.value)}
-                    placeholder="Access key"
-                    className="w-full h-11 rounded-md border border-white/20 bg-white/5 px-3 text-white placeholder:text-purple-300/60 focus:outline-none focus:ring-2 focus:ring-purple-400"
-                  />
-                  {gateError && <p className="text-sm text-red-300">{gateError}</p>}
-                  <button
-                    type="submit"
-                    className="w-full h-11 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold hover:from-purple-700 hover:to-pink-700"
-                  >
-                    Continue
-                  </button>
-                </form>
-              </div>
-            </div>
-          ) : (
-          isAdminAuthenticated ? (
-            <AdminDashboard
-              onLogout={handleAdminLogout}
-              adminAccessToken={adminAccessToken}
-              adminIsSuperAdmin={isSuperAdmin}
-              adminPermissions={adminPermissions}
-            />
-          ) : (
-            <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
-          ))
+      <div className="tp-app min-h-screen">
+        {isAdminRoute ? (
+          <AdminApp />
         ) : (
           accessToken ? (
             <Dashboard accessToken={accessToken} onLogout={handleLogout} />

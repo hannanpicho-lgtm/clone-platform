@@ -85,6 +85,48 @@ const getProjectRefFromUrl = (): string | null => {
   return match?.[1] ?? null;
 };
 
+const NOWPAYMENTS_API_BASE = 'https://api.nowpayments.io/v1';
+const NOWPAYMENTS_SUPPORTED_ASSETS = ['BTC', 'ETH', 'USDT'] as const;
+
+const mapNowPaymentsCurrency = (asset: string, network?: string): string => {
+  const normalizedAsset = String(asset || '').trim().toUpperCase();
+  const normalizedNetwork = String(network || '').trim().toUpperCase();
+
+  if (normalizedAsset === 'BTC') return 'btc';
+  if (normalizedAsset === 'ETH') return 'eth';
+  if (normalizedAsset === 'USDT') {
+    if (normalizedNetwork.includes('TRC20') || normalizedNetwork.includes('TRON')) return 'usdttrc20';
+    if (normalizedNetwork.includes('BEP20') || normalizedNetwork.includes('BSC')) return 'usdtbsc';
+    return 'usdterc20';
+  }
+  return normalizedAsset.toLowerCase();
+};
+
+const toHexString = (buffer: ArrayBuffer): string =>
+  Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+const computeNowPaymentsSignature = async (payload: string, secret: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-512' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+  return toHexString(signature);
+};
+
+const buildCryptoWebhookUrl = (): string => {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+  const projectRef = getProjectRefFromUrl();
+  if (!supabaseUrl || !projectRef) {
+    return '/api/crypto/webhook';
+  }
+  return `${supabaseUrl}/functions/v1/make-server-44a642d3/api/crypto/webhook`;
+};
+
 const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; response: any }> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
@@ -840,6 +882,7 @@ const buildTaskState = (user: any) => {
 const ADMIN_PERMISSION_ALL = '*';
 const ADMIN_ALLOWED_PERMISSIONS = [
   'users.view',
+  'users.manage_status',
   'users.adjust_balance',
   'users.assign_premium',
   'users.reset_tasks',
@@ -870,6 +913,7 @@ type AdminAccessResult = AdminAccessGranted | AdminAccessDenied;
 
 const BASELINE_LIMITED_ADMIN_PERMISSIONS: AdminPermission[] = [
   'users.view',
+  'users.manage_status',
   'users.adjust_balance',
   'users.assign_premium',
   'support.manage',
@@ -880,7 +924,7 @@ const sanitizeAdminPermissions = (permissions: unknown): AdminPermission[] => {
     return [];
   }
   const legacyPermissionMap: Record<string, AdminPermission[]> = {
-    'users.manage': ['users.adjust_balance', 'users.reset_tasks', 'users.manage_task_limits', 'users.unfreeze', 'users.update_vip'],
+    'users.manage': ['users.manage_status', 'users.adjust_balance', 'users.reset_tasks', 'users.manage_task_limits', 'users.unfreeze', 'users.update_vip'],
     'premium.assign': ['users.assign_premium'],
     'premium.manage': ['users.assign_premium'],
   };
@@ -894,6 +938,37 @@ const sanitizeAdminPermissions = (permissions: unknown): AdminPermission[] => {
       }
       continue;
     }
+
+      const ADMIN_AUDIT_LOG_KEY = 'admin:audit-log';
+
+      type AdminAuditActor = {
+        isSuperAdmin: boolean;
+        userId: string | null;
+      };
+
+      const appendAdminAuditLog = async (
+        actor: AdminAuditActor,
+        action: string,
+        options?: {
+          targetUserId?: string | null;
+          targetIdentifier?: string | null;
+          meta?: Record<string, unknown>;
+        },
+      ) => {
+        const existing = await kv.get(ADMIN_AUDIT_LOG_KEY);
+        const logs = Array.isArray(existing) ? existing : [];
+        const entry = {
+          id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          action,
+          actorUserId: actor.userId,
+          actorType: actor.isSuperAdmin ? 'super_admin' : 'limited_admin',
+          targetUserId: options?.targetUserId || null,
+          targetIdentifier: options?.targetIdentifier || null,
+          createdAt: new Date().toISOString(),
+          meta: options?.meta || {},
+        };
+        await kv.set(ADMIN_AUDIT_LOG_KEY, [entry, ...logs].slice(0, 500));
+      };
     if (permission === ADMIN_PERMISSION_ALL || ADMIN_ALLOWED_PERMISSIONS.includes(permission as any)) {
       unique.add(permission);
     }
@@ -2168,6 +2243,260 @@ app.put('/admin/deposit-config', async (c) => {
   }
 });
 
+const activateCryptoPaymentForUser = async (params: {
+  userId: string;
+  invoice: any;
+  webhookPayload: Record<string, any>;
+}) => {
+  const userId = String(params.userId || '').trim();
+  if (!userId) return;
+
+  const profileKey = `user:${userId}`;
+  const user = await kv.get(profileKey);
+  if (!user) return;
+
+  const normalizedAmount = Number(params.webhookPayload?.price_amount ?? params.invoice?.priceAmount ?? params.invoice?.amount ?? 0);
+  const amount = Number.isFinite(normalizedAmount) ? Math.max(0, normalizedAmount) : 0;
+  if (amount <= 0) return;
+
+  const balanceBefore = Number(user?.balance || 0);
+  const balanceAfter = roundCurrency(balanceBefore + amount);
+  const nowIso = new Date().toISOString();
+
+  await kv.set(profileKey, {
+    ...user,
+    balance: balanceAfter,
+    updatedAt: nowIso,
+  });
+
+  const paymentId = String(params.invoice?.paymentId || params.webhookPayload?.payment_id || '').trim();
+  const requestId = `dep_crypto_${paymentId || Date.now()}`;
+  const requestRecord = {
+    id: requestId,
+    userId,
+    userName: user?.name || 'User',
+    userEmail: user?.contactEmail || user?.email || null,
+    method: 'crypto',
+    amount,
+    reference: String(params.webhookPayload?.txid || params.webhookPayload?.payment_id || paymentId || requestId),
+    transactionHash: String(params.webhookPayload?.txid || params.webhookPayload?.payment_id || paymentId || requestId),
+    sourceWalletAddress: null,
+    destinationWalletAddress: String(params.invoice?.payAddress || params.webhookPayload?.pay_address || ''),
+    cryptoAsset: String(params.invoice?.asset || params.webhookPayload?.pay_currency || '').toUpperCase(),
+    cryptoNetwork: String(params.invoice?.network || params.webhookPayload?.network || ''),
+    note: 'Confirmed by NOWPayments webhook',
+    status: 'approved',
+    createdAt: String(params.invoice?.createdAt || nowIso),
+    updatedAt: nowIso,
+    approvedAt: nowIso,
+  };
+
+  await kv.set(`deposit:request:${requestId}`, requestRecord);
+  const userRequests = await kv.get(`deposit:requests:user:${userId}`) || [];
+  if (!userRequests.includes(requestId)) {
+    userRequests.push(requestId);
+    await kv.set(`deposit:requests:user:${userId}`, userRequests.slice(-200));
+  }
+};
+
+app.post('/api/crypto/create-invoice', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - Missing token' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '').trim();
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const amount = Number(body?.amount || 0);
+    const asset = String(body?.asset || 'BTC').trim().toUpperCase();
+    const network = String(body?.network || '').trim();
+    const targetUserId = String(body?.targetUserId || '').trim();
+
+    if (!NOWPAYMENTS_SUPPORTED_ASSETS.includes(asset as any)) {
+      return c.json({ error: 'Unsupported asset. Use BTC, ETH, or USDT.' }, 400);
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return c.json({ error: 'amount must be a positive number' }, 400);
+    }
+
+    let payerUserId = String(userId);
+    let payerProfile = await kv.get(`user:${payerUserId}`);
+
+    if (!payerProfile) {
+      const adminAccess = await requireSupportAccess(c);
+      if (!adminAccess.ok) {
+        return adminAccess.response;
+      }
+
+      if (!targetUserId) {
+        return c.json({ error: 'targetUserId is required for admin-generated invoices' }, 400);
+      }
+
+      const profile = await kv.get(`user:${targetUserId}`);
+      if (!profile) {
+        return c.json({ error: 'Target user not found' }, 404);
+      }
+
+      const scope = await getAdminScopeConfig(adminAccess);
+      if (!isUserInAdminScope(scope, profile)) {
+        return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+      }
+
+      payerUserId = targetUserId;
+      payerProfile = profile;
+    }
+
+    const nowPaymentsApiKey = String(Deno.env.get('NOWPAYMENTS_API_KEY') || '').trim();
+    if (!nowPaymentsApiKey) {
+      return c.json({ error: 'NOWPayments is not configured' }, 500);
+    }
+
+    const payCurrency = mapNowPaymentsCurrency(asset, network);
+    const orderId = `crypto_inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const webhookUrl = buildCryptoWebhookUrl();
+
+    const nowPaymentsResponse = await fetch(`${NOWPAYMENTS_API_BASE}/payment`, {
+      method: 'POST',
+      headers: {
+        'x-api-key': nowPaymentsApiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        price_amount: amount,
+        price_currency: 'usd',
+        pay_currency: payCurrency,
+        ipn_callback_url: webhookUrl,
+        order_id: orderId,
+        order_description: `TankPlatform subscription payment for ${payerUserId}`,
+      }),
+    });
+
+    const nowPaymentsPayload = await nowPaymentsResponse.json().catch(() => ({}));
+    if (!nowPaymentsResponse.ok) {
+      return c.json({ error: nowPaymentsPayload?.message || 'Failed to create NOWPayments invoice' }, 502);
+    }
+
+    const paymentId = String(nowPaymentsPayload?.payment_id || '').trim();
+    if (!paymentId) {
+      return c.json({ error: 'NOWPayments invoice did not include payment_id' }, 502);
+    }
+
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const invoiceRecord = {
+      invoiceId: orderId,
+      paymentId,
+      userId: payerUserId,
+      userName: String(payerProfile?.name || 'User'),
+      userEmail: String(payerProfile?.contactEmail || payerProfile?.email || ''),
+      amount,
+      asset,
+      network: network || payCurrency.toUpperCase(),
+      payCurrency: String(nowPaymentsPayload?.pay_currency || payCurrency),
+      payAddress: String(nowPaymentsPayload?.pay_address || ''),
+      payAmount: Number(nowPaymentsPayload?.pay_amount || 0),
+      priceAmount: Number(nowPaymentsPayload?.price_amount || amount),
+      priceCurrency: String(nowPaymentsPayload?.price_currency || 'usd'),
+      status: String(nowPaymentsPayload?.payment_status || 'waiting'),
+      createdAt,
+      expiresAt,
+      confirmedAt: null,
+      activatedAt: null,
+      webhookUrl,
+      raw: nowPaymentsPayload,
+    };
+
+    await kv.set(`crypto:invoice:${paymentId}`, invoiceRecord);
+    await kv.set(`crypto:invoice-by-order:${orderId}`, { paymentId, userId: payerUserId, createdAt });
+
+    return c.json({
+      success: true,
+      invoice: {
+        invoiceId: orderId,
+        paymentId,
+        payAddress: invoiceRecord.payAddress,
+        payAmount: invoiceRecord.payAmount,
+        payCurrency: invoiceRecord.payCurrency,
+        priceAmount: invoiceRecord.priceAmount,
+        priceCurrency: invoiceRecord.priceCurrency,
+        network: invoiceRecord.network,
+        expiresAt,
+      },
+    });
+  } catch (error) {
+    console.error(`Error creating crypto invoice: ${error}`);
+    return c.json({ error: 'Internal server error while creating crypto invoice' }, 500);
+  }
+});
+
+app.post('/api/crypto/webhook', async (c) => {
+  try {
+    const ipnSecret = String(Deno.env.get('NOWPAYMENTS_IPN_SECRET') || '').trim();
+    if (!ipnSecret) {
+      return c.json({ error: 'NOWPayments IPN secret is not configured' }, 500);
+    }
+
+    const signature = String(c.req.header('x-nowpayments-sig') || c.req.header('X-NOWPAYMENTS-SIG') || '').trim().toLowerCase();
+    const rawBody = await c.req.text();
+    const expectedSignature = (await computeNowPaymentsSignature(rawBody, ipnSecret)).toLowerCase();
+
+    if (!signature || signature !== expectedSignature) {
+      return c.json({ error: 'Invalid NOWPayments signature' }, 401);
+    }
+
+    const payload = JSON.parse(rawBody || '{}');
+    const paymentId = String(payload?.payment_id || '').trim();
+    if (!paymentId) {
+      return c.json({ success: true, ignored: true, reason: 'missing payment_id' });
+    }
+
+    const invoiceKey = `crypto:invoice:${paymentId}`;
+    const existingInvoice = await kv.get(invoiceKey);
+    if (!existingInvoice) {
+      return c.json({ success: true, ignored: true, reason: 'invoice not found' });
+    }
+
+    const status = String(payload?.payment_status || existingInvoice?.status || '').toLowerCase();
+    const nowIso = new Date().toISOString();
+    const confirmed = ['finished', 'confirmed', 'sending'].includes(status);
+
+    const updatedInvoice = {
+      ...existingInvoice,
+      status,
+      webhookReceivedAt: nowIso,
+      webhookPayload: payload,
+      confirmedAt: confirmed ? (existingInvoice?.confirmedAt || nowIso) : existingInvoice?.confirmedAt || null,
+    };
+
+    if (confirmed && !existingInvoice?.activatedAt) {
+      await activateCryptoPaymentForUser({
+        userId: String(existingInvoice?.userId || ''),
+        invoice: existingInvoice,
+        webhookPayload: payload,
+      });
+      updatedInvoice.activatedAt = nowIso;
+    }
+
+    await kv.set(invoiceKey, updatedInvoice);
+
+    return c.json({
+      success: true,
+      paymentId,
+      status,
+      activated: Boolean(updatedInvoice?.activatedAt),
+    });
+  } catch (error) {
+    console.error(`Error handling NOWPayments webhook: ${error}`);
+    return c.json({ error: 'Internal server error while handling crypto webhook' }, 500);
+  }
+});
+
 app.post('/deposits/request', async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
@@ -2665,6 +2994,7 @@ app.get("/admin/users", async (c) => {
     if (!adminAccess.isSuperAdmin) {
       const hasUsersAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
         || adminAccess.permissions.includes('users.view')
+        || adminAccess.permissions.includes('users.manage_status')
         || adminAccess.permissions.includes('users.adjust_balance')
         || adminAccess.permissions.includes('users.assign_premium')
         || adminAccess.permissions.includes('users.reset_tasks')
@@ -5035,6 +5365,14 @@ app.post('/admin/users/adjust-balance', async (c) => {
       performedBy: adminAccess.userId || 'super_admin',
     });
     await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
+    await appendAdminAuditLog(adminAccess, 'user.balance_adjusted', {
+      targetUserId: String(userId),
+      targetIdentifier: String(userProfile?.email || userProfile?.name || userId),
+      meta: {
+        amount: adjustmentAmount,
+        category: adjustmentCategory,
+      },
+    });
 
     return c.json({
       success: true,
@@ -5052,12 +5390,17 @@ app.post('/admin/users/adjust-balance', async (c) => {
   }
 });
 
-// Admin: disable/enable user account (super admin only)
+// Admin: disable/enable user account
 app.put('/admin/users/account-status', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const adminAccess = await requireAdminPermission(c, 'users.manage_status');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.manage_status', 30, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for account status updates. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -5074,6 +5417,11 @@ app.put('/admin/users/account-status', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInAdminScope(scope, user)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
     const updatedUser = {
       ...user,
       accountDisabled: disabled,
@@ -5081,6 +5429,13 @@ app.put('/admin/users/account-status', async (c) => {
     };
 
     await kv.set(key, updatedUser);
+    await appendAdminAuditLog(adminAccess, 'user.account_status_updated', {
+      targetUserId: String(userId),
+      targetIdentifier: String(user?.email || user?.name || userId),
+      meta: {
+        disabled,
+      },
+    });
 
     return c.json({
       success: true,
@@ -5541,6 +5896,14 @@ app.post('/admin/accounts', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, record);
+    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_created', {
+      targetUserId: adminUserId,
+      targetIdentifier: adminEmail,
+      meta: {
+        username: normalizedUsername,
+        permissions: adminPermissions,
+      },
+    });
 
     return c.json({ success: true, admin: record });
   } catch (error) {
@@ -5648,6 +6011,25 @@ app.get('/admin/accounts', async (c) => {
   }
 });
 
+app.get('/admin/audit-log', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const limitParam = Number(c.req.query('limit') || 100);
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 250) : 100;
+    const existing = await kv.get(ADMIN_AUDIT_LOG_KEY);
+    const logs = Array.isArray(existing) ? existing.slice(0, limit) : [];
+
+    return c.json({ success: true, logs });
+  } catch (error) {
+    console.error(`Error loading admin audit log: ${error}`);
+    return c.json({ error: 'Internal server error while loading audit log' }, 500);
+  }
+});
+
 // Admin: update limited admin account permissions/status (super admin only)
 app.put('/admin/accounts/:adminUserId', async (c) => {
   try {
@@ -5686,6 +6068,14 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, updated);
+    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_updated', {
+      targetUserId: adminUserId,
+      targetIdentifier: String(updated?.authEmail || updated?.username || adminUserId),
+      meta: {
+        active: updated.active,
+        permissions: updated.permissions,
+      },
+    });
     return c.json({ success: true, admin: updated });
   } catch (error) {
     console.error(`Error updating admin account: ${error}`);
@@ -5720,6 +6110,10 @@ app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, updated);
+    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_revoked', {
+      targetUserId: adminUserId,
+      targetIdentifier: String(updated?.authEmail || updated?.username || adminUserId),
+    });
     return c.json({ success: true, admin: updated });
   } catch (error) {
     console.error(`Error revoking admin account: ${error}`);
@@ -5752,6 +6146,10 @@ app.delete('/admin/accounts/:adminUserId', async (c) => {
     }
 
     await kv.del(`admin:account:${adminUserId}`);
+    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_deleted', {
+      targetUserId: adminUserId,
+      targetIdentifier: String(existing?.authEmail || existing?.username || adminUserId),
+    });
     return c.json({ success: true, deleted: true, adminUserId });
   } catch (error) {
     console.error(`Error deleting admin account: ${error}`);

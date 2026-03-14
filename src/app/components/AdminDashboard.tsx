@@ -628,18 +628,44 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setIsLoading(true);
     try {
       // Try to fetch from backend
+      const authToken = getAdminAuthToken();
       const usersResponse = await safeFetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users?page=1&limit=250`,
         {
           headers: {
-            Authorization: `Bearer ${getAdminAuthToken()}`,
+            Authorization: `Bearer ${authToken}`,
           },
         }
       );
 
       if (usersResponse?.ok) {
         const data = await usersResponse.json();
-        const backendUsers = data.users || [];
+        const firstPageUsers = Array.isArray(data?.users) ? data.users : [];
+        const totalPages = Number(data?.pagination?.totalPages || 1);
+        let backendUsers = [...firstPageUsers];
+
+        // Fetch remaining pages so the admin list shows all scoped users, not only page 1.
+        if (totalPages > 1) {
+          for (let page = 2; page <= totalPages; page += 1) {
+            const pageResponse = await safeFetch(
+              `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/users?page=${page}&limit=250`,
+              {
+                headers: {
+                  Authorization: `Bearer ${authToken}`,
+                },
+              }
+            );
+
+            if (!pageResponse || !pageResponse.ok) {
+              break;
+            }
+
+            const pageData = await pageResponse.json().catch(() => ({}));
+            const pageUsers = Array.isArray(pageData?.users) ? pageData.users : [];
+            backendUsers = backendUsers.concat(pageUsers);
+          }
+        }
+
         setUsers(backendUsers);
         setMetrics(data.metrics);
         await loadVipCommissionRanges();

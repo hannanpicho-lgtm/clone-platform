@@ -1,0 +1,121 @@
+import type { ReactNode } from 'react';
+import { BarChart3, LogOut, Shield, UserCog, Users } from 'lucide-react';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card } from '../../components/ui/card';
+import { Separator } from '../../components/ui/separator';
+import { isSuperAdmin } from '../permissions';
+import type { AdminSession } from '../types';
+
+interface AdminLayoutProps {
+  children: ReactNode;
+  currentPath: string;
+  session: AdminSession;
+  onLogout: () => void;
+}
+
+const NAV_ITEMS = [
+  { path: '/admin/dashboard', label: 'Dashboard', icon: BarChart3, permission: null },
+  { path: '/admin/users', label: 'Users', icon: Users, permission: 'users.view' },
+  { path: '/admin/sub-admins', label: 'Sub-admins', icon: UserCog, permission: 'super-admin-only' },
+] as const;
+
+export function AdminLayout({ children, currentPath, session, onLogout }: AdminLayoutProps) {
+  const roleLabel = isSuperAdmin(session) ? 'Super Admin' : 'Sub-admin';
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.permission === 'super-admin-only') {
+      return isSuperAdmin(session);
+    }
+    if (!item.permission) {
+      return true;
+    }
+    return session.permissions.includes('*') || session.permissions.includes(item.permission) || isSuperAdmin(session);
+  });
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto flex min-h-screen max-w-7xl gap-6 px-4 py-6 lg:px-6">
+        <Card className="hidden w-72 shrink-0 border-slate-200 bg-white p-4 lg:block">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
+              <Shield className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-semibold">Admin Control</div>
+              <div className="text-sm text-slate-500">TankPlatform</div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-2">
+            <Badge variant="secondary">{roleLabel}</Badge>
+            <span className="text-xs text-slate-500">RBAC enforced</span>
+          </div>
+
+          <Separator className="my-4" />
+
+          <div className="space-y-2">
+            {visibleItems.map((item) => {
+              const Icon = item.icon;
+              const active = currentPath === item.path;
+              return (
+                <Button
+                  key={item.path}
+                  type="button"
+                  variant={active ? 'default' : 'ghost'}
+                  className="w-full justify-start gap-2"
+                  onClick={() => {
+                    window.location.href = item.path;
+                  }}
+                >
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </Button>
+              );
+            })}
+          </div>
+
+          <Separator className="my-4" />
+
+          <Button type="button" variant="outline" className="w-full justify-start gap-2" onClick={onLogout}>
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </Button>
+        </Card>
+
+        <div className="min-w-0 flex-1 space-y-6">
+          <Card className="border-slate-200 bg-white px-5 py-4 lg:hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="font-semibold">Admin Control</div>
+                <div className="text-sm text-slate-500">{roleLabel}</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {visibleItems.map((item) => {
+                  const active = currentPath === item.path;
+                  return (
+                    <Button
+                      key={item.path}
+                      type="button"
+                      size="sm"
+                      variant={active ? 'default' : 'outline'}
+                      onClick={() => {
+                        window.location.href = item.path;
+                      }}
+                    >
+                      {item.label}
+                    </Button>
+                  );
+                })}
+                <Button type="button" size="sm" variant="ghost" onClick={onLogout}>
+                  Sign out
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}

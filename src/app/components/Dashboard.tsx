@@ -161,6 +161,18 @@ interface DepositConfig {
   minimumAmount: number;
 }
 
+interface CryptoInvoice {
+  invoiceId: string;
+  paymentId: string;
+  payAddress: string;
+  payAmount: number;
+  payCurrency: string;
+  priceAmount: number;
+  priceCurrency: string;
+  network: string;
+  expiresAt: string;
+}
+
 const DEFAULT_DEPOSIT_CRYPTO_ASSETS: Array<{
   asset: string;
   network: string;
@@ -340,6 +352,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showCryptoForm, setShowCryptoForm] = useState(false);
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [depositMethod, setDepositMethod] = useState<'bank' | 'crypto'>('bank');
+  const [cryptoCheckoutMode, setCryptoCheckoutMode] = useState<'invoice' | 'manual'>('invoice');
   const [depositAmount, setDepositAmount] = useState('');
   const [depositReference, setDepositReference] = useState('');
   const [depositTxHash, setDepositTxHash] = useState('');
@@ -349,6 +362,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [depositNote, setDepositNote] = useState('');
   const [isSubmittingDeposit, setIsSubmittingDeposit] = useState(false);
   const [depositConfig, setDepositConfig] = useState<DepositConfig | null>(null);
+  const [cryptoInvoice, setCryptoInvoice] = useState<CryptoInvoice | null>(null);
+  const [cryptoCountdownSeconds, setCryptoCountdownSeconds] = useState(0);
   const [taskActionNotice, setTaskActionNotice] = useState<string | null>(null);
 
   const menuText = {
@@ -415,6 +430,22 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       document.body.style.overflow = '';
     };
   }, [showMenu]);
+
+  useEffect(() => {
+    if (!cryptoInvoice?.expiresAt) {
+      setCryptoCountdownSeconds(0);
+      return;
+    }
+
+    const computeRemaining = () => {
+      const remaining = Math.max(0, Math.floor((new Date(cryptoInvoice.expiresAt).getTime() - Date.now()) / 1000));
+      setCryptoCountdownSeconds(remaining);
+    };
+
+    computeRemaining();
+    const timer = window.setInterval(computeRemaining, 1000);
+    return () => window.clearInterval(timer);
+  }, [cryptoInvoice?.expiresAt]);
 
   const createPendingRecord = (product: ProductData) => {
     const pendingId = `pending-${Date.now()}`;
@@ -1019,7 +1050,41 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       ? depositCryptoNetwork
       : (selectedCryptoNetworks[0] || selectedCryptoAssetConfig?.network || depositConfig?.crypto?.network || null);
 
-    if (depositMethod === 'crypto') {
+    if (depositMethod === 'crypto' && cryptoCheckoutMode === 'invoice') {
+      try {
+        setIsSubmittingDeposit(true);
+        const { projectId } = await import('~/utils/supabase/info');
+        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/api/crypto/create-invoice`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            amount,
+            asset: selectedCryptoAssetConfig?.asset || depositCryptoAsset || 'BTC',
+            network: cryptoNetworkToSubmit || displayCryptoNetwork || selectedCryptoAssetConfig?.network || 'Bitcoin',
+          }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setUiNotice({ type: 'error', text: `${data?.error || 'Unable to create crypto invoice.'}` });
+          return;
+        }
+
+        setCryptoInvoice(data?.invoice || null);
+        setUiNotice({ type: 'success', text: 'Crypto invoice created. Send exactly the amount shown below.' });
+        return;
+      } catch {
+        setUiNotice({ type: 'error', text: 'Unable to create crypto invoice right now.' });
+        return;
+      } finally {
+        setIsSubmittingDeposit(false);
+      }
+    }
+
+    if (depositMethod === 'crypto' && cryptoCheckoutMode === 'manual') {
       if (!depositTxHash.trim()) {
         setUiNotice({ type: 'error', text: 'Please enter transaction hash for crypto deposit.' });
         return;
@@ -1073,6 +1138,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       setDepositTxHash('');
       setDepositSourceWalletAddress('');
       setDepositNote('');
+      setCryptoInvoice(null);
+      setCryptoCheckoutMode('invoice');
       setShowDepositModal(false);
     } catch {
       setUiNotice({ type: 'error', text: 'Unable to submit deposit request right now.' });
@@ -1111,6 +1178,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     ? premiumProductValue
     : Math.max(Number(freezeAmount || 0), -ledgerBalance, Number(activePremiumAssignment?.topUpRequired || 0));
   const holdingAmount = accountFrozen ? -Math.max(0, activeHoldAmount) : 0;
+  const countdownMinutes = Math.floor(cryptoCountdownSeconds / 60);
+  const countdownRemainderSeconds = cryptoCountdownSeconds % 60;
+  const countdownLabel = `${String(countdownMinutes).padStart(2, '0')}:${String(countdownRemainderSeconds).padStart(2, '0')}`;
+  const invoiceQrData = cryptoInvoice
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(`${cryptoInvoice.payAddress}?amount=${cryptoInvoice.payAmount}`)}`
+    : '';
   const todayKey = new Date().toISOString().slice(0, 10);
   const todaysCommission = Math.max(0, Number(todaysProfit || 0));
   const specialLuckyBonus = 0;
@@ -1805,6 +1878,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
                       setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
                       setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                      setCryptoCheckoutMode('invoice');
+                      setCryptoInvoice(null);
+                      setDepositTxHash('');
+                      setDepositReference('');
+                      setDepositNote('');
                       setShowDepositModal(true);
                     }}
                     className="mt-3 w-full bg-blue-700 text-white hover:bg-blue-800"
@@ -2603,6 +2681,29 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </div>
               ) : (
                 <div className="rounded-lg border border-gray-200 p-3 text-sm text-gray-700 space-y-1">
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <Button
+                      type="button"
+                      variant={cryptoCheckoutMode === 'invoice' ? 'default' : 'outline'}
+                      onClick={() => {
+                        setCryptoCheckoutMode('invoice');
+                        setCryptoInvoice(null);
+                      }}
+                    >
+                      Pay with Crypto
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={cryptoCheckoutMode === 'manual' ? 'default' : 'outline'}
+                      onClick={() => {
+                        setCryptoCheckoutMode('manual');
+                        setCryptoInvoice(null);
+                      }}
+                    >
+                      Manual Transfer
+                    </Button>
+                  </div>
+
                   {availableCryptoAssets.length > 0 && (
                     <div className="space-y-1 mb-2">
                       <label className="text-sm font-medium text-gray-700">Crypto Asset</label>
@@ -2648,6 +2749,37 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <p><strong>Network:</strong> {displayCryptoNetwork}</p>
                   <p><strong>Wallet Address:</strong> {selectedCryptoAssetConfig?.walletAddress || depositConfig?.crypto?.walletAddress || cryptoWallet.walletAddress || 'N/A'}</p>
                   <p className="text-xs text-gray-500 mt-2">{selectedCryptoAssetConfig?.instructions || depositConfig?.crypto?.instructions || 'Send funds to the address above and provide tx hash.'}</p>
+
+                  {cryptoCheckoutMode === 'invoice' && cryptoInvoice && (
+                    <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                      <p className="text-sm font-semibold text-blue-900 mb-2">Crypto Invoice</p>
+                      <div className="flex flex-col items-center gap-3">
+                        <img src={invoiceQrData} alt="Crypto payment QR code" className="h-44 w-44 rounded-lg border border-blue-200 bg-white p-2" />
+                        <div className="w-full space-y-2 text-xs">
+                          <p><strong>Address:</strong></p>
+                          <p className="break-all rounded bg-white p-2 border border-blue-100">{cryptoInvoice.payAddress}</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(cryptoInvoice.payAddress);
+                                setUiNotice({ type: 'success', text: 'Wallet address copied.' });
+                              } catch {
+                                setUiNotice({ type: 'error', text: 'Unable to copy address.' });
+                              }
+                            }}
+                          >
+                            Copy Address
+                          </Button>
+                          <p><strong>Amount:</strong> {Number(cryptoInvoice.payAmount || 0).toFixed(8)} {cryptoInvoice.payCurrency.toUpperCase()}</p>
+                          <p><strong>Expires In:</strong> {countdownLabel}</p>
+                          <p className="text-blue-800 font-medium">Send exactly this amount from your wallet.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2664,22 +2796,30 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 />
                 {depositMethod === 'crypto' ? (
                   <>
-                    <label className="text-sm font-medium text-gray-700">Your Wallet Address (optional)</label>
-                    <input
-                      type="text"
-                      value={depositSourceWalletAddress}
-                      onChange={(e) => setDepositSourceWalletAddress(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                      placeholder="Sender wallet address"
-                    />
-                    <label className="text-sm font-medium text-gray-700">Transaction Hash</label>
-                    <input
-                      type="text"
-                      value={depositTxHash}
-                      onChange={(e) => setDepositTxHash(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                      placeholder="Blockchain transaction hash"
-                    />
+                    {cryptoCheckoutMode === 'manual' ? (
+                      <>
+                        <label className="text-sm font-medium text-gray-700">Your Wallet Address (optional)</label>
+                        <input
+                          type="text"
+                          value={depositSourceWalletAddress}
+                          onChange={(e) => setDepositSourceWalletAddress(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="Sender wallet address"
+                        />
+                        <label className="text-sm font-medium text-gray-700">Transaction Hash</label>
+                        <input
+                          type="text"
+                          value={depositTxHash}
+                          onChange={(e) => setDepositTxHash(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2"
+                          placeholder="Blockchain transaction hash"
+                        />
+                      </>
+                    ) : (
+                      <p className="text-xs text-blue-700 rounded border border-blue-200 bg-blue-50 p-2">
+                        Select amount and click Generate Invoice. Then send exactly the shown amount to the temporary wallet address.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <>
@@ -2705,11 +2845,19 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
-                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowDepositModal(false)}
+                >
                   Cancel
                 </Button>
                 <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
-                  {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
+                  {isSubmittingDeposit
+                    ? 'Submitting...'
+                    : (depositMethod === 'crypto' && cryptoCheckoutMode === 'invoice'
+                      ? (cryptoInvoice ? 'Refresh Invoice' : 'Generate Invoice')
+                      : 'Submit Deposit Request')}
                 </Button>
               </div>
           </div>
