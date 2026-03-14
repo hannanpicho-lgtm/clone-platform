@@ -14,8 +14,6 @@ const DEFAULT_MAX_BACKUPS = 72;
 const EXCLUDED_NAMES = new Set([
   '.git',
   'node_modules',
-  '.netlify',
-  '.vercel',
   '.next',
   '.cache',
   '.turbo',
