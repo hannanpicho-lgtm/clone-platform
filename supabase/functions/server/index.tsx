@@ -2666,6 +2666,12 @@ app.get("/admin/users", async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
+    const pageParam = Number(c.req.query('page') || 1);
+    const limitParam = Number(c.req.query('limit') || 100);
+    const page = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1;
+    const limit = Number.isFinite(limitParam) && limitParam > 0
+      ? Math.min(Math.floor(limitParam), 250)
+      : 100;
 
     const rawUsers = await kv.getByPrefix('user:');
     const users = (rawUsers ?? []).map((user: any) => ({
@@ -2691,7 +2697,18 @@ app.get("/admin/users", async (c) => {
       createdAt: user?.createdAt ?? new Date().toISOString(),
     }));
 
-    const usersWithEarnings = await Promise.all(users.map(async (user: any) => {
+    const scopedUsers = users.filter((user: any) => isUserInAdminScope(scope, user));
+    const sortedUsers = scopedUsers.sort((a: any, b: any) => {
+      const bCreatedAt = new Date(b?.createdAt || 0).getTime();
+      const aCreatedAt = new Date(a?.createdAt || 0).getTime();
+      return bCreatedAt - aCreatedAt;
+    });
+
+    const totalUsers = sortedUsers.length;
+    const totalPages = Math.max(1, Math.ceil(totalUsers / limit));
+    const offset = (page - 1) * limit;
+    const pagedUsers = sortedUsers.slice(offset, offset + limit);
+    const usersWithEarnings = await Promise.all(pagedUsers.map(async (user: any) => {
       const totalEarnings = await resolveUserTotalEarnings(user);
       return {
         ...user,
@@ -2700,15 +2717,8 @@ app.get("/admin/users", async (c) => {
       };
     }));
 
-    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
-    const sortedUsers = scopedUsers.sort((a: any, b: any) => {
-      const bCreatedAt = new Date(b?.createdAt || 0).getTime();
-      const aCreatedAt = new Date(a?.createdAt || 0).getTime();
-      return bCreatedAt - aCreatedAt;
-    });
-
     const metrics = {
-      totalUsers: sortedUsers.length,
+      totalUsers,
       totalRevenue: sortedUsers.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
       totalTransactions: sortedUsers.reduce((sum: number, user: any) => sum + (Number(user.productsSubmitted) || 0), 0),
       activeUsers: sortedUsers.filter((user: any) => !user.accountFrozen && !user.accountDisabled).length,
@@ -2716,7 +2726,17 @@ app.get("/admin/users", async (c) => {
       totalCommissionsPaid: 0,
     };
 
-    return c.json({ success: true, users: sortedUsers, metrics });
+    return c.json({
+      success: true,
+      users: usersWithEarnings,
+      metrics,
+      pagination: {
+        page,
+        limit,
+        totalUsers,
+        totalPages,
+      },
+    });
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
