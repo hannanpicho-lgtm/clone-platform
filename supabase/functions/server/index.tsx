@@ -374,6 +374,43 @@ const getVipTaskCommissionRate = (vipTier: string): number => {
 
 const VIP_TIER_ORDER = ['Normal', 'Silver', 'Gold', 'Platinum', 'Diamond'] as const;
 
+const DEFAULT_VIP_COMMISSION_RANGES: Record<string, { min: number; max: number }> = {
+  Normal: { min: 40, max: 60 },
+  Silver: { min: 60, max: 70 },
+  Gold: { min: 150, max: 170 },
+  Platinum: { min: 200, max: 250 },
+  Diamond: { min: 1500, max: 2000 },
+};
+
+const normalizeVipCommissionRange = (
+  input: any,
+  fallback: { min: number; max: number },
+): { min: number; max: number } => {
+  const parsedMin = Number(input?.min);
+  const parsedMax = Number(input?.max);
+  const safeMin = Number.isFinite(parsedMin) && parsedMin >= 0 ? parsedMin : fallback.min;
+  const safeMaxCandidate = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : fallback.max;
+  return {
+    min: roundCurrency(safeMin),
+    max: roundCurrency(Math.max(safeMin, safeMaxCandidate)),
+  };
+};
+
+const getVipCommissionRangeConfig = async () => {
+  const row = await kv.get('vip:commission-ranges') || {};
+  const sourceRanges = row?.ranges || row || {};
+  const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
+    acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], DEFAULT_VIP_COMMISSION_RANGES[tier]);
+    return acc;
+  }, {} as Record<string, { min: number; max: number }>);
+
+  return {
+    ranges,
+    updatedAt: row?.updatedAt || null,
+    updatedBy: row?.updatedBy || null,
+  };
+};
+
 const VIP_AUTO_UPGRADE_SET_REQUIREMENTS: Record<string, number> = {
   Normal: 3,
   Silver: 4,
@@ -1826,6 +1863,52 @@ app.put('/admin/contact-links', async (c) => {
   } catch (error) {
     console.error(`Error updating contact links: ${error}`);
     return c.json({ error: 'Internal server error while updating contact links' }, 500);
+  }
+});
+
+app.get('/admin/vip-commission-ranges', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const config = await getVipCommissionRangeConfig();
+    return c.json({ success: true, config });
+  } catch (error) {
+    console.error(`Error fetching VIP commission ranges: ${error}`);
+    return c.json({ error: 'Internal server error while fetching VIP commission ranges' }, 500);
+  }
+});
+
+app.put('/admin/vip-commission-ranges', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.update_vip');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const currentConfig = await getVipCommissionRangeConfig();
+    const sourceRanges = body?.ranges || {};
+
+    const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
+      const fallback = currentConfig?.ranges?.[tier] || DEFAULT_VIP_COMMISSION_RANGES[tier];
+      acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], fallback);
+      return acc;
+    }, {} as Record<string, { min: number; max: number }>);
+
+    const payload = {
+      ranges,
+      updatedAt: new Date().toISOString(),
+      updatedBy: adminAccess.userId || 'super_admin',
+    };
+
+    await kv.set('vip:commission-ranges', payload);
+    return c.json({ success: true, config: payload });
+  } catch (error) {
+    console.error(`Error updating VIP commission ranges: ${error}`);
+    return c.json({ error: 'Internal server error while updating VIP commission ranges' }, 500);
   }
 });
 
