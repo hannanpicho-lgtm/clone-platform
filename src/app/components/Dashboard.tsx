@@ -1169,7 +1169,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowChat(true);
+                      setShowLiveChat(true);
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
@@ -2631,7 +2631,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* Content */}
               <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <FAQ accessToken={accessToken} />
+                <FAQ
+                  accessToken={accessToken}
+                  onCreateSupportTicket={() => {
+                    setShowFAQ(false);
+                    setShowSupportTickets(true);
+                  }}
+                  onStartLiveChat={() => {
+                    setShowFAQ(false);
+                    setShowLiveChat(true);
+                  }}
+                />
               </div>
             </div>
           </div>
