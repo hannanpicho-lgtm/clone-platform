@@ -2445,8 +2445,15 @@ app.get("/admin/users", async (c) => {
 
     const scope = await getAdminScopeConfig(adminAccess);
 
+    const todayDate = new Date().toISOString().slice(0, 10);
     const rawUsers = await kv.getByPrefix('user:');
-    const users = (rawUsers ?? []).map((user: any) => ({
+    const users = (rawUsers ?? []).map((user: any) => {
+      const taskState = buildTaskState(user);
+      const isCurrentDate = taskState.currentSetDate === todayDate;
+      const visibleTaskSetsCompletedToday = isCurrentDate ? taskState.taskSetsCompletedToday : 0;
+      const visibleCurrentSetTasksCompleted = isCurrentDate ? taskState.currentSetTasksCompleted : 0;
+
+      return {
       id: user?.id ?? '',
       email: user?.email ?? '',
       name: user?.name ?? 'User',
@@ -2462,12 +2469,13 @@ app.get("/admin/users", async (c) => {
       dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
       extraTaskSets: Number(user?.extraTaskSets ?? 0),
       withdrawalLimit: Number(user?.withdrawalLimit ?? 0),
-      taskSetsCompletedToday: Number(user?.taskSetsCompletedToday ?? 0),
-      currentSetTasksCompleted: Number(user?.currentSetTasksCompleted ?? 0),
-      currentSetDate: user?.currentSetDate ?? null,
+      taskSetsCompletedToday: visibleTaskSetsCompletedToday,
+      currentSetTasksCompleted: visibleCurrentSetTasksCompleted,
+      currentSetDate: isCurrentDate ? taskState.currentSetDate : todayDate,
       parentUserId: user?.parentUserId ?? null,
       createdAt: user?.createdAt ?? new Date().toISOString(),
-    }));
+      };
+    });
 
     const usersWithEarnings = await Promise.all(users.map(async (user: any) => {
       const totalEarnings = await resolveUserTotalEarnings(user);
@@ -3798,15 +3806,18 @@ app.post('/tasks/reset-set', async (c) => {
 
     const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
 
-    const isSetComplete = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const isSetCompleteOnCurrentDate = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const isStaleCompletedSet = taskState.currentSetDate !== todayDate
+      && taskState.currentSetTasksCompleted >= taskState.tasksPerSet;
+    const isSetComplete = isSetCompleteOnCurrentDate || isStaleCompletedSet;
     const canCountAnotherSet = normalizedTaskState.taskSetsCompletedToday < maxSetsForToday;
-    const shouldCountCompletedSet = isSetComplete && canCountAnotherSet;
+    const shouldCountCompletedSet = isSetCompleteOnCurrentDate && canCountAnotherSet;
 
     if (mode === 'complete_set' && !isSetComplete) {
       return c.json({ error: 'Current task set is not complete yet' }, 400);
     }
 
-    if (mode === 'complete_set' && !canCountAnotherSet) {
+    if (mode === 'complete_set' && isSetCompleteOnCurrentDate && !canCountAnotherSet) {
       return c.json({ error: 'Daily task set limit reached' }, 400);
     }
 
@@ -4789,14 +4800,17 @@ app.post('/admin/users/reset-task-set', async (c) => {
         };
 
     const maxSetsForToday = normalizedTaskState.dailyTaskSetLimit + normalizedTaskState.extraTaskSets;
-    const isSetComplete = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const isSetCompleteOnCurrentDate = normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
+    const isStaleCompletedSet = taskState.currentSetDate !== todayDate
+      && taskState.currentSetTasksCompleted >= taskState.tasksPerSet;
+    const isSetComplete = isSetCompleteOnCurrentDate || isStaleCompletedSet;
     const canCountAnotherSet = normalizedTaskState.taskSetsCompletedToday < maxSetsForToday;
-    const shouldCountCompletedSet = isSetComplete && canCountAnotherSet;
+    const shouldCountCompletedSet = isSetCompleteOnCurrentDate && canCountAnotherSet;
 
     if (resetMode === 'complete_set' && !isSetComplete) {
       return c.json({ error: 'Current task set is not complete yet' }, 400);
     }
-    if (resetMode === 'complete_set' && !canCountAnotherSet) {
+    if (resetMode === 'complete_set' && isSetCompleteOnCurrentDate && !canCountAnotherSet) {
       return c.json({ error: 'Daily task set limit reached' }, 400);
     }
 
