@@ -2947,13 +2947,13 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                           value={supportLinks.whatsapp}
                           onChange={(e) => setSupportLinks((prev) => ({ ...prev, whatsapp: e.target.value }))}
                           placeholder="WhatsApp 1: https://wa.me/..."
-                          disabled={!canManageSupport}
+                          disabled={!canManageSupport || !adminIsSuperAdmin}
                         />
                         <Input
                           value={supportLinks.telegram}
                           onChange={(e) => setSupportLinks((prev) => ({ ...prev, telegram: e.target.value }))}
                           placeholder="Telegram 1: https://t.me/..."
-                          disabled={!canManageSupport}
+                          disabled={!canManageSupport || !adminIsSuperAdmin}
                         />
                         <Input
                           value={supportLinks.whatsapp2}
@@ -2968,6 +2968,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                           disabled={!canManageSupport}
                         />
                       </div>
+                      {!adminIsSuperAdmin && canManageSupport && (
+                        <p className="text-xs text-amber-700">
+                          Limited admins can edit WhatsApp 2 and Telegram 2 only. WhatsApp 1 and Telegram 1 are super-admin only.
+                        </p>
+                      )}
                       <div className="flex gap-2">
                         <Button
                           onClick={loadSupportLinksConfig}

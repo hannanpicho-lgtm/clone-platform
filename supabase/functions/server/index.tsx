@@ -1874,6 +1874,17 @@ app.put('/admin/contact-links', async (c) => {
       ? String(body?.telegram2 || '').trim()
       : String(currentConfig.telegram2 || '').trim();
 
+    if (!adminAccess.isSuperAdmin) {
+      const currentWhatsapp = String(currentConfig.whatsapp || '').trim();
+      const currentTelegram = String(currentConfig.telegram || '').trim();
+      const attemptedPrimaryLinkChange = (hasWhatsapp && nextWhatsapp !== currentWhatsapp)
+        || (hasTelegram && nextTelegram !== currentTelegram);
+
+      if (attemptedPrimaryLinkChange) {
+        return c.json({ error: 'Forbidden - Limited admins cannot edit WhatsApp 1 or Telegram 1 links' }, 403);
+      }
+    }
+
     const payload = {
       whatsapp: nextWhatsapp,
       telegram: nextTelegram,
