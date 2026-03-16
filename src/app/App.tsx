@@ -13,6 +13,9 @@ export default function App() {
   const isAdminPortalHost = typeof window !== 'undefined'
     ? window.location.hostname.includes('tank-admin-portal')
     : false;
+  const isAdminRoute = typeof window !== 'undefined'
+    ? window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/')
+    : false;
   const adminPortalOnly = envAdminPortalOnly && isAdminPortalHost;
   const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -29,15 +32,6 @@ export default function App() {
   const supabase = getSupabaseClient();
 
   useEffect(() => {
-    // Admin portal is hosted separately; redirect admin routes away from the user app.
-    const path = window.location.pathname;
-    if (!adminPortalOnly && (path === '/admin' || path.startsWith('/admin/'))) {
-      const adminPortalUrl = String(import.meta.env.VITE_ADMIN_PORTAL_URL || '').trim();
-      window.location.replace(adminPortalUrl || '/');
-      setIsCheckingSession(false);
-      return;
-    }
-
     // Suppress "Failed to fetch" errors in console
     const originalConsoleError = console.error;
     console.error = (...args: any[]) => {
@@ -211,10 +205,23 @@ export default function App() {
             <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
           ))
         ) : (
-          accessToken ? (
-            <Dashboard accessToken={accessToken} onLogout={handleLogout} />
+          isAdminRoute ? (
+            isAdminAuthenticated ? (
+              <AdminDashboard
+                onLogout={handleAdminLogout}
+                adminAccessToken={adminAccessToken}
+                adminIsSuperAdmin={isSuperAdmin}
+                adminPermissions={adminPermissions}
+              />
+            ) : (
+              <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
+            )
           ) : (
-            <AuthPage onAuthSuccess={handleAuthSuccess} />
+            accessToken ? (
+              <Dashboard accessToken={accessToken} onLogout={handleLogout} />
+            ) : (
+              <AuthPage onAuthSuccess={handleAuthSuccess} />
+            )
           )
         )}
       </div>
