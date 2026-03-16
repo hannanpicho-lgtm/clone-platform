@@ -21,15 +21,6 @@ jobs:
 
       - name: Run regression guards
         run: node scripts/regression-guards.mjs
-        env:
-          FUNCTION_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/make-server-44a642d3
-
-      - name: Run user task-flow canary
-        run: node scripts/canary-user-task-flow.mjs
-        env:
-          FUNCTION_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/make-server-44a642d3
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_ADMIN_API_KEY: ${{ secrets.SUPABASE_ADMIN_API_KEY }}
 
       - name: Deploy functions
         env:

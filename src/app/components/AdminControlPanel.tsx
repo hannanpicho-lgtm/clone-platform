@@ -7,7 +7,6 @@ import {
   Search, Edit2, Trash2, CheckCircle, XCircle, AlertCircle, 
   TrendingUp, Lock, Globe, Database, MessageSquare, Ticket, Copy, UserPlus
 } from 'lucide-react';
-import { supabaseUrl } from '/utils/supabase/info';
 
 interface AdminUser {
   id: string;
@@ -66,7 +65,6 @@ const [products, setProducts] = useState<any[]>([]);
 const [isLoadingProducts, setIsLoadingProducts] = useState(false);
 
 export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
-  const functionsBaseUrl = `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'products' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
@@ -85,7 +83,11 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchProducts = async () => {
       setIsLoadingProducts(true);
       try {
-        const response = await fetch(`${functionsBaseUrl}/make-server-44a642d3/products`, {
+        const baseUrl = window.location.hostname.includes('localhost')
+          ? 'http://localhost:54321'
+          : 'https://iridescent-basbousa-b72341.netlify.app';
+        console.log('Fetching products from:', `${baseUrl}/functions/v1/make-server-44a642d3/products`);
+        const response = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/products`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
@@ -197,7 +199,10 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     const fetchSupportTickets = async () => {
       setIsLoadingSupport(true);
       try {
-        const response = await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
+        const baseUrl = window.location.hostname.includes('localhost')
+          ? 'http://localhost:54321'
+          : 'https://iridescent-basbousa-b72341.netlify.app';
+        const response = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
           headers: {
             'Authorization': 'Bearer admin-demo-token',
           },
@@ -216,7 +221,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
             })));
           } else {
             // Seed demo ticket if none found
-            await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
+            await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
               method: 'POST',
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
@@ -230,7 +235,7 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
               }),
             });
             // Re-fetch tickets
-            const seededResponse = await fetch(`${functionsBaseUrl}/make-server-44a642d3/support-tickets`, {
+            const seededResponse = await fetch(`${baseUrl}/functions/v1/make-server-44a642d3/support-tickets`, {
               headers: {
                 'Authorization': 'Bearer admin-demo-token',
               },
@@ -805,8 +810,11 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                           onClick={async () => {
                             setIsReplying(true);
                             try {
+                              const baseUrl = window.location.hostname.includes('localhost')
+                                ? 'http://localhost:54321'
+                                : 'https://iridescent-basbousa-b72341.netlify.app';
                               const response = await fetch(
-                                `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -838,8 +846,11 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                           onClick={async () => {
                             setIsReplying(true);
                             try {
+                              const baseUrl = window.location.hostname.includes('localhost')
+                                ? 'http://localhost:54321'
+                                : 'https://iridescent-basbousa-b72341.netlify.app';
                               const response = await fetch(
-                                `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                                `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                                 {
                                   method: 'POST',
                                   headers: {
@@ -880,8 +891,11 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
                         onClick={async () => {
                           setIsReplying(true);
                           try {
+                            const baseUrl = window.location.hostname.includes('localhost')
+                              ? 'http://localhost:54321'
+                              : 'https://iridescent-basbousa-b72341.netlify.app';
                             const response = await fetch(
-                              `${functionsBaseUrl}/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
+                              `${baseUrl}/functions/v1/make-server-44a642d3/admin/support-tickets/${selectedTicket.id}/reply`,
                               {
                                 method: 'POST',
                                 headers: {

@@ -5,7 +5,6 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, CheckCircle, Clock, X } from 'lucide-react';
-import { functionsBaseUrl, publicAnonKey } from '/utils/supabase/info';
 
 interface WithdrawalFormProps {
   accessToken: string;
@@ -25,12 +24,8 @@ interface WithdrawalRequest {
   denialReason?: string;
 }
 
-const FUNCTIONS_BASE_URL = functionsBaseUrl;
-
-const createIdempotencyKey = (scope: string) => {
-  const random = Math.random().toString(36).slice(2, 10);
-  return `web-${scope}-${Date.now()}-${random}`;
-};
+const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
+const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
 
 export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimit = 0, onSuccess }: WithdrawalFormProps) {
   const [amount, setAmount] = useState('');
@@ -112,15 +107,11 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
 
     try {
       setLoading(true);
-      const idempotencyKey = createIdempotencyKey('withdrawal-request');
       const response = await fetch(`${FUNCTIONS_BASE_URL}/make-server-44a642d3/request-withdrawal`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
-          apikey: publicAnonKey,
-          'Idempotency-Key': idempotencyKey,
-          'X-Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify({
           amount: withdrawAmount,
@@ -135,7 +126,7 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
         return;
       }
 
-      setSuccess(String(data?.message || `Withdrawal of $${withdrawAmount.toFixed(2)} requested successfully! Admin approval required.`));
+      setSuccess(`Withdrawal of $${withdrawAmount.toFixed(2)} requested successfully! Admin approval required.`);
       setAmount('');
       setPasswordVerified(false);
       
@@ -271,27 +262,28 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
               />
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium mt-4"
-            >
-              {loading ? 'Processing...' : 'Request Withdrawal'}
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full mt-2"
-              onClick={() => {
-                setPasswordVerified(false);
-                setAmount('');
-                setError('');
-              }}
-              disabled={loading}
-            >
-              Back
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setPasswordVerified(false);
+                  setAmount('');
+                  setError('');
+                }}
+                disabled={loading}
+              >
+                Back
+              </Button>
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
+              >
+                {loading ? 'Processing...' : 'Request Withdrawal'}
+              </Button>
+            </div>
           </form>
         )}
       </Card>

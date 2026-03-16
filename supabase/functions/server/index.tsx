@@ -7,14 +7,6 @@ import * as kv from "./kv_store.tsx";
 
 const app = new Hono();
 
-const NODE_ENV = (Deno.env.get('NODE_ENV') || 'development').toLowerCase();
-const IS_PRODUCTION = NODE_ENV === 'production';
-const ALLOW_SUPER_ADMIN_KEY_BYPASS = Deno.env.get('ALLOW_SUPER_ADMIN_KEY_BYPASS') === 'true';
-const CORS_ALLOWED_ORIGINS = (Deno.env.get('CORS_ALLOWED_ORIGINS') || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
 // Create singleton Supabase clients
 let serviceClient: any = null;
 let anonClient: any = null;
@@ -51,19 +43,7 @@ const getAnonClient = () => {
   return anonClient;
 };
 
-const getAdminApiKeys = (): string[] => {
-  const directKeys = [
-    Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? '',
-    Deno.env.get('ADMIN_API_KEY') ?? '',
-  ];
-
-  const additional = String(Deno.env.get('ADMIN_API_KEYS') ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  return Array.from(new Set([...directKeys, ...additional].filter(Boolean)));
-};
+const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
 
 const getKvRowsByPrefix = async (prefix: string): Promise<Array<{ key: string; value: any }>> => {
   const supabase = getServiceClient();
@@ -85,48 +65,6 @@ const getProjectRefFromUrl = (): string | null => {
   return match?.[1] ?? null;
 };
 
-const NOWPAYMENTS_API_BASE = 'https://api.nowpayments.io/v1';
-const NOWPAYMENTS_SUPPORTED_ASSETS = ['BTC', 'ETH', 'USDT'] as const;
-
-const mapNowPaymentsCurrency = (asset: string, network?: string): string => {
-  const normalizedAsset = String(asset || '').trim().toUpperCase();
-  const normalizedNetwork = String(network || '').trim().toUpperCase();
-
-  if (normalizedAsset === 'BTC') return 'btc';
-  if (normalizedAsset === 'ETH') return 'eth';
-  if (normalizedAsset === 'USDT') {
-    if (normalizedNetwork.includes('TRC20') || normalizedNetwork.includes('TRON')) return 'usdttrc20';
-    if (normalizedNetwork.includes('BEP20') || normalizedNetwork.includes('BSC')) return 'usdtbsc';
-    return 'usdterc20';
-  }
-  return normalizedAsset.toLowerCase();
-};
-
-const toHexString = (buffer: ArrayBuffer): string =>
-  Array.from(new Uint8Array(buffer)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-
-const computeNowPaymentsSignature = async (payload: string, secret: string): Promise<string> => {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-512' },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-  return toHexString(signature);
-};
-
-const buildCryptoWebhookUrl = (): string => {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-  const projectRef = getProjectRefFromUrl();
-  if (!supabaseUrl || !projectRef) {
-    return '/api/crypto/webhook';
-  }
-  return `${supabaseUrl}/functions/v1/make-server-44a642d3/api/crypto/webhook`;
-};
-
 const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; response: any }> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
@@ -134,10 +72,9 @@ const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; resp
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKeys = getAdminApiKeys();
+  const expectedKey = getAdminApiKey();
 
-  // Accept both legacy JWT and new secret key
-  if (expectedKeys.includes(token)) {
+  if (expectedKey && token === expectedKey) {
     return { ok: true };
   }
 
@@ -148,22 +85,6 @@ const requireAdminKey = async (c: any): Promise<{ ok: true } | { ok: false; resp
 async function verifyJWT(token: string): Promise<{ userId: string | null; error: string | null }> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-
-  // First attempt: validate token via service client (most resilient to anon key format changes)
-  try {
-    const supabase = getServiceClient();
-    const { data: { user }, error: serviceError } = await supabase.auth.getUser(token);
-
-    if (user && !serviceError) {
-      return { userId: user.id, error: null };
-    }
-
-    if (serviceError) {
-      console.error('Service client verification failed:', serviceError.message || serviceError);
-    }
-  } catch (error) {
-    console.error('Service client JWT verification error:', error);
-  }
 
   // Primary verification: ask Supabase Auth to validate token and return current user
   // This is the most reliable path when JWT signing is asymmetric.
@@ -191,7 +112,8 @@ async function verifyJWT(token: string): Promise<{ userId: string | null; error:
     console.error('Supabase Auth API verification error:', error);
   }
   
-  // Fallback: anon client verification
+  // Use ANON client to verify tokens (not service client!)
+  // Tokens generated with anon key must be verified with anon key
   try {
     const supabase = getAnonClient();
     
@@ -225,7 +147,7 @@ async function verifyJWT(token: string): Promise<{ userId: string | null; error:
       }
     }
   } catch (error) {
-    console.error('Manual JWT verification failed:', String(error));
+    console.error('Manual JWT verification failed:', error.message);
   }
 
   return { userId: null, error: 'Invalid or expired token' };
@@ -238,16 +160,8 @@ app.use('*', logger(console.log));
 app.use(
   "/*",
   cors({
-    origin: (origin) => {
-      if (!origin) {
-        return IS_PRODUCTION ? '' : '*';
-      }
-      if (!IS_PRODUCTION) {
-        return origin;
-      }
-      return CORS_ALLOWED_ORIGINS.includes(origin) ? origin : '';
-    },
-    allowHeaders: ["Content-Type", "Authorization", "apikey", "Idempotency-Key", "X-Idempotency-Key"],
+    origin: "*",
+    allowHeaders: ["Content-Type", "Authorization", "apikey"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -263,7 +177,7 @@ app.get("/products", async (c) => {
     const products = await getTaskProductCatalog();
     return c.json({ products });
   } catch (error) {
-    return c.json({ error: "Failed to fetch products" }, 500);
+    return c.json({ error: error.message || "Failed to fetch products" }, 500);
   }
 });
 // Generate a unique invitation code
@@ -882,7 +796,6 @@ const buildTaskState = (user: any) => {
 const ADMIN_PERMISSION_ALL = '*';
 const ADMIN_ALLOWED_PERMISSIONS = [
   'users.view',
-  'users.manage_status',
   'users.adjust_balance',
   'users.assign_premium',
   'users.reset_tasks',
@@ -897,23 +810,8 @@ const ADMIN_ALLOWED_PERMISSIONS = [
 
 type AdminPermission = typeof ADMIN_ALLOWED_PERMISSIONS[number] | '*';
 
-type AdminAccessGranted = {
-  ok: true;
-  isSuperAdmin: boolean;
-  userId: string | null;
-  permissions: AdminPermission[];
-};
-
-type AdminAccessDenied = {
-  ok: false;
-  response: any;
-};
-
-type AdminAccessResult = AdminAccessGranted | AdminAccessDenied;
-
 const BASELINE_LIMITED_ADMIN_PERMISSIONS: AdminPermission[] = [
   'users.view',
-  'users.manage_status',
   'users.adjust_balance',
   'users.assign_premium',
   'support.manage',
@@ -924,7 +822,7 @@ const sanitizeAdminPermissions = (permissions: unknown): AdminPermission[] => {
     return [];
   }
   const legacyPermissionMap: Record<string, AdminPermission[]> = {
-    'users.manage': ['users.manage_status', 'users.adjust_balance', 'users.reset_tasks', 'users.manage_task_limits', 'users.unfreeze', 'users.update_vip'],
+    'users.manage': ['users.adjust_balance', 'users.reset_tasks', 'users.manage_task_limits', 'users.unfreeze', 'users.update_vip'],
     'premium.assign': ['users.assign_premium'],
     'premium.manage': ['users.assign_premium'],
   };
@@ -938,37 +836,6 @@ const sanitizeAdminPermissions = (permissions: unknown): AdminPermission[] => {
       }
       continue;
     }
-
-      const ADMIN_AUDIT_LOG_KEY = 'admin:audit-log';
-
-      type AdminAuditActor = {
-        isSuperAdmin: boolean;
-        userId: string | null;
-      };
-
-      const appendAdminAuditLog = async (
-        actor: AdminAuditActor,
-        action: string,
-        options?: {
-          targetUserId?: string | null;
-          targetIdentifier?: string | null;
-          meta?: Record<string, unknown>;
-        },
-      ) => {
-        const existing = await kv.get(ADMIN_AUDIT_LOG_KEY);
-        const logs = Array.isArray(existing) ? existing : [];
-        const entry = {
-          id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          action,
-          actorUserId: actor.userId,
-          actorType: actor.isSuperAdmin ? 'super_admin' : 'limited_admin',
-          targetUserId: options?.targetUserId || null,
-          targetIdentifier: options?.targetIdentifier || null,
-          createdAt: new Date().toISOString(),
-          meta: options?.meta || {},
-        };
-        await kv.set(ADMIN_AUDIT_LOG_KEY, [entry, ...logs].slice(0, 500));
-      };
     if (permission === ADMIN_PERMISSION_ALL || ADMIN_ALLOWED_PERMISSIONS.includes(permission as any)) {
       unique.add(permission);
     }
@@ -982,8 +849,8 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
   }
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKeys = getAdminApiKeys();
-  if (!ALLOW_SUPER_ADMIN_KEY_BYPASS || expectedKeys.length === 0 || !expectedKeys.includes(token)) {
+  const expectedKey = getAdminApiKey();
+  if (!expectedKey || token !== expectedKey) {
     return { ok: false, response: c.json({ error: 'Forbidden - Super admin key required' }, 403) };
   }
   return { ok: true };
@@ -992,16 +859,19 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
 const requireAdminPermission = async (
   c: any,
   requiredPermission: AdminPermission,
-): Promise<AdminAccessResult> => {
+): Promise<
+  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
+  | { ok: false; response: any }
+> => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKeys = getAdminApiKeys();
+  const expectedKey = getAdminApiKey();
 
-  if (ALLOW_SUPER_ADMIN_KEY_BYPASS && expectedKeys.includes(token)) {
+  if (expectedKey && token === expectedKey) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] };
   }
 
@@ -1025,16 +895,16 @@ const requireAdminPermission = async (
   return { ok: true, isSuperAdmin: false, userId, permissions };
 };
 
-const requireSupportAccess = async (c: any): Promise<AdminAccessResult> => {
+const requireSupportAccess = async (c: any) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
     return { ok: false, response: c.json({ error: 'Unauthorized - Missing authorization header' }, 401) };
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  const expectedKeys = getAdminApiKeys();
+  const expectedKey = getAdminApiKey();
 
-  if (ALLOW_SUPER_ADMIN_KEY_BYPASS && expectedKeys.includes(token)) {
+  if (expectedKey && token === expectedKey) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[] };
   }
 
@@ -1149,6 +1019,7 @@ const getRequesterIp = (c: any): string => {
 const getRequesterCountry = (c: any): string => {
   const countryCode = String(
     c.req.header('cf-ipcountry') ||
+    c.req.header('x-vercel-ip-country') ||
     c.req.header('x-country-code') ||
     '',
   ).trim().toUpperCase();
@@ -1164,32 +1035,6 @@ const getRequestLocation = (c: any): { ip: string; country: string } => ({
   ip: getRequesterIp(c),
   country: getRequesterCountry(c),
 });
-
-type ServerLogLevel = 'info' | 'warn' | 'error';
-
-const logServerEvent = (
-  level: ServerLogLevel,
-  event: string,
-  details: Record<string, unknown> = {},
-): void => {
-  const entry = {
-    ts: new Date().toISOString(),
-    level,
-    event,
-    ...details,
-  };
-
-  const serialized = JSON.stringify(entry);
-  if (level === 'error') {
-    console.error(serialized);
-    return;
-  }
-  if (level === 'warn') {
-    console.warn(serialized);
-    return;
-  }
-  console.log(serialized);
-};
 
 const toCountryDisplayName = (countryCodeOrName: string): string => {
   const value = String(countryCodeOrName || '').trim();
@@ -1297,279 +1142,6 @@ const enforceAdminRateLimit = async (
   });
 
   return { allowed: true };
-};
-
-const enforcePublicRateLimit = async (
-  c: any,
-  action: string,
-  limit: number,
-  windowMs: number,
-  identityOverride?: string,
-): Promise<{ allowed: true } | { allowed: false; retryAfterSec: number }> => {
-  const ip = getRequesterIp(c);
-  const identity = String(identityOverride || ip || 'unknown').trim();
-  const rateLimitKey = `public:ratelimit:${action}:${identity}`;
-  const nowMs = Date.now();
-
-  const state = await kv.get(rateLimitKey) || {};
-  const windowStartedAtMs = Number(state.windowStartedAtMs || 0);
-  const count = Number(state.count || 0);
-  const withinWindow = windowStartedAtMs > 0 && (nowMs - windowStartedAtMs) < windowMs;
-  const nextCount = withinWindow ? count + 1 : 1;
-  const nextWindowStart = withinWindow ? windowStartedAtMs : nowMs;
-
-  if (withinWindow && count >= limit) {
-    const retryAfterSec = Math.max(1, Math.ceil((windowMs - (nowMs - windowStartedAtMs)) / 1000));
-    return { allowed: false, retryAfterSec };
-  }
-
-  await kv.set(rateLimitKey, {
-    count: nextCount,
-    windowStartedAtMs: nextWindowStart,
-    updatedAtMs: nowMs,
-  });
-
-  return { allowed: true };
-};
-
-const getIdempotencyKey = (c: any): string => {
-  return String(
-    c.req.header('Idempotency-Key')
-    || c.req.header('idempotency-key')
-    || c.req.header('X-Idempotency-Key')
-    || c.req.header('x-idempotency-key')
-    || c.req.raw?.headers?.get?.('Idempotency-Key')
-    || c.req.raw?.headers?.get?.('idempotency-key')
-    || c.req.raw?.headers?.get?.('X-Idempotency-Key')
-    || c.req.raw?.headers?.get?.('x-idempotency-key')
-    || ''
-  ).trim();
-};
-
-const buildIdempotencyStoreKey = (scope: string, actorId: string, idempotencyKey: string): string => {
-  return `idempotency:${scope}:${actorId}:${idempotencyKey}`;
-};
-
-const beginIdempotentOperation = async (
-  storeKey: string,
-  fingerprint: string,
-): Promise<
-  | { state: 'started' }
-  | { state: 'replay'; responseStatus: any; responseBody: any }
-  | { state: 'in_progress' }
-  | { state: 'conflict' }
-> => {
-  const nowIso = new Date().toISOString();
-  const existing = await kv.get(storeKey);
-  if (existing) {
-    if (String(existing.fingerprint || '') !== fingerprint) {
-      return { state: 'conflict' };
-    }
-    if (existing.state === 'completed') {
-      return {
-        state: 'replay',
-        responseStatus: Number(existing.responseStatus || 200),
-        responseBody: existing.responseBody || { success: true },
-      };
-    }
-    return { state: 'in_progress' };
-  }
-
-  await kv.set(storeKey, {
-    state: 'in_progress',
-    fingerprint,
-    startedAt: nowIso,
-    updatedAt: nowIso,
-  });
-  return { state: 'started' };
-};
-
-const completeIdempotentOperation = async (
-  storeKey: string,
-  fingerprint: string,
-  responseStatus: number,
-  responseBody: any,
-): Promise<void> => {
-  const nowIso = new Date().toISOString();
-  await kv.set(storeKey, {
-    state: 'completed',
-    fingerprint,
-    responseStatus,
-    responseBody,
-    completedAt: nowIso,
-    updatedAt: nowIso,
-  });
-};
-
-const delayMs = async (ms: number): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-};
-
-const acquireFinancialLock = async (
-  scope: string,
-  actorId: string,
-  maxWaitMs = 4000,
-  leaseMs = 15000,
-): Promise<(() => Promise<void>) | null> => {
-  const normalizedScope = String(scope || '').trim().toLowerCase();
-  const normalizedActor = String(actorId || '').trim();
-  if (!normalizedScope || !normalizedActor) {
-    return null;
-  }
-
-  const lockKey = `finance:lock:${normalizedScope}:${normalizedActor}`;
-  const startedAt = Date.now();
-
-  while ((Date.now() - startedAt) < maxWaitMs) {
-    const now = Date.now();
-    const existing = await kv.get(lockKey);
-    const existingExpiresAt = Number(existing?.expiresAt || 0);
-    const lockHeld = existing && Number.isFinite(existingExpiresAt) && existingExpiresAt > now;
-
-    if (!lockHeld) {
-      const token = `${now}_${Math.random().toString(36).slice(2, 8)}`;
-      const expiresAt = now + leaseMs;
-      await kv.set(lockKey, {
-        token,
-        acquiredAt: new Date(now).toISOString(),
-        expiresAt,
-      });
-
-      const verify = await kv.get(lockKey);
-      if (String(verify?.token || '') === token) {
-        return async () => {
-          const current = await kv.get(lockKey);
-          if (String(current?.token || '') === token) {
-            await kv.del(lockKey);
-          }
-        };
-      }
-    }
-
-    await delayMs(75);
-  }
-
-  return null;
-};
-
-const appendUniqueQueueId = async (queueKey: string, id: string, maxLen = 2000): Promise<string[]> => {
-  const existing = await kv.get(queueKey) || [];
-  const queue = Array.isArray(existing) ? existing.map((value: any) => String(value)) : [];
-  if (!queue.includes(id)) {
-    queue.push(id);
-  }
-  const trimmed = queue.slice(-maxLen);
-  await kv.set(queueKey, trimmed);
-  return trimmed;
-};
-
-const removeQueueId = async (queueKey: string, id: string): Promise<string[]> => {
-  const existing = await kv.get(queueKey) || [];
-  const queue = Array.isArray(existing) ? existing.map((value: any) => String(value)) : [];
-  const updated = queue.filter((value: string) => value !== id);
-  await kv.set(queueKey, updated);
-  return updated;
-};
-
-const buildWithdrawalStoreKey = (withdrawalId: string): string => `withdrawal:${String(withdrawalId || '').trim()}`;
-
-const buildUserWithdrawalIndexKey = (userId: string): string => `withdrawals:user:${String(userId || '').trim()}`;
-
-const appendUserWithdrawalIndex = async (userId: string, withdrawalId: string): Promise<string[]> => {
-  return appendUniqueQueueId(buildUserWithdrawalIndexKey(userId), String(withdrawalId), 5000);
-};
-
-const removeUserWithdrawalIndex = async (userId: string, withdrawalId: string): Promise<string[]> => {
-  return removeQueueId(buildUserWithdrawalIndexKey(userId), String(withdrawalId));
-};
-
-const listWithdrawalsByUserId = async (userId: string): Promise<any[]> => {
-  const normalizedUserId = String(userId || '').trim();
-  if (!normalizedUserId) {
-    return [];
-  }
-
-  const indexedIds = uniqueStringArray(await kv.get(buildUserWithdrawalIndexKey(normalizedUserId)) || []);
-  if (indexedIds.length > 0) {
-    const records = await kv.mget(indexedIds.map((id) => buildWithdrawalStoreKey(id)));
-    return (records || []).filter((entry: any) => String(entry?.userId || '') === normalizedUserId);
-  }
-
-  const fallback = await kv.getByPrefix('withdrawal:');
-  return (fallback || []).filter((entry: any) => String(entry?.userId || '') === normalizedUserId);
-};
-
-const createFinancialOperation = async (
-  type: string,
-  actorId: string,
-  metadata: Record<string, any>,
-): Promise<string> => {
-  const operationId = `finop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  await kv.set(`finance:operation:${operationId}`, {
-    id: operationId,
-    type,
-    actorId,
-    status: 'in_progress',
-    metadata,
-    steps: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-  return operationId;
-};
-
-const appendFinancialOperationStep = async (
-  operationId: string,
-  step: string,
-  details?: Record<string, any>,
-): Promise<void> => {
-  const key = `finance:operation:${operationId}`;
-  const current = await kv.get(key);
-  if (!current) return;
-
-  const steps = Array.isArray(current.steps) ? current.steps : [];
-  steps.push({
-    step,
-    details: details || null,
-    at: new Date().toISOString(),
-  });
-
-  await kv.set(key, {
-    ...current,
-    steps,
-    updatedAt: new Date().toISOString(),
-  });
-};
-
-const finalizeFinancialOperation = async (
-  operationId: string,
-  status: 'completed' | 'failed',
-  summary?: Record<string, any>,
-): Promise<void> => {
-  const key = `finance:operation:${operationId}`;
-  const current = await kv.get(key);
-  if (!current) return;
-
-  await kv.set(key, {
-    ...current,
-    status,
-    summary: summary || null,
-    completedAt: status === 'completed' ? new Date().toISOString() : (current.completedAt || null),
-    failedAt: status === 'failed' ? new Date().toISOString() : (current.failedAt || null),
-    updatedAt: new Date().toISOString(),
-  });
-};
-
-const uniqueStringArray = (values: any[]): string[] => {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values || []) {
-    const normalized = String(value || '').trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(normalized);
-  }
-  return result;
 };
 
 const isLikelyTestUser = (user: any): boolean => {
@@ -1804,11 +1376,6 @@ const emailTemplates = {
 // Sign up endpoint
 app.post("/signup", async (c) => {
   try {
-    const rateLimit = await enforcePublicRateLimit(c, 'auth.signup', 8, 10 * 60 * 1000);
-    if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for signup. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
-    }
-
     const { email, password, name, username, withdrawalPassword, gender, invitationCode } = await c.req.json();
 
     const requestedUsername = String(username || name || '').trim();
@@ -1855,12 +1422,12 @@ app.post("/signup", async (c) => {
     if (error) {
       // Check if user already exists - this is a common scenario, not an error
       if (error.message.includes('already been registered')) {
-        console.log(`Info: Signup blocked for existing username: ${requestedUsername}`);
-        return c.json({ error: 'Unable to create account with provided details' }, 400);
+        console.log(`Info: Username ${requestedUsername} already exists - directing to sign in`);
+        return c.json({ error: 'A user with this username has already been registered' }, 400);
       }
       
       console.error(`Error during user signup: ${error.message}`);
-      return c.json({ error: 'Unable to create account with provided details' }, 400);
+      return c.json({ error: error.message }, 400);
     }
 
     const userId = data.user.id;
@@ -2243,260 +1810,6 @@ app.put('/admin/deposit-config', async (c) => {
   }
 });
 
-const activateCryptoPaymentForUser = async (params: {
-  userId: string;
-  invoice: any;
-  webhookPayload: Record<string, any>;
-}) => {
-  const userId = String(params.userId || '').trim();
-  if (!userId) return;
-
-  const profileKey = `user:${userId}`;
-  const user = await kv.get(profileKey);
-  if (!user) return;
-
-  const normalizedAmount = Number(params.webhookPayload?.price_amount ?? params.invoice?.priceAmount ?? params.invoice?.amount ?? 0);
-  const amount = Number.isFinite(normalizedAmount) ? Math.max(0, normalizedAmount) : 0;
-  if (amount <= 0) return;
-
-  const balanceBefore = Number(user?.balance || 0);
-  const balanceAfter = roundCurrency(balanceBefore + amount);
-  const nowIso = new Date().toISOString();
-
-  await kv.set(profileKey, {
-    ...user,
-    balance: balanceAfter,
-    updatedAt: nowIso,
-  });
-
-  const paymentId = String(params.invoice?.paymentId || params.webhookPayload?.payment_id || '').trim();
-  const requestId = `dep_crypto_${paymentId || Date.now()}`;
-  const requestRecord = {
-    id: requestId,
-    userId,
-    userName: user?.name || 'User',
-    userEmail: user?.contactEmail || user?.email || null,
-    method: 'crypto',
-    amount,
-    reference: String(params.webhookPayload?.txid || params.webhookPayload?.payment_id || paymentId || requestId),
-    transactionHash: String(params.webhookPayload?.txid || params.webhookPayload?.payment_id || paymentId || requestId),
-    sourceWalletAddress: null,
-    destinationWalletAddress: String(params.invoice?.payAddress || params.webhookPayload?.pay_address || ''),
-    cryptoAsset: String(params.invoice?.asset || params.webhookPayload?.pay_currency || '').toUpperCase(),
-    cryptoNetwork: String(params.invoice?.network || params.webhookPayload?.network || ''),
-    note: 'Confirmed by NOWPayments webhook',
-    status: 'approved',
-    createdAt: String(params.invoice?.createdAt || nowIso),
-    updatedAt: nowIso,
-    approvedAt: nowIso,
-  };
-
-  await kv.set(`deposit:request:${requestId}`, requestRecord);
-  const userRequests = await kv.get(`deposit:requests:user:${userId}`) || [];
-  if (!userRequests.includes(requestId)) {
-    userRequests.push(requestId);
-    await kv.set(`deposit:requests:user:${userId}`, userRequests.slice(-200));
-  }
-};
-
-app.post('/api/crypto/create-invoice', async (c) => {
-  try {
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized - Missing token' }, 401);
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '').trim();
-    const { userId, error } = await verifyJWT(accessToken);
-    if (error || !userId) {
-      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const amount = Number(body?.amount || 0);
-    const asset = String(body?.asset || 'BTC').trim().toUpperCase();
-    const network = String(body?.network || '').trim();
-    const targetUserId = String(body?.targetUserId || '').trim();
-
-    if (!NOWPAYMENTS_SUPPORTED_ASSETS.includes(asset as any)) {
-      return c.json({ error: 'Unsupported asset. Use BTC, ETH, or USDT.' }, 400);
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'amount must be a positive number' }, 400);
-    }
-
-    let payerUserId = String(userId);
-    let payerProfile = await kv.get(`user:${payerUserId}`);
-
-    if (!payerProfile) {
-      const adminAccess = await requireSupportAccess(c);
-      if (!adminAccess.ok) {
-        return adminAccess.response;
-      }
-
-      if (!targetUserId) {
-        return c.json({ error: 'targetUserId is required for admin-generated invoices' }, 400);
-      }
-
-      const profile = await kv.get(`user:${targetUserId}`);
-      if (!profile) {
-        return c.json({ error: 'Target user not found' }, 404);
-      }
-
-      const scope = await getAdminScopeConfig(adminAccess);
-      if (!isUserInAdminScope(scope, profile)) {
-        return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
-      }
-
-      payerUserId = targetUserId;
-      payerProfile = profile;
-    }
-
-    const nowPaymentsApiKey = String(Deno.env.get('NOWPAYMENTS_API_KEY') || '').trim();
-    if (!nowPaymentsApiKey) {
-      return c.json({ error: 'NOWPayments is not configured' }, 500);
-    }
-
-    const payCurrency = mapNowPaymentsCurrency(asset, network);
-    const orderId = `crypto_inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const webhookUrl = buildCryptoWebhookUrl();
-
-    const nowPaymentsResponse = await fetch(`${NOWPAYMENTS_API_BASE}/payment`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': nowPaymentsApiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        price_amount: amount,
-        price_currency: 'usd',
-        pay_currency: payCurrency,
-        ipn_callback_url: webhookUrl,
-        order_id: orderId,
-        order_description: `TankPlatform subscription payment for ${payerUserId}`,
-      }),
-    });
-
-    const nowPaymentsPayload = await nowPaymentsResponse.json().catch(() => ({}));
-    if (!nowPaymentsResponse.ok) {
-      return c.json({ error: nowPaymentsPayload?.message || 'Failed to create NOWPayments invoice' }, 502);
-    }
-
-    const paymentId = String(nowPaymentsPayload?.payment_id || '').trim();
-    if (!paymentId) {
-      return c.json({ error: 'NOWPayments invoice did not include payment_id' }, 502);
-    }
-
-    const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    const invoiceRecord = {
-      invoiceId: orderId,
-      paymentId,
-      userId: payerUserId,
-      userName: String(payerProfile?.name || 'User'),
-      userEmail: String(payerProfile?.contactEmail || payerProfile?.email || ''),
-      amount,
-      asset,
-      network: network || payCurrency.toUpperCase(),
-      payCurrency: String(nowPaymentsPayload?.pay_currency || payCurrency),
-      payAddress: String(nowPaymentsPayload?.pay_address || ''),
-      payAmount: Number(nowPaymentsPayload?.pay_amount || 0),
-      priceAmount: Number(nowPaymentsPayload?.price_amount || amount),
-      priceCurrency: String(nowPaymentsPayload?.price_currency || 'usd'),
-      status: String(nowPaymentsPayload?.payment_status || 'waiting'),
-      createdAt,
-      expiresAt,
-      confirmedAt: null,
-      activatedAt: null,
-      webhookUrl,
-      raw: nowPaymentsPayload,
-    };
-
-    await kv.set(`crypto:invoice:${paymentId}`, invoiceRecord);
-    await kv.set(`crypto:invoice-by-order:${orderId}`, { paymentId, userId: payerUserId, createdAt });
-
-    return c.json({
-      success: true,
-      invoice: {
-        invoiceId: orderId,
-        paymentId,
-        payAddress: invoiceRecord.payAddress,
-        payAmount: invoiceRecord.payAmount,
-        payCurrency: invoiceRecord.payCurrency,
-        priceAmount: invoiceRecord.priceAmount,
-        priceCurrency: invoiceRecord.priceCurrency,
-        network: invoiceRecord.network,
-        expiresAt,
-      },
-    });
-  } catch (error) {
-    console.error(`Error creating crypto invoice: ${error}`);
-    return c.json({ error: 'Internal server error while creating crypto invoice' }, 500);
-  }
-});
-
-app.post('/api/crypto/webhook', async (c) => {
-  try {
-    const ipnSecret = String(Deno.env.get('NOWPAYMENTS_IPN_SECRET') || '').trim();
-    if (!ipnSecret) {
-      return c.json({ error: 'NOWPayments IPN secret is not configured' }, 500);
-    }
-
-    const signature = String(c.req.header('x-nowpayments-sig') || c.req.header('X-NOWPAYMENTS-SIG') || '').trim().toLowerCase();
-    const rawBody = await c.req.text();
-    const expectedSignature = (await computeNowPaymentsSignature(rawBody, ipnSecret)).toLowerCase();
-
-    if (!signature || signature !== expectedSignature) {
-      return c.json({ error: 'Invalid NOWPayments signature' }, 401);
-    }
-
-    const payload = JSON.parse(rawBody || '{}');
-    const paymentId = String(payload?.payment_id || '').trim();
-    if (!paymentId) {
-      return c.json({ success: true, ignored: true, reason: 'missing payment_id' });
-    }
-
-    const invoiceKey = `crypto:invoice:${paymentId}`;
-    const existingInvoice = await kv.get(invoiceKey);
-    if (!existingInvoice) {
-      return c.json({ success: true, ignored: true, reason: 'invoice not found' });
-    }
-
-    const status = String(payload?.payment_status || existingInvoice?.status || '').toLowerCase();
-    const nowIso = new Date().toISOString();
-    const confirmed = ['finished', 'confirmed', 'sending'].includes(status);
-
-    const updatedInvoice = {
-      ...existingInvoice,
-      status,
-      webhookReceivedAt: nowIso,
-      webhookPayload: payload,
-      confirmedAt: confirmed ? (existingInvoice?.confirmedAt || nowIso) : existingInvoice?.confirmedAt || null,
-    };
-
-    if (confirmed && !existingInvoice?.activatedAt) {
-      await activateCryptoPaymentForUser({
-        userId: String(existingInvoice?.userId || ''),
-        invoice: existingInvoice,
-        webhookPayload: payload,
-      });
-      updatedInvoice.activatedAt = nowIso;
-    }
-
-    await kv.set(invoiceKey, updatedInvoice);
-
-    return c.json({
-      success: true,
-      paymentId,
-      status,
-      activated: Boolean(updatedInvoice?.activatedAt),
-    });
-  } catch (error) {
-    console.error(`Error handling NOWPayments webhook: ${error}`);
-    return c.json({ error: 'Internal server error while handling crypto webhook' }, 500);
-  }
-});
-
 app.post('/deposits/request', async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
@@ -2616,11 +1929,6 @@ app.post('/deposits/request', async (c) => {
 // Sign in endpoint (handled by Supabase client, but we can add a custom route if needed)
 app.post("/signin", async (c) => {
   try {
-    const rateLimit = await enforcePublicRateLimit(c, 'auth.signin', 12, 10 * 60 * 1000);
-    if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for signin. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
-    }
-
     const { email, username, password } = await c.req.json();
 
     if (!password || (!email && !username)) {
@@ -2640,7 +1948,7 @@ app.post("/signin", async (c) => {
 
     if (error) {
       console.error(`Error during user signin: ${error.message}`);
-      return c.json({ error: 'Invalid login credentials' }, 401);
+      return c.json({ error: error.message }, 400);
     }
 
     const loginLocation = await resolveBestRequestLocation(c);
@@ -2713,7 +2021,7 @@ app.post('/admin/signin', async (c) => {
         lastAttemptAtMs: nowMs,
       };
       await kv.set(attemptsKey, nextState);
-      return c.json({ error: 'Invalid admin credentials' }, 403);
+      return c.json({ error: error?.message || 'Invalid admin credentials' }, 403);
     }
 
     const adminAccount = await kv.get(`admin:account:${data.user.id}`);
@@ -2779,19 +2087,24 @@ app.post('/admin/signin', async (c) => {
 app.get("/profile", async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
-
+    
+    console.log('=== Profile Request Debug ===');
+    console.log('Auth header present:', !!authHeader);
+    
     if (!authHeader) {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
-
+    console.log('Token length:', accessToken.length);
+    console.log('Token first 20 chars:', accessToken.substring(0, 20));
+    
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
     
     if (error) {
       console.error(`Authorization error while fetching profile: ${error}`);
-      return c.json({ error: "Unauthorized - Invalid token", code: 401 }, 401);
+      return c.json({ error: "Unauthorized - Invalid token", code: 401, message: error }, 401);
     }
 
     // Get user profile from KV store
@@ -2978,9 +2291,47 @@ app.get("/metrics", async (c) => {
   }
 });
 
-// Update VIP tier is restricted to admin-only endpoints.
+// Update VIP tier (protected route - for admin or self-service)
 app.put("/vip-tier", async (c) => {
-  return c.json({ error: 'Forbidden - Use admin VIP management endpoint' }, 403);
+  try {
+    const authHeader = c.req.header('Authorization');
+    
+    if (!authHeader) {
+      return c.json({ error: "Unauthorized - No token provided" }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    
+    // Verify JWT token
+    const { userId, error } = await verifyJWT(accessToken);
+    
+    if (error) {
+      console.error(`Authorization error while updating VIP tier: ${error}`);
+      return c.json({ error: "Unauthorized - Invalid token" }, 401);
+    }
+
+    const { vipTier } = await c.req.json();
+
+    if (!vipTier) {
+      return c.json({ error: "VIP tier is required" }, 400);
+    }
+
+    // Get current profile
+    const profile = await kv.get(`user:${userId}`);
+    
+    if (!profile) {
+      return c.json({ error: "Profile not found" }, 404);
+    }
+
+    // Update VIP tier
+    const updatedProfile = { ...profile, vipTier, tierSetProgress: 0, updatedAt: new Date().toISOString() };
+    await kv.set(`user:${userId}`, updatedProfile);
+
+    return c.json({ success: true, profile: updatedProfile });
+  } catch (error) {
+    console.error(`Error updating VIP tier: ${error}`);
+    return c.json({ error: "Internal server error while updating VIP tier" }, 500);
+  }
 });
 
 // Admin: list users and platform metrics
@@ -2994,7 +2345,6 @@ app.get("/admin/users", async (c) => {
     if (!adminAccess.isSuperAdmin) {
       const hasUsersAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
         || adminAccess.permissions.includes('users.view')
-        || adminAccess.permissions.includes('users.manage_status')
         || adminAccess.permissions.includes('users.adjust_balance')
         || adminAccess.permissions.includes('users.assign_premium')
         || adminAccess.permissions.includes('users.reset_tasks')
@@ -3007,12 +2357,6 @@ app.get("/admin/users", async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    const pageParam = Number(c.req.query('page') || 1);
-    const limitParam = Number(c.req.query('limit') || 100);
-    const page = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1;
-    const limit = Number.isFinite(limitParam) && limitParam > 0
-      ? Math.min(Math.floor(limitParam), 250)
-      : 100;
 
     const rawUsers = await kv.getByPrefix('user:');
     const users = (rawUsers ?? []).map((user: any) => ({
@@ -3038,18 +2382,7 @@ app.get("/admin/users", async (c) => {
       createdAt: user?.createdAt ?? new Date().toISOString(),
     }));
 
-    const scopedUsers = users.filter((user: any) => isUserInAdminScope(scope, user));
-    const sortedUsers = scopedUsers.sort((a: any, b: any) => {
-      const bCreatedAt = new Date(b?.createdAt || 0).getTime();
-      const aCreatedAt = new Date(a?.createdAt || 0).getTime();
-      return bCreatedAt - aCreatedAt;
-    });
-
-    const totalUsers = sortedUsers.length;
-    const totalPages = Math.max(1, Math.ceil(totalUsers / limit));
-    const offset = (page - 1) * limit;
-    const pagedUsers = sortedUsers.slice(offset, offset + limit);
-    const usersWithEarnings = await Promise.all(pagedUsers.map(async (user: any) => {
+    const usersWithEarnings = await Promise.all(users.map(async (user: any) => {
       const totalEarnings = await resolveUserTotalEarnings(user);
       return {
         ...user,
@@ -3058,8 +2391,15 @@ app.get("/admin/users", async (c) => {
       };
     }));
 
+    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
+    const sortedUsers = scopedUsers.sort((a: any, b: any) => {
+      const bCreatedAt = new Date(b?.createdAt || 0).getTime();
+      const aCreatedAt = new Date(a?.createdAt || 0).getTime();
+      return bCreatedAt - aCreatedAt;
+    });
+
     const metrics = {
-      totalUsers,
+      totalUsers: sortedUsers.length,
       totalRevenue: sortedUsers.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
       totalTransactions: sortedUsers.reduce((sum: number, user: any) => sum + (Number(user.productsSubmitted) || 0), 0),
       activeUsers: sortedUsers.filter((user: any) => !user.accountFrozen && !user.accountDisabled).length,
@@ -3067,17 +2407,7 @@ app.get("/admin/users", async (c) => {
       totalCommissionsPaid: 0,
     };
 
-    return c.json({
-      success: true,
-      users: usersWithEarnings,
-      metrics,
-      pagination: {
-        page,
-        limit,
-        totalUsers,
-        totalPages,
-      },
-    });
+    return c.json({ success: true, users: sortedUsers, metrics });
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
@@ -3820,8 +3150,6 @@ app.get('/tasks/next-product', async (c) => {
 
 // Submit product with profit sharing (protected route)
 app.post("/submit-product", async (c) => {
-  let idempotencyStoreKey = '';
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     
@@ -3840,18 +3168,9 @@ app.post("/submit-product", async (c) => {
     }
 
     const { productName, productValue } = await c.req.json();
-    const normalizedName = String(productName || '').trim();
-    const normalizedValue = Number(productValue || 0);
 
-    if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
+    if (!productName || !productValue || productValue <= 0) {
       return c.json({ error: "Product name and positive value are required" }, 400);
-    }
-
-    const idempotencyKey = getIdempotencyKey(c) || `auto-submit-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     // Get user profile
@@ -3915,28 +3234,6 @@ app.post("/submit-product", async (c) => {
         currentBalance,
         vipTier,
       }, 403);
-    }
-
-    const idempotencyFingerprint = JSON.stringify({
-      userId,
-      productName: normalizedName,
-      productValue: normalizedValue,
-      currentSetDate: normalizedTaskState.currentSetDate,
-      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
-    });
-    idempotencyStoreKey = buildIdempotencyStoreKey('tasks.submit_product', String(userId), idempotencyKey);
-    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
-    if (idempotencyState.state === 'conflict') {
-      return c.json({ error: 'Idempotency-Key conflict for different submit-product payload' }, 409);
-    }
-    if (idempotencyState.state === 'in_progress') {
-      return c.json({ error: 'Duplicate submit-product request is already in progress' }, 409);
-    }
-    if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
-        'Idempotent-Replay': 'true',
-        'Idempotency-Key': idempotencyKey,
-      });
     }
 
     const activePremiumAssignment = userProfile?.premiumAssignment || null;
@@ -4015,7 +3312,7 @@ app.post("/submit-product", async (c) => {
     }
 
     // Calculate profit distribution
-    const profitAmount = normalizedValue * 0.8; // 80% to user
+    const profitAmount = productValue * 0.8; // 80% to user
 
     // Update user balance
     const updatedProfile = {
@@ -4044,7 +3341,7 @@ app.post("/submit-product", async (c) => {
 
     // Multi-level commission cascade
     let currentParentId = userProfile.parentUserId;
-      let commissionAmount = normalizedValue * 0.2; // Start with 20% for direct parent
+    let commissionAmount = productValue * 0.2; // Start with 20% for direct parent
     let level = 1;
     const commissionLog = [];
 
@@ -4112,18 +3409,18 @@ app.post("/submit-product", async (c) => {
     // Log product submission
     await kv.set(`product:${userId}:${Date.now()}`, {
       userId,
-      productName: normalizedName,
-      productValue: normalizedValue,
+      productName,
+      productValue,
       userEarned: profitAmount,
       commissionsCascade: commissionLog,
       submittedAt: new Date().toISOString(),
     });
 
-    const responseBody = {
+    return c.json({
       success: true,
       product: {
-        name: normalizedName,
-        value: normalizedValue,
+        name: productName,
+        value: productValue,
         userEarned: profitAmount,
         commissionsCascade: commissionLog,
       },
@@ -4138,28 +3435,14 @@ app.post("/submit-product", async (c) => {
         maxSetsForToday,
         remainingSets: Math.max(0, maxSetsForToday - updatedProfile.taskSetsCompletedToday),
       },
-    };
-
-    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
-    return c.json(responseBody, 200, {
-      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
-    if (idempotencyStoreKey) {
-      await kv.del(idempotencyStoreKey).catch(() => undefined);
-    }
     console.error(`Error submitting product: ${error}`);
     return c.json({ error: "Internal server error while submitting product" }, 500);
-  } finally {
-    if (releaseFinancialLock) {
-      await releaseFinancialLock().catch(() => undefined);
-    }
   }
 });
 
 app.post('/tasks/complete-product', async (c) => {
-  let idempotencyStoreKey = '';
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader) {
@@ -4172,19 +3455,13 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
     }
 
-    const { productName, productValue } = await c.req.json();
+    const { productName, productValue, profit } = await c.req.json();
     const normalizedName = String(productName || '').trim();
     const normalizedValue = Number(productValue || 0);
+    const normalizedProfit = Number(profit || 0);
 
     if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: 'productName and productValue are required' }, 400);
-    }
-
-    const idempotencyKey = getIdempotencyKey(c) || `auto-complete-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const userProfile = await kv.get(`user:${userId}`);
@@ -4245,28 +3522,6 @@ app.post('/tasks/complete-product', async (c) => {
           setCompleted: true,
         },
       }, 409);
-    }
-
-    const idempotencyFingerprint = JSON.stringify({
-      userId,
-      productName: normalizedName,
-      productValue: normalizedValue,
-      currentSetDate: normalizedTaskState.currentSetDate,
-      currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
-    });
-    idempotencyStoreKey = buildIdempotencyStoreKey('tasks.complete_product', String(userId), idempotencyKey);
-    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
-    if (idempotencyState.state === 'conflict') {
-      return c.json({ error: 'Idempotency-Key conflict for different complete-product payload' }, 409);
-    }
-    if (idempotencyState.state === 'in_progress') {
-      return c.json({ error: 'Duplicate complete-product request is already in progress' }, 409);
-    }
-    if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
-        'Idempotent-Replay': 'true',
-        'Idempotency-Key': idempotencyKey,
-      });
     }
 
     const activePremiumAssignment = userProfile?.premiumAssignment || null;
@@ -4333,7 +3588,8 @@ app.post('/tasks/complete-product', async (c) => {
       currentBalanceForProfit = balanceAfterEncounter;
     }
 
-    const appliedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
+    const expectedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
+    const appliedProfit = Number.isFinite(normalizedProfit) && normalizedProfit > 0 ? roundCurrency(normalizedProfit) : expectedProfit;
 
     const updatedProfile = {
       ...userProfile,
@@ -4389,7 +3645,7 @@ app.post('/tasks/complete-product', async (c) => {
       await kv.set(`admin:reset-alerts:${userId}`, existingAlerts.slice(-50));
     }
 
-    const responseBody = {
+    return c.json({
       success: true,
       result: {
         productName: normalizedName,
@@ -4412,22 +3668,10 @@ app.post('/tasks/complete-product', async (c) => {
         setCompleted: currentSetDone,
       },
       resetRequired: currentSetDone,
-    };
-
-    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
-    return c.json(responseBody, 200, {
-      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
-    if (idempotencyStoreKey) {
-      await kv.del(idempotencyStoreKey).catch(() => undefined);
-    }
     console.error(`Error completing product task: ${error}`);
     return c.json({ error: 'Internal server error while completing product task' }, 500);
-  } finally {
-    if (releaseFinancialLock) {
-      await releaseFinancialLock().catch(() => undefined);
-    }
   }
 });
 
@@ -4730,13 +3974,6 @@ app.get("/referrals", async (c) => {
 
 // Request withdrawal (protected route)
 app.post("/request-withdrawal", async (c) => {
-  let idempotencyStoreKey = '';
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
-  let operationId = '';
-  let reservedUserId = '';
-  let balanceBeforeReserve: number | null = null;
-  let createdWithdrawalId = '';
-  let queuedPending = false;
   try {
     const authHeader = c.req.header('Authorization');
     
@@ -4754,32 +3991,10 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const withdrawalRateLimit = await enforcePublicRateLimit(
-      c,
-      'finance.request_withdrawal',
-      6,
-      10 * 60 * 1000,
-      `${userId}:${getRequesterIp(c)}`,
-    );
-    if (!withdrawalRateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for withdrawal requests. Try again in ${withdrawalRateLimit.retryAfterSec}s.` }, 429);
-    }
-
     const { amount, withdrawalPassword } = await c.req.json();
-    const requestedAmount = Number(amount);
 
-    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+    if (!amount || amount <= 0) {
       return c.json({ error: "Withdrawal amount must be positive" }, 400);
-    }
-
-    const idempotencyKey = getIdempotencyKey(c);
-    if (!idempotencyKey) {
-      return c.json({ error: 'Idempotency-Key header is required' }, 400);
-    }
-
-    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     // Get user profile
@@ -4834,147 +4049,53 @@ app.post("/request-withdrawal", async (c) => {
     }
 
     const approvedWithdrawalLimit = Number(userProfile?.withdrawalLimit ?? 0);
-    if (approvedWithdrawalLimit > 0 && requestedAmount > approvedWithdrawalLimit) {
+    if (approvedWithdrawalLimit > 0 && amount > approvedWithdrawalLimit) {
       return c.json({ error: `Amount exceeds approved withdrawal limit of $${approvedWithdrawalLimit.toFixed(2)}` }, 400);
     }
 
     // Check sufficient balance
-    const balance = roundCurrency(Number(userProfile.balance || 0));
-    if (requestedAmount > balance) {
+    const balance = userProfile.balance || 0;
+    if (amount > balance) {
       return c.json({ error: `Insufficient balance. Available: $${balance.toFixed(2)}` }, 400);
     }
 
-    const idempotencyFingerprint = JSON.stringify({
-      userId,
-      requestedAmount,
-      currentSetDate: normalizedTaskState.currentSetDate,
-      taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
-    });
-    idempotencyStoreKey = buildIdempotencyStoreKey('withdrawal.request', String(userId), idempotencyKey);
-    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
-    if (idempotencyState.state === 'conflict') {
-      return c.json({ error: 'Idempotency-Key conflict for different withdrawal payload' }, 409);
-    }
-    if (idempotencyState.state === 'in_progress') {
-      return c.json({ error: 'Duplicate withdrawal request is already in progress' }, 409);
-    }
-    if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
-        'Idempotent-Replay': 'true',
-        'Idempotency-Key': idempotencyKey,
-      });
-    }
-
-    operationId = await createFinancialOperation('withdrawal.request', String(userId), {
-      requestedAmount,
-      idempotencyKey,
-    });
-
-    const nowIso = new Date().toISOString();
-    const reservedBalance = roundCurrency(balance - requestedAmount);
-    reservedUserId = String(userId);
-    balanceBeforeReserve = balance;
-    userProfile.balance = reservedBalance;
-    userProfile.updatedAt = nowIso;
-    await kv.set(`user:${userId}`, userProfile);
-    await appendFinancialOperationStep(operationId, 'funds_reserved', {
-      userId,
-      before: balance,
-      after: reservedBalance,
-    });
-
     // Create withdrawal request
     const withdrawalId = `${userId}-${Date.now()}`;
-    createdWithdrawalId = withdrawalId;
     const withdrawalRequest = {
       id: withdrawalId,
       userId,
       userEmail: userProfile.email,
       userName: userProfile.name,
-      amount: requestedAmount,
+      amount,
       status: 'pending',
-      fundsReserved: true,
-      balanceBeforeReserve: balance,
-      balanceAfterReserve: reservedBalance,
-      requestedAt: nowIso,
+      requestedAt: new Date().toISOString(),
       approvedAt: null,
       deniedAt: null,
       denialReason: null,
     };
 
     // Store withdrawal request
-    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawalRequest);
-    await appendUserWithdrawalIndex(String(userId), withdrawalId);
-    await appendFinancialOperationStep(operationId, 'withdrawal_record_created', {
-      withdrawalId,
-    });
+    await kv.set(`withdrawal:${withdrawalId}`, withdrawalRequest);
 
     // Add to pending queue
-    await appendUniqueQueueId('withdrawals:pending', withdrawalId);
-    queuedPending = true;
-    await appendFinancialOperationStep(operationId, 'pending_queue_updated', {
-      withdrawalId,
-    });
+    const pendingWithdrawals = await kv.get('withdrawals:pending') || [];
+    pendingWithdrawals.push(withdrawalId);
+    await kv.set('withdrawals:pending', pendingWithdrawals);
 
     // Send email notification
     if (userProfile.email && userProfile.emailNotifications !== false) {
-      const template = emailTemplates.withdrawalRequested(userProfile.name, requestedAmount);
+      const template = emailTemplates.withdrawalRequested(userProfile.name, amount);
       await sendEmail(userProfile.email, template.subject, template.html);
     }
 
-    const responseBody = {
+    return c.json({
       success: true,
       withdrawal: withdrawalRequest,
       message: 'Withdrawal request submitted. Admin approval required.',
-    };
-
-    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
-    await finalizeFinancialOperation(operationId, 'completed', {
-      withdrawalId,
-      reservedAmount: requestedAmount,
-    });
-    return c.json(responseBody, 200, {
-      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
-    if (idempotencyStoreKey) {
-      await kv.del(idempotencyStoreKey).catch(() => undefined);
-    }
-
-    if (createdWithdrawalId) {
-      await kv.del(buildWithdrawalStoreKey(createdWithdrawalId)).catch(() => undefined);
-      if (reservedUserId) {
-        await removeUserWithdrawalIndex(reservedUserId, createdWithdrawalId).catch(() => undefined);
-      }
-    }
-    if (queuedPending && createdWithdrawalId) {
-      await removeQueueId('withdrawals:pending', createdWithdrawalId).catch(() => undefined);
-    }
-    if (reservedUserId && balanceBeforeReserve !== null) {
-      const currentUser = await kv.get(`user:${reservedUserId}`);
-      if (currentUser) {
-        currentUser.balance = balanceBeforeReserve;
-        currentUser.updatedAt = new Date().toISOString();
-        await kv.set(`user:${reservedUserId}`, currentUser).catch(() => undefined);
-      }
-    }
-    if (operationId) {
-      await appendFinancialOperationStep(operationId, 'rollback_applied', {
-        createdWithdrawalId: createdWithdrawalId || null,
-        queuedPending,
-        reservedUserId: reservedUserId || null,
-      }).catch(() => undefined);
-      await finalizeFinancialOperation(operationId, 'failed', {
-        error: String(error),
-      }).catch(() => undefined);
-    }
-
-    logServerEvent('error', 'withdrawal.request.failed', { error: String(error) });
+    console.error(`Error requesting withdrawal: ${error}`);
     return c.json({ error: "Internal server error while requesting withdrawal" }, 500);
-  } finally {
-    if (releaseFinancialLock) {
-      await releaseFinancialLock().catch(() => undefined);
-    }
   }
 });
 
@@ -4997,7 +4118,9 @@ app.get("/withdrawal-history", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const userWithdrawals = (await listWithdrawalsByUserId(String(userId)))
+    // Get all withdrawals for this user
+    const allWithdrawals = await kv.getByPrefix('withdrawal:');
+    const userWithdrawals = (allWithdrawals || [])
       .filter((w: any) => w?.userId === userId)
       .sort((a: any, b: any) => 
         new Date(b?.requestedAt || 0).getTime() - new Date(a?.requestedAt || 0).getTime()
@@ -5011,7 +4134,7 @@ app.get("/withdrawal-history", async (c) => {
       totalPending: userWithdrawals.filter((w: any) => w?.status === 'pending').length,
     });
   } catch (error) {
-    logServerEvent('error', 'withdrawal.history.failed', { error: String(error) });
+    console.error(`Error fetching withdrawal history: ${error}`);
     return c.json({ error: "Internal server error while fetching withdrawal history" }, 500);
   }
 });
@@ -5053,8 +4176,6 @@ app.get("/admin/withdrawals", async (c) => {
 
 // Admin: approve withdrawal request
 app.post("/admin/approve-withdrawal", async (c) => {
-  let idempotencyStoreKey = '';
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
     if (!adminAccess.ok) {
@@ -5071,19 +4192,9 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: 'withdrawalId is required' }, 400);
     }
 
-    const idempotencyKey = getIdempotencyKey(c);
-    if (!idempotencyKey) {
-      return c.json({ error: 'Idempotency-Key header is required' }, 400);
-    }
-
-    const withdrawal = await kv.get(buildWithdrawalStoreKey(withdrawalId));
+    const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
-    }
-
-    releaseFinancialLock = await acquireFinancialLock('user', String(withdrawal.userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
@@ -5096,56 +4207,27 @@ app.post("/admin/approve-withdrawal", async (c) => {
       return c.json({ error: `Cannot approve withdrawal with status: ${withdrawal.status}` }, 400);
     }
 
-    const idempotencyFingerprint = JSON.stringify({
-      action: 'approve',
-      withdrawalId: String(withdrawalId),
-      amount: Number(withdrawal.amount || 0),
-    });
-    idempotencyStoreKey = buildIdempotencyStoreKey(
-      'withdrawal.approve',
-      String(adminAccess.userId || 'super_admin'),
-      idempotencyKey,
-    );
-    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
-    if (idempotencyState.state === 'conflict') {
-      return c.json({ error: 'Idempotency-Key conflict for different withdrawal approval payload' }, 409);
-    }
-    if (idempotencyState.state === 'in_progress') {
-      return c.json({ error: 'Duplicate approve-withdrawal request is already in progress' }, 409);
-    }
-    if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
-        'Idempotent-Replay': 'true',
-        'Idempotency-Key': idempotencyKey,
-      });
-    }
-
-    const withdrawalAmount = roundCurrency(Number(withdrawal.amount || 0));
-
-    // Update user balance only if funds were not reserved at request time.
+    // Update user balance (deduct withdrawal amount)
     const userProfile = await kv.get(`user:${withdrawal.userId}`);
     if (userProfile) {
-      const currentBalance = roundCurrency(Number(userProfile.balance || 0));
-      if (!withdrawal.fundsReserved) {
-        if (withdrawalAmount > currentBalance) {
-          return c.json({ error: 'Cannot approve withdrawal due to insufficient available balance' }, 409);
-        }
-        userProfile.balance = roundCurrency(currentBalance - withdrawalAmount);
-      }
+      userProfile.balance = (userProfile.balance || 0) - withdrawal.amount;
       await kv.set(`user:${withdrawal.userId}`, userProfile);
     }
 
     // Update withdrawal request
     withdrawal.status = 'approved';
     withdrawal.approvedAt = new Date().toISOString();
-    withdrawal.fundsReserved = Boolean(withdrawal.fundsReserved);
-    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawal);
+    await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
 
     // Remove from pending queue
-    await removeQueueId('withdrawals:pending', withdrawalId);
+    const pendingIds = await kv.get('withdrawals:pending') || [];
+    const updated = pendingIds.filter((id: string) => id !== withdrawalId);
+    await kv.set('withdrawals:pending', updated);
 
     // Add to approved queue
-    await appendUniqueQueueId('withdrawals:approved', withdrawalId);
+    const approvedIds = await kv.get('withdrawals:approved') || [];
+    approvedIds.push(withdrawalId);
+    await kv.set('withdrawals:approved', approvedIds);
 
     // Send email notification
     if (withdrawal.userEmail && userProfile?.emailNotifications !== false) {
@@ -5153,33 +4235,19 @@ app.post("/admin/approve-withdrawal", async (c) => {
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
 
-    const responseBody = {
+    return c.json({
       success: true,
       withdrawal,
       message: `Withdrawal of $${withdrawal.amount.toFixed(2)} approved for ${withdrawal.userName}`,
-    };
-
-    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
-    return c.json(responseBody, 200, {
-      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
-    if (idempotencyStoreKey) {
-      await kv.del(idempotencyStoreKey).catch(() => undefined);
-    }
-    logServerEvent('error', 'withdrawal.approve.failed', { error: String(error) });
+    console.error(`Error approving withdrawal: ${error}`);
     return c.json({ error: "Internal server error while approving withdrawal" }, 500);
-  } finally {
-    if (releaseFinancialLock) {
-      await releaseFinancialLock().catch(() => undefined);
-    }
   }
 });
 
 // Admin: deny withdrawal request
 app.post("/admin/deny-withdrawal", async (c) => {
-  let idempotencyStoreKey = '';
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const adminAccess = await requireAdminPermission(c, 'withdrawals.manage');
     if (!adminAccess.ok) {
@@ -5196,19 +4264,9 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: 'withdrawalId is required' }, 400);
     }
 
-    const idempotencyKey = getIdempotencyKey(c);
-    if (!idempotencyKey) {
-      return c.json({ error: 'Idempotency-Key header is required' }, 400);
-    }
-
-    const withdrawal = await kv.get(buildWithdrawalStoreKey(withdrawalId));
+    const withdrawal = await kv.get(`withdrawal:${withdrawalId}`);
     if (!withdrawal) {
       return c.json({ error: 'Withdrawal request not found' }, 404);
-    }
-
-    releaseFinancialLock = await acquireFinancialLock('user', String(withdrawal.userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
     }
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
@@ -5221,48 +4279,24 @@ app.post("/admin/deny-withdrawal", async (c) => {
       return c.json({ error: `Cannot deny withdrawal with status: ${withdrawal.status}` }, 400);
     }
 
-    const idempotencyFingerprint = JSON.stringify({
-      action: 'deny',
-      withdrawalId: String(withdrawalId),
-      denialReason: String(denialReason || '').trim(),
-    });
-    idempotencyStoreKey = buildIdempotencyStoreKey(
-      'withdrawal.deny',
-      String(adminAccess.userId || 'super_admin'),
-      idempotencyKey,
-    );
-    const idempotencyState = await beginIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint);
-    if (idempotencyState.state === 'conflict') {
-      return c.json({ error: 'Idempotency-Key conflict for different withdrawal denial payload' }, 409);
-    }
-    if (idempotencyState.state === 'in_progress') {
-      return c.json({ error: 'Duplicate deny-withdrawal request is already in progress' }, 409);
-    }
-    if (idempotencyState.state === 'replay') {
-      return c.json(idempotencyState.responseBody, idempotencyState.responseStatus as any, {
-        'Idempotent-Replay': 'true',
-        'Idempotency-Key': idempotencyKey,
-      });
-    }
-
-    const userProfile = await kv.get(`user:${withdrawal.userId}`);
-    if (userProfile && withdrawal.fundsReserved) {
-      userProfile.balance = roundCurrency(Number(userProfile.balance || 0) + roundCurrency(Number(withdrawal.amount || 0)));
-      userProfile.updatedAt = new Date().toISOString();
-      await kv.set(`user:${withdrawal.userId}`, userProfile);
-    }
-
     // Update withdrawal request
     withdrawal.status = 'denied';
     withdrawal.deniedAt = new Date().toISOString();
     withdrawal.denialReason = denialReason || 'Not specified';
-    await kv.set(buildWithdrawalStoreKey(withdrawalId), withdrawal);
+    await kv.set(`withdrawal:${withdrawalId}`, withdrawal);
 
     // Remove from pending queue
-    await removeQueueId('withdrawals:pending', withdrawalId);
+    const pendingIds = await kv.get('withdrawals:pending') || [];
+    const updated = pendingIds.filter((id: string) => id !== withdrawalId);
+    await kv.set('withdrawals:pending', updated);
 
     // Add to denied queue
-    await appendUniqueQueueId('withdrawals:denied', withdrawalId);
+    const deniedIds = await kv.get('withdrawals:denied') || [];
+    deniedIds.push(withdrawalId);
+    await kv.set('withdrawals:denied', deniedIds);
+
+    // Get user profile for email
+    const userProfile = await kv.get(`user:${withdrawal.userId}`);
 
     // Send email notification
     if (withdrawal.userEmail && userProfile?.emailNotifications !== false) {
@@ -5270,26 +4304,14 @@ app.post("/admin/deny-withdrawal", async (c) => {
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
 
-    const responseBody = {
+    return c.json({
       success: true,
       withdrawal,
       message: `Withdrawal request denied for ${withdrawal.userName}`,
-    };
-
-    await completeIdempotentOperation(idempotencyStoreKey, idempotencyFingerprint, 200, responseBody);
-    return c.json(responseBody, 200, {
-      'Idempotency-Key': idempotencyKey,
     });
   } catch (error) {
-    if (idempotencyStoreKey) {
-      await kv.del(idempotencyStoreKey).catch(() => undefined);
-    }
-    logServerEvent('error', 'withdrawal.deny.failed', { error: String(error) });
+    console.error(`Error denying withdrawal: ${error}`);
     return c.json({ error: "Internal server error while denying withdrawal" }, 500);
-  } finally {
-    if (releaseFinancialLock) {
-      await releaseFinancialLock().catch(() => undefined);
-    }
   }
 });
 
@@ -5365,14 +4387,6 @@ app.post('/admin/users/adjust-balance', async (c) => {
       performedBy: adminAccess.userId || 'super_admin',
     });
     await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
-    await appendAdminAuditLog(adminAccess, 'user.balance_adjusted', {
-      targetUserId: String(userId),
-      targetIdentifier: String(userProfile?.email || userProfile?.name || userId),
-      meta: {
-        amount: adjustmentAmount,
-        category: adjustmentCategory,
-      },
-    });
 
     return c.json({
       success: true,
@@ -5390,17 +4404,12 @@ app.post('/admin/users/adjust-balance', async (c) => {
   }
 });
 
-// Admin: disable/enable user account
+// Admin: disable/enable user account (super admin only)
 app.put('/admin/users/account-status', async (c) => {
   try {
-    const adminAccess = await requireAdminPermission(c, 'users.manage_status');
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.manage_status', 30, 10 * 60 * 1000);
-    if (!rateLimit.allowed) {
-      return c.json({ error: `Rate limit exceeded for account status updates. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    const superCheck = await requireSuperAdmin(c);
+    if (!superCheck.ok) {
+      return superCheck.response;
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -5417,11 +4426,6 @@ app.put('/admin/users/account-status', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, user)) {
-      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
-    }
-
     const updatedUser = {
       ...user,
       accountDisabled: disabled,
@@ -5429,13 +4433,6 @@ app.put('/admin/users/account-status', async (c) => {
     };
 
     await kv.set(key, updatedUser);
-    await appendAdminAuditLog(adminAccess, 'user.account_status_updated', {
-      targetUserId: String(userId),
-      targetIdentifier: String(user?.email || user?.name || userId),
-      meta: {
-        disabled,
-      },
-    });
 
     return c.json({
       success: true,
@@ -5470,7 +4467,7 @@ app.delete('/admin/users/:userId', async (c) => {
     const supabase = getServiceClient();
     const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
     if (authDeleteError && !String(authDeleteError.message || '').toLowerCase().includes('not found')) {
-      return c.json({ error: 'Failed to delete user auth account' }, 400);
+      return c.json({ error: authDeleteError.message || 'Failed to delete user auth account' }, 400);
     }
 
     await kv.del(userKey).catch(() => undefined);
@@ -5878,7 +4875,7 @@ app.post('/admin/accounts', async (c) => {
     });
 
     if (error || !data?.user?.id) {
-      return c.json({ error: 'Failed to create admin user' }, 400);
+      return c.json({ error: error?.message || 'Failed to create admin user' }, 400);
     }
 
     const adminUserId = data.user.id;
@@ -5896,14 +4893,6 @@ app.post('/admin/accounts', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, record);
-    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_created', {
-      targetUserId: adminUserId,
-      targetIdentifier: adminEmail,
-      meta: {
-        username: normalizedUsername,
-        permissions: adminPermissions,
-      },
-    });
 
     return c.json({ success: true, admin: record });
   } catch (error) {
@@ -6011,25 +5000,6 @@ app.get('/admin/accounts', async (c) => {
   }
 });
 
-app.get('/admin/audit-log', async (c) => {
-  try {
-    const adminAccess = await requireSupportAccess(c);
-    if (!adminAccess.ok) {
-      return adminAccess.response;
-    }
-
-    const limitParam = Number(c.req.query('limit') || 100);
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 250) : 100;
-    const existing = await kv.get(ADMIN_AUDIT_LOG_KEY);
-    const logs = Array.isArray(existing) ? existing.slice(0, limit) : [];
-
-    return c.json({ success: true, logs });
-  } catch (error) {
-    console.error(`Error loading admin audit log: ${error}`);
-    return c.json({ error: 'Internal server error while loading audit log' }, 500);
-  }
-});
-
 // Admin: update limited admin account permissions/status (super admin only)
 app.put('/admin/accounts/:adminUserId', async (c) => {
   try {
@@ -6068,14 +5038,6 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, updated);
-    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_updated', {
-      targetUserId: adminUserId,
-      targetIdentifier: String(updated?.authEmail || updated?.username || adminUserId),
-      meta: {
-        active: updated.active,
-        permissions: updated.permissions,
-      },
-    });
     return c.json({ success: true, admin: updated });
   } catch (error) {
     console.error(`Error updating admin account: ${error}`);
@@ -6110,10 +5072,6 @@ app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
     };
 
     await kv.set(`admin:account:${adminUserId}`, updated);
-    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_revoked', {
-      targetUserId: adminUserId,
-      targetIdentifier: String(updated?.authEmail || updated?.username || adminUserId),
-    });
     return c.json({ success: true, admin: updated });
   } catch (error) {
     console.error(`Error revoking admin account: ${error}`);
@@ -6142,14 +5100,10 @@ app.delete('/admin/accounts/:adminUserId', async (c) => {
     const supabase = getServiceClient();
     const { error: deleteError } = await supabase.auth.admin.deleteUser(adminUserId);
     if (deleteError && !String(deleteError.message || '').toLowerCase().includes('not found')) {
-      return c.json({ error: 'Failed to delete admin auth user' }, 400);
+      return c.json({ error: deleteError.message || 'Failed to delete admin auth user' }, 400);
     }
 
     await kv.del(`admin:account:${adminUserId}`);
-    await appendAdminAuditLog({ isSuperAdmin: true, userId: null }, 'admin.account_deleted', {
-      targetUserId: adminUserId,
-      targetIdentifier: String(existing?.authEmail || existing?.username || adminUserId),
-    });
     return c.json({ success: true, deleted: true, adminUserId });
   } catch (error) {
     console.error(`Error deleting admin account: ${error}`);
@@ -6179,7 +5133,7 @@ app.get("/admin/alerts", async (c) => {
 
     const alerts: Array<{
       id: string;
-      type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral' | 'premium_assignment';
+      type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral';
       severity: 'critical' | 'high' | 'medium' | 'info';
       title: string;
       message: string;
@@ -6671,7 +5625,6 @@ app.get("/bonus-payouts", async (c) => {
 
 // Bonus Payouts: Claim a bonus
 app.post("/bonus-payouts/claim", async (c) => {
-  let releaseFinancialLock: (() => Promise<void>) | null = null;
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader) {
@@ -6683,15 +5636,10 @@ app.post("/bonus-payouts/claim", async (c) => {
     if (error) return c.json({ error }, 401);
 
     const { bonusId } = await c.req.json();
-    releaseFinancialLock = await acquireFinancialLock('user', String(userId));
-    if (!releaseFinancialLock) {
-      return c.json({ error: 'Financial operation is busy. Please retry shortly.' }, 409);
-    }
-
     const user = await kv.get(`user:${userId}`);
     if (!user) return c.json({ error: "User not found" }, 404);
 
-    // Fetch claimed bonuses (re-read inside lock to prevent TOCTOU race)
+    // Fetch claimed bonuses
     const claimedBonuses = await kv.get(`bonuses:claimed:${userId}`) || [];
     if (claimedBonuses.some((b: any) => b.id === bonusId)) {
       return c.json({ error: "Bonus already claimed" }, 400);
@@ -6757,8 +5705,6 @@ app.post("/bonus-payouts/claim", async (c) => {
   } catch (error) {
     console.error(`Error claiming bonus: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
-  } finally {
-    if (releaseFinancialLock) await releaseFinancialLock();
   }
 });
 
@@ -7128,124 +6074,6 @@ app.post('/admin/support-tickets/:id/reply', async (c) => {
   }
 });
 
-// Admin: reconcile financial withdrawal state and stale operation records (super admin only)
-app.post('/admin/finance/reconcile-withdrawals', async (c) => {
-  try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-    const dryRun = body?.dryRun !== false;
-    const staleMinutes = Number.isFinite(Number(body?.staleMinutes))
-      ? Math.max(5, Number(body.staleMinutes))
-      : 30;
-    const staleThresholdMs = Date.now() - (staleMinutes * 60 * 1000);
-
-    const withdrawals = await kv.getByPrefix('withdrawal:') || [];
-    const withdrawalById = new Map<string, any>();
-    for (const withdrawal of withdrawals) {
-      const id = String(withdrawal?.id || '').trim();
-      if (!id) continue;
-      withdrawalById.set(id, withdrawal);
-    }
-
-    const pendingRaw = await kv.get('withdrawals:pending') || [];
-    const approvedRaw = await kv.get('withdrawals:approved') || [];
-    const deniedRaw = await kv.get('withdrawals:denied') || [];
-
-    const pending = uniqueStringArray(pendingRaw);
-    const approved = uniqueStringArray(approvedRaw);
-    const denied = uniqueStringArray(deniedRaw);
-
-    const expectedPending = Array.from(withdrawalById.values())
-      .filter((item: any) => String(item?.status || '') === 'pending')
-      .map((item: any) => String(item.id));
-    const expectedApproved = Array.from(withdrawalById.values())
-      .filter((item: any) => String(item?.status || '') === 'approved')
-      .map((item: any) => String(item.id));
-    const expectedDenied = Array.from(withdrawalById.values())
-      .filter((item: any) => String(item?.status || '') === 'denied')
-      .map((item: any) => String(item.id));
-
-    const pendingSet = new Set(pending);
-    const approvedSet = new Set(approved);
-    const deniedSet = new Set(denied);
-
-    const nextPending = uniqueStringArray(expectedPending).filter((id) => !approvedSet.has(id) && !deniedSet.has(id));
-    const nextApproved = uniqueStringArray(expectedApproved).filter((id) => !deniedSet.has(id));
-    const nextDenied = uniqueStringArray(expectedDenied);
-
-    const queueChanges = {
-      pending: {
-        before: pending,
-        after: nextPending,
-        removed: pending.filter((id) => !nextPending.includes(id)),
-        added: nextPending.filter((id) => !pending.includes(id)),
-      },
-      approved: {
-        before: approved,
-        after: nextApproved,
-        removed: approved.filter((id) => !nextApproved.includes(id)),
-        added: nextApproved.filter((id) => !approved.includes(id)),
-      },
-      denied: {
-        before: denied,
-        after: nextDenied,
-        removed: denied.filter((id) => !nextDenied.includes(id)),
-        added: nextDenied.filter((id) => !denied.includes(id)),
-      },
-    };
-
-    if (!dryRun) {
-      await kv.set('withdrawals:pending', nextPending);
-      await kv.set('withdrawals:approved', nextApproved);
-      await kv.set('withdrawals:denied', nextDenied);
-    }
-
-    const operations = await kv.getByPrefix('finance:operation:') || [];
-    const staleInProgress = (operations || []).filter((operation: any) => {
-      if (String(operation?.status || '') !== 'in_progress') return false;
-      const startedAtMs = new Date(String(operation?.createdAt || operation?.updatedAt || '')).getTime();
-      return Number.isFinite(startedAtMs) && startedAtMs > 0 && startedAtMs < staleThresholdMs;
-    });
-
-    const markedStaleOperationIds: string[] = [];
-    if (!dryRun) {
-      for (const operation of staleInProgress) {
-        const operationId = String(operation?.id || '').trim();
-        if (!operationId) continue;
-        await finalizeFinancialOperation(operationId, 'failed', {
-          reason: `Marked stale after ${staleMinutes} minutes by reconciliation task`,
-          autoRecovered: false,
-        });
-        markedStaleOperationIds.push(operationId);
-      }
-    }
-
-    return c.json({
-      success: true,
-      dryRun,
-      staleMinutes,
-      withdrawalTotals: {
-        total: withdrawalById.size,
-        pending: expectedPending.length,
-        approved: expectedApproved.length,
-        denied: expectedDenied.length,
-      },
-      queueChanges,
-      staleOperations: {
-        detected: staleInProgress.map((operation: any) => String(operation?.id || '')).filter(Boolean),
-        markedFailed: markedStaleOperationIds,
-      },
-    });
-  } catch (error) {
-    logServerEvent('error', 'withdrawal.reconcile.failed', { error: String(error) });
-    return c.json({ error: 'Internal server error while reconciling withdrawal state' }, 500);
-  }
-});
-
 // Live Chat: Send message
 app.post("/chat/messages", async (c) => {
   try {
@@ -7514,11 +6342,11 @@ app.all("*", async (c) => {
 
 // Add explicit CORS preflight handler for all routes
 app.options('/*', (c) => {
-  const headers = new Headers();
-  headers.set('Access-Control-Allow-Origin', '*');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type, apikey, Authorization, Idempotency-Key, X-Idempotency-Key');
-  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  return new Response('', { status: 204, headers });
+  return c.text('', 204, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  });
 });
 
 Deno.serve(app.fetch);

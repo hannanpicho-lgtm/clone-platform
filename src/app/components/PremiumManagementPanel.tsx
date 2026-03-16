@@ -262,6 +262,10 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
       setError('Product name is required');
       return;
     }
+    if (!newProductImage.trim() || !/^https?:\/\//i.test(newProductImage.trim())) {
+      setError('A valid image URL (http/https) is required');
+      return;
+    }
 
     setLoading(true);
     setError('');
@@ -331,6 +335,62 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
       setMessage(`✓ Generated ${Array.isArray(data?.generated) ? data.generated.length : count} products`);
     } catch (err) {
       setError(`Error generating products: ${err}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditTaskProduct = async (product: TaskCatalogProduct) => {
+    if (!authToken) {
+      setError('Admin session expired. Please login again.');
+      return;
+    }
+
+    const nextName = window.prompt('Update product name', product.name)?.trim();
+    if (nextName === undefined || nextName === null) {
+      return;
+    }
+    if (!nextName) {
+      setError('Product name cannot be empty');
+      return;
+    }
+
+    const nextImage = window.prompt('Update product image URL (http/https)', product.image)?.trim();
+    if (nextImage === undefined || nextImage === null) {
+      return;
+    }
+    if (!nextImage || !/^https?:\/\//i.test(nextImage)) {
+      setError('A valid image URL (http/https) is required');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/admin/task-products/${product.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: nextName,
+          image: nextImage,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || 'Failed to update product');
+        return;
+      }
+
+      setTaskProducts(Array.isArray(data?.products) ? data.products : []);
+      setMessage('✓ Product name/image updated');
+    } catch (err) {
+      setError(`Error updating product: ${err}`);
     } finally {
       setLoading(false);
     }
@@ -643,11 +703,12 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                   />
                 </div>
                 <div className="md:col-span-1">
-                  <label className="block text-sm font-medium mb-1">Image URL (optional)</label>
+                  <label className="block text-sm font-medium mb-1">Image URL (required)</label>
                   <Input
                     value={newProductImage}
                     onChange={(e) => setNewProductImage(e.target.value)}
                     placeholder="https://..."
+                    required
                   />
                 </div>
                 <div className="md:col-span-1 flex items-end gap-2">
@@ -708,6 +769,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Image</TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Premium Template</TableHead>
@@ -718,7 +780,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                   <TableBody>
                     {taskProducts.filter((product) => Boolean(product.isArchived) === showArchivedProducts).length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center text-gray-500 py-6">
+                        <TableCell colSpan={6} className="text-center text-gray-500 py-6">
                           {showArchivedProducts ? 'No archived products.' : 'No active task products available.'}
                         </TableCell>
                       </TableRow>
@@ -728,6 +790,14 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                         .slice(0, 100)
                         .map((product) => (
                         <TableRow key={product.id}>
+                          <TableCell>
+                            <img
+                              src={product.image}
+                              alt={product.name}
+                              className="h-12 w-12 rounded object-cover border border-gray-200"
+                              loading="lazy"
+                            />
+                          </TableCell>
                           <TableCell className="font-medium">{product.name}</TableCell>
                           <TableCell>{product.isArchived ? 'Archived' : (product.isActive ? 'Active' : 'Inactive')}</TableCell>
                           <TableCell>{product.isPremiumTemplate ? 'Yes' : 'No'}</TableCell>
@@ -736,6 +806,14 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleEditTaskProduct(product)}
+                                disabled={loading || Boolean(product.isArchived)}
+                              >
+                                Edit
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"

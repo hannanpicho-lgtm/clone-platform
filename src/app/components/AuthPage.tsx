@@ -31,8 +31,6 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [isSignup, setIsSignup] = useState(false);
-  const [showForgotPasswordHelp, setShowForgotPasswordHelp] = useState(false);
-  const [forgotMessage, setForgotMessage] = useState('Hello support, I need help resetting my login password.');
 
   // Sign up state
   const [signupUsername, setSignupUsername] = useState('');
@@ -391,14 +389,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
               <div className="space-y-3 text-center text-sm">
                 <div>
-                  <a
-                    href="#"
-                    className="text-blue-400 hover:text-blue-300 font-semibold transition"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setShowForgotPasswordHelp(true);
-                    }}
-                  >
+                  <a href="#" className="text-blue-400 hover:text-blue-300 font-semibold transition">
                     Forgot Your Password?
                   </a>
                 </div>
@@ -422,55 +413,6 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       <div className="fixed bottom-4 text-center text-sm text-gray-300/60 relative z-10">
         <p>2024 Site tanknewmedia-data. All rights reserved</p>
       </div>
-
-      {showForgotPasswordHelp && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowForgotPasswordHelp(false)}>
-          <div
-            className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-4 text-white flex items-center justify-between">
-              <h3 className="text-lg font-bold">Customer Service Chat</h3>
-              <button
-                type="button"
-                onClick={() => setShowForgotPasswordHelp(false)}
-                className="rounded bg-white/20 px-2 py-1 text-sm hover:bg-white/30"
-              >
-                Close
-              </button>
-            </div>
-            <div className="p-5 space-y-3 text-sm text-gray-700">
-              <p className="font-semibold text-gray-900">Password reset is handled by Customer Service.</p>
-              <p>Share your username and request a login password reset.</p>
-              <textarea
-                value={forgotMessage}
-                onChange={(e) => setForgotMessage(e.target.value)}
-                className="w-full min-h-20 rounded border border-gray-300 px-3 py-2 text-sm"
-                placeholder="Type your reset request..."
-              />
-              <div className="grid grid-cols-1 gap-2">
-                <a
-                  href={`https://wa.me/1234567890?text=${encodeURIComponent(forgotMessage)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded bg-green-600 px-3 py-2 font-semibold text-white hover:bg-green-700"
-                >
-                  Send to WhatsApp Support
-                </a>
-                <a
-                  href={`https://t.me/tanknewmedia_support?text=${encodeURIComponent(forgotMessage)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded bg-sky-600 px-3 py-2 font-semibold text-white hover:bg-sky-700"
-                >
-                  Send to Telegram Support
-                </a>
-              </div>
-              <p className="text-xs text-gray-500">After login, you can also use the in-app Customer Service Chat from the dashboard menu.</p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
