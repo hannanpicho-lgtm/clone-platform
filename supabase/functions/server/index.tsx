@@ -925,20 +925,107 @@ const requireSupportAccess = async (c: any) => {
 
 type AdminScopeConfig =
   | { mode: 'all' }
+  | { mode: 'none' }
   | { mode: 'parent'; parentUserId: string }
   | { mode: 'users'; userIds: Set<string> };
+
+const buildUserTreeScope = (rootUserId: string, users: any[]): Set<string> => {
+  const normalizedRoot = String(rootUserId || '').trim();
+  const scopedIds = new Set<string>();
+  if (!normalizedRoot) {
+    return scopedIds;
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+  users.forEach((user) => {
+    const userId = String(user?.id || '').trim();
+    const parentId = String(user?.parentUserId || '').trim();
+    if (!userId || !parentId) {
+      return;
+    }
+    if (!childrenByParent.has(parentId)) {
+      childrenByParent.set(parentId, []);
+    }
+    childrenByParent.get(parentId)!.push(userId);
+  });
+
+  const queue: string[] = [normalizedRoot];
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (scopedIds.has(currentId)) {
+      continue;
+    }
+    scopedIds.add(currentId);
+    const children = childrenByParent.get(currentId) || [];
+    children.forEach((childId) => {
+      if (!scopedIds.has(childId)) {
+        queue.push(childId);
+      }
+    });
+  }
+
+  return scopedIds;
+};
 
 const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null }): Promise<AdminScopeConfig> => {
   if (adminAccess.isSuperAdmin || !adminAccess.userId) {
     return { mode: 'all' };
   }
 
-  return { mode: 'parent', parentUserId: String(adminAccess.userId) };
+  const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
+  if (!adminAccount) {
+    return { mode: 'none' };
+  }
+
+  const allUsers = await kv.getByPrefix('user:') || [];
+  const usersById = new Set((allUsers || []).map((user: any) => String(user?.id || '').trim()).filter(Boolean));
+  const ownInviteTreeScope = buildUserTreeScope(String(adminAccess.userId || ''), allUsers);
+
+  const managedUserIds = Array.isArray(adminAccount?.managedUserIds)
+    ? adminAccount.managedUserIds.map((value: any) => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (managedUserIds.length > 0) {
+    const scopedIds = new Set<string>();
+    managedUserIds.forEach((managedId: string) => {
+      if (usersById.has(managedId)) {
+        buildUserTreeScope(managedId, allUsers).forEach((id) => scopedIds.add(id));
+      }
+    });
+    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+    return { mode: 'users', userIds: scopedIds };
+  }
+
+  const managedParentUserId = String(adminAccount?.managedParentUserId || '').trim();
+  if (managedParentUserId) {
+    const scopedIds = buildUserTreeScope(managedParentUserId, allUsers);
+    ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+    return { mode: 'users', userIds: scopedIds };
+  }
+
+  const normalizedUsername = String(adminAccount?.username || '').trim().toLowerCase();
+  if (normalizedUsername) {
+    const inferredRootUser = (allUsers || []).find((user: any) => String(user?.username || '').trim().toLowerCase() === normalizedUsername);
+    if (inferredRootUser?.id) {
+      const scopedIds = buildUserTreeScope(String(inferredRootUser.id), allUsers);
+      ownInviteTreeScope.forEach((id) => scopedIds.add(id));
+      return { mode: 'users', userIds: scopedIds };
+    }
+  }
+
+  if (ownInviteTreeScope.size > 0) {
+    return { mode: 'users', userIds: ownInviteTreeScope };
+  }
+
+  return { mode: 'none' };
 };
 
 const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
   if (scope.mode === 'all') {
     return true;
+  }
+
+  if (scope.mode === 'none') {
+    return false;
   }
 
   if (!user?.id) {
