@@ -1811,6 +1811,31 @@ app.put("/admin/invitation-codes/status", async (c) => {
 app.get('/contact-links', async (c) => {
   try {
     const config = await getContactLinksConfig();
+
+    const authHeader = c.req.header('Authorization');
+    if (authHeader) {
+      const accessToken = authHeader.replace('Bearer ', '').trim();
+      const { userId, error } = await verifyJWT(accessToken);
+
+      if (!error && userId) {
+        const userProfile = await kv.get(`user:${userId}`);
+        const isTopLevelAccount = !String(userProfile?.parentUserId || '').trim();
+
+        // Policy: top-level users (typically super-admin created) can access Telegram 1 only.
+        if (isTopLevelAccount) {
+          return c.json({
+            success: true,
+            config: {
+              ...config,
+              whatsapp: '',
+              whatsapp2: '',
+              telegram2: '',
+            },
+          });
+        }
+      }
+    }
+
     return c.json({ success: true, config });
   } catch (error) {
     console.error(`Error fetching contact links: ${error}`);
