@@ -1345,9 +1345,25 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       return;
     }
 
-    if (!window.confirm('Remove all WhatsApp and Telegram links from customer chat?')) {
+    const confirmMessage = adminIsSuperAdmin
+      ? 'Remove all WhatsApp and Telegram links from customer chat?'
+      : 'Clear WhatsApp 2 and Telegram 2 links? (WhatsApp 1 and Telegram 1 are super-admin only)';
+
+    if (!window.confirm(confirmMessage)) {
       return;
     }
+
+    const clearPayload = adminIsSuperAdmin
+      ? {
+          whatsapp: '',
+          telegram: '',
+          whatsapp2: '',
+          telegram2: '',
+        }
+      : {
+          whatsapp2: '',
+          telegram2: '',
+        };
 
     try {
       setSavingSupportLinks(true);
@@ -1359,12 +1375,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             Authorization: `Bearer ${getAdminAuthToken()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            whatsapp: '',
-            telegram: '',
-            whatsapp2: '',
-            telegram2: '',
-          }),
+          body: JSON.stringify(clearPayload),
         }
       );
 
@@ -1380,7 +1391,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
         whatsapp2: String(data?.config?.whatsapp2 || ''),
         telegram2: String(data?.config?.telegram2 || ''),
       });
-      alert('✅ Customer Service links removed');
+      alert(adminIsSuperAdmin ? '✅ Customer Service links removed' : '✅ WhatsApp 2 and Telegram 2 links removed');
     } catch {
       alert('❌ Failed to remove Customer Service links');
     } finally {
@@ -2502,7 +2513,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                         variant="outline"
                         className="text-red-600 border-red-200 hover:bg-red-50"
                       >
-                        Delete Links
+                        {adminIsSuperAdmin ? 'Delete Links' : 'Clear WA2/TG2'}
                       </Button>
                       {!canManageSupport && (
                         <span className="text-xs text-gray-600">Permission required: support.manage</span>
@@ -2645,7 +2656,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                       variant="outline"
                       className="text-red-600 border-red-200 hover:bg-red-50"
                     >
-                      Delete Links
+                      {adminIsSuperAdmin ? 'Delete Links' : 'Clear WA2/TG2'}
                     </Button>
                     {!canManageSupport && (
                       <span className="text-xs text-gray-600">Permission required: support.manage</span>
@@ -2994,7 +3005,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                           variant="outline"
                           className="text-red-600 border-red-200 hover:bg-red-50"
                         >
-                          Delete Links
+                          {adminIsSuperAdmin ? 'Delete Links' : 'Clear WA2/TG2'}
                         </Button>
                         {!canManageSupport && (
                           <span className="text-xs text-gray-600 self-center">Permission required: support.manage</span>
