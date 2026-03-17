@@ -26,8 +26,8 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
   const [isSending, setIsSending] = useState(false);
   const isRefreshingRef = useRef(false);
   const [contactLinks, setContactLinks] = useState<{ whatsapp: string; telegram: string; whatsapp2: string; telegram2: string }>({
-    whatsapp: 'https://wa.me/1234567890',
-    telegram: 'https://t.me/tanknewmedia_support',
+    whatsapp: '',
+    telegram: '',
     whatsapp2: '',
     telegram2: '',
   });
@@ -78,8 +78,8 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
         const linksData = await linksResponse.json().catch(() => ({}));
         if (linksData?.config) {
           setContactLinks({
-            whatsapp: String(linksData.config.whatsapp || 'https://wa.me/1234567890'),
-            telegram: String(linksData.config.telegram || 'https://t.me/tanknewmedia_support'),
+            whatsapp: String(linksData.config.whatsapp || ''),
+            telegram: String(linksData.config.telegram || ''),
             whatsapp2: String(linksData.config.whatsapp2 || ''),
             telegram2: String(linksData.config.telegram2 || ''),
           });

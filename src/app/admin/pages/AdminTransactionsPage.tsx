@@ -13,7 +13,7 @@ interface AdminTransactionsPageProps {
 export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'approved' | 'pending'>('all');
+  const [filter, setFilter] = useState<'all' | 'active' | 'frozen'>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -36,58 +36,56 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
     };
   }, [session]);
 
-  const transactionRows = useMemo(() => {
-    return users.slice(0, 50).map((user) => ({
-      id: `synthetic-${user.id}`,
-      userName: user.name,
-      productName: 'User activity record',
-      commission: Number(user.totalEarnings || 0),
-      timestamp: user.lastLoginAt || user.createdAt,
-      status: Number(user.totalEarnings || 0) > 0 ? 'approved' : 'pending',
-    }));
-  }, [users]);
+  const activeUsers = useMemo(
+    () => users.filter((u) => u.productsSubmitted > 0 || Number(u.totalEarnings || 0) > 0),
+    [users],
+  );
 
-  const filteredRows = useMemo(() => {
-    if (filter === 'all') return transactionRows;
-    return transactionRows.filter((row) => row.status === filter);
-  }, [filter, transactionRows]);
+  const filteredUsers = useMemo(() => {
+    if (filter === 'active') return activeUsers.filter((u) => !u.accountFrozen && !u.accountDisabled);
+    if (filter === 'frozen') return activeUsers.filter((u) => u.accountFrozen);
+    return activeUsers;
+  }, [filter, activeUsers]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Transactions</h1>
-        <p className="text-sm text-slate-500">Legacy transactions tab restored in routed admin. Filters and status visibility are preserved.</p>
+        <p className="text-sm text-slate-500">User earnings activity — real data from backend user accounts.</p>
       </div>
 
       <Card className="border-slate-200 bg-white">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle>All Transactions</CardTitle>
-              <CardDescription>Current backend does not expose a dedicated transactions feed; this view mirrors status reporting from user financial activity.</CardDescription>
+              <CardTitle>User Earnings Activity</CardTitle>
+              <CardDescription>Live earnings totals and product submission counts per user.</CardDescription>
             </div>
             <div className="flex gap-2">
               <Button type="button" size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')}>All</Button>
-              <Button type="button" size="sm" variant={filter === 'approved' ? 'default' : 'outline'} onClick={() => setFilter('approved')}>Approved</Button>
-              <Button type="button" size="sm" variant={filter === 'pending' ? 'default' : 'outline'} onClick={() => setFilter('pending')}>Pending</Button>
+              <Button type="button" size="sm" variant={filter === 'active' ? 'default' : 'outline'} onClick={() => setFilter('active')}>Active</Button>
+              <Button type="button" size="sm" variant={filter === 'frozen' ? 'default' : 'outline'} onClick={() => setFilter('frozen')}>Frozen</Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {!loading && filteredRows.length === 0 && (
+          {loading && <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Loading…</div>}
+          {!loading && filteredUsers.length === 0 && (
             <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No transactions found.</div>
           )}
 
-          {filteredRows.map((item) => (
-            <div key={item.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
+          {filteredUsers.map((user) => (
+            <div key={user.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
               <div>
-                <div className="font-semibold text-slate-900">{item.productName}</div>
-                <div className="text-sm text-slate-600">{item.userName}</div>
-                <div className="text-xs text-slate-500">{new Date(item.timestamp || '').toLocaleString()}</div>
+                <div className="font-semibold text-slate-900">{user.name}</div>
+                <div className="text-sm text-slate-600">{user.vipTier} · {user.productsSubmitted} products submitted</div>
+                <div className="text-xs text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'No login recorded'}</div>
               </div>
               <div className="text-right">
-                <div className="font-semibold text-green-700">${Number(item.commission || 0).toFixed(2)}</div>
-                <Badge variant={item.status === 'approved' ? 'default' : 'secondary'}>{item.status}</Badge>
+                <div className="font-semibold text-green-700">${Number(user.totalEarnings || 0).toFixed(2)}</div>
+                <Badge variant={user.accountFrozen ? 'destructive' : user.accountDisabled ? 'secondary' : 'default'}>
+                  {user.accountFrozen ? 'frozen' : user.accountDisabled ? 'disabled' : 'active'}
+                </Badge>
               </div>
             </div>
           ))}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ShieldAlert } from 'lucide-react';
 import {
   adjustUserBalance,
@@ -81,8 +82,15 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [vipTierDraft, setVipTierDraft] = useState('Normal');
+  const detailsPanelRef = useRef<HTMLDivElement>(null);
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
+    useEffect(() => {
+      if (selectedUserId && detailsPanelRef.current) {
+        setTimeout(() => detailsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      }
+    }, [selectedUserId]);
+
   const canDeleteUsers = session.role === 'super-admin';
   const canAdjustBalance = hasAdminPermission(session, 'users.adjust_balance') || hasAdminPermission(session, 'users.manage');
   const canAssignPremium = hasAdminPermission(session, 'users.assign_premium') || hasAdminPermission(session, 'premium.assign') || hasAdminPermission(session, 'premium.manage');
@@ -505,7 +513,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
           </Table>
 
           {selectedUser && (
-            <Card className="border-slate-200 bg-slate-50">
+            <Card ref={detailsPanelRef} className="border-slate-200 bg-slate-50">
               <CardHeader>
                 <CardTitle>User Details</CardTitle>
                 <CardDescription>{selectedUser.name} ({selectedUser.email || selectedUser.id})</CardDescription>

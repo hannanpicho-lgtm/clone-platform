@@ -1823,10 +1823,9 @@ app.get('/contact-links', async (c) => {
 
       if (!error && userId) {
         const userProfile = await kv.get(`user:${userId}`);
-        const isTopLevelAccount = !String(userProfile?.parentUserId || '').trim();
-
-        // Policy: top-level users (typically super-admin created) can access Telegram 1 only.
-        if (isTopLevelAccount) {
+        // Policy: top-level regular users (those with a user profile but no parent) see only Telegram 1.
+        // Admin accounts (valid JWT but no user: KV profile) are NOT filtered — they see all links.
+        if (userProfile && !String(userProfile?.parentUserId || '').trim()) {
           return c.json({
             success: true,
             config: {
