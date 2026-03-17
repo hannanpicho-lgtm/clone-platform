@@ -65,6 +65,9 @@ const [products, setProducts] = useState<any[]>([]);
 const [isLoadingProducts, setIsLoadingProducts] = useState(false);
 
 export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
+  const functionBase = window.location.hostname.includes('localhost')
+    ? 'http://localhost:54321/functions/v1/make-server-44a642d3'
+    : 'https://tpxgfjevorhdtwkesvcb.supabase.co/functions/v1/make-server-44a642d3';
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'withdrawals' | 'products' | 'invitations' | 'customer-service' | 'settings'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
@@ -294,8 +297,56 @@ export function AdminControlPanel({ onLogout }: { onLogout: () => void }) {
     ));
   };
 
-  const handleDeleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
+  const resolveSuperAdminToken = () => {
+    const stored = typeof window !== 'undefined' ? String(window.sessionStorage.getItem('superAdminKey') || '').trim() : '';
+    if (stored) {
+      return stored;
+    }
+    const entered = window.prompt('Enter super admin key to delete this user') || '';
+    const normalized = entered.trim();
+    if (normalized && typeof window !== 'undefined') {
+      window.sessionStorage.setItem('superAdminKey', normalized);
+    }
+    return normalized;
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    const targetUser = users.find((u) => u.id === userId);
+    if (!targetUser) {
+      return;
+    }
+
+    if (!window.confirm(`Delete user ${targetUser.username} (${targetUser.email})? This will be soft-deleted on backend.`)) {
+      return;
+    }
+
+    const token = resolveSuperAdminToken();
+    if (!token) {
+      window.alert('Super admin key is required to delete users.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${functionBase}/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.success) {
+        window.alert(payload?.error || 'Failed to delete user');
+        return;
+      }
+
+      // Refresh from backend-backed view by removing the deleted row locally as immediate feedback.
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+      window.alert('User deleted successfully');
+    } catch {
+      window.alert('Failed to delete user');
+    }
   };
 
   const handleToggleInvitationCode = (code: string) => {

@@ -893,6 +893,10 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
   return { ok: true };
 };
 
+const isDeletedRecord = (record: any): boolean => {
+  return Boolean(record?.isDeleted || record?.deletedAt);
+};
+
 const requireAdminPermission = async (
   c: any,
   requiredPermission: AdminPermission,
@@ -918,7 +922,7 @@ const requireAdminPermission = async (
   }
 
   const adminAccount = await kv.get(`admin:account:${userId}`);
-  if (!adminAccount || adminAccount.active === false) {
+  if (!adminAccount || adminAccount.active === false || isDeletedRecord(adminAccount)) {
     return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
   }
 
@@ -951,7 +955,7 @@ const requireSupportAccess = async (c: any) => {
   }
 
   const adminAccount = await kv.get(`admin:account:${userId}`);
-  if (!adminAccount || adminAccount.active === false) {
+  if (!adminAccount || adminAccount.active === false || isDeletedRecord(adminAccount)) {
     return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
   }
 
@@ -1043,7 +1047,7 @@ const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId:
   }
 
   const adminAccount = await kv.get(`admin:account:${adminAccess.userId}`);
-  if (!adminAccount) {
+  if (!adminAccount || isDeletedRecord(adminAccount)) {
     return { mode: 'none' };
   }
 
@@ -2160,7 +2164,7 @@ app.post("/signin", async (c) => {
     const loginLocation = await resolveBestRequestLocation(c);
     const profileKey = `user:${data.user?.id || ''}`;
     const existingProfile = data.user?.id ? await kv.get(profileKey) : null;
-    if (existingProfile?.accountDisabled) {
+    if (existingProfile?.accountDisabled || isDeletedRecord(existingProfile)) {
       await supabase.auth.signOut();
       return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
     }
@@ -2231,7 +2235,7 @@ app.post('/admin/signin', async (c) => {
     }
 
     const adminAccount = await kv.get(`admin:account:${data.user.id}`);
-    if (!adminAccount || adminAccount.active === false) {
+    if (!adminAccount || adminAccount.active === false || isDeletedRecord(adminAccount)) {
       await supabase.auth.signOut();
       failedAttempts += 1;
       const nextState = {
@@ -2566,7 +2570,9 @@ app.get("/admin/users", async (c) => {
 
     const todayDate = new Date().toISOString().slice(0, 10);
     const rawUsers = await kv.getByPrefix('user:');
-    const users = (rawUsers ?? []).map((user: any) => {
+    const users = (rawUsers ?? [])
+      .filter((user: any) => !isDeletedRecord(user))
+      .map((user: any) => {
       const taskState = buildTaskState(user);
       const isCurrentDate = taskState.currentSetDate === todayDate;
       const visibleTaskSetsCompletedToday = isCurrentDate ? taskState.taskSetsCompletedToday : 0;
@@ -4662,7 +4668,7 @@ app.put('/admin/users/account-status', async (c) => {
   }
 });
 
-// Admin: delete user account and related records (super admin only)
+// Admin: soft-delete user account and related records (super admin only)
 app.delete('/admin/users/:userId', async (c) => {
   try {
     const superCheck = await requireSuperAdmin(c);
@@ -4681,22 +4687,64 @@ app.delete('/admin/users/:userId', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const supabase = getServiceClient();
-    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
-    if (authDeleteError && !String(authDeleteError.message || '').toLowerCase().includes('not found')) {
-      return c.json({ error: authDeleteError.message || 'Failed to delete user auth account' }, 400);
+    const deletedAt = new Date().toISOString();
+    await kv.set(userKey, {
+      ...user,
+      accountDisabled: true,
+      accountFrozen: false,
+      freezeAmount: 0,
+      isDeleted: true,
+      deletedAt,
+      updatedAt: deletedAt,
+    });
+
+    const profileStats = await kv.get(`profits:${userId}`);
+    if (profileStats) {
+      await kv.set(`profits:${userId}`, {
+        ...profileStats,
+        isDeleted: true,
+        deletedAt,
+      });
     }
 
-    await kv.del(userKey).catch(() => undefined);
-    await kv.del(`profits:${userId}`).catch(() => undefined);
-    await kv.del(`metrics:${userId}`).catch(() => undefined);
-    await kv.del(`admin:adjustments:${userId}`).catch(() => undefined);
-    await kv.del(`deposit:requests:user:${userId}`).catch(() => undefined);
+    const profileMetrics = await kv.get(`metrics:${userId}`);
+    if (profileMetrics) {
+      await kv.set(`metrics:${userId}`, {
+        ...profileMetrics,
+        isDeleted: true,
+        deletedAt,
+      });
+    }
+
+    const userAdjustments = await kv.get(`admin:adjustments:${userId}`) || [];
+    if (Array.isArray(userAdjustments) && userAdjustments.length > 0) {
+      await kv.set(
+        `admin:adjustments:${userId}`,
+        userAdjustments.map((entry: any) => ({
+          ...entry,
+          isDeleted: true,
+          deletedAt,
+        })),
+      );
+    }
+
+    const depositRequests = await kv.get(`deposit:requests:user:${userId}`) || [];
+    if (Array.isArray(depositRequests) && depositRequests.length > 0) {
+      await kv.set(
+        `deposit:requests:user:${userId}`,
+        depositRequests.map((requestId: any) => String(requestId || '').trim()).filter(Boolean),
+      );
+    }
 
     const inviteRows = await getKvRowsByPrefix('invitecode:');
     for (const row of inviteRows) {
       if (String(row?.value?.userId || '') === userId) {
-        await kv.del(row.key).catch(() => undefined);
+        await kv.set(row.key, {
+          ...(row?.value || {}),
+          status: 'disabled',
+          isDeleted: true,
+          deletedAt,
+        }).catch(() => undefined);
       }
     }
 
@@ -4705,31 +4753,45 @@ app.delete('/admin/users/:userId', async (c) => {
       const parentId = String(row?.value?.parentId || '');
       const childId = String(row?.value?.childId || '');
       if (parentId === userId || childId === userId) {
-        await kv.del(row.key).catch(() => undefined);
+        await kv.set(row.key, {
+          ...(row?.value || {}),
+          isDeleted: true,
+          deletedAt,
+        }).catch(() => undefined);
       }
     }
 
     const userRecordRows = await getKvRowsByPrefix(`record:${userId}:`);
     for (const row of userRecordRows) {
-      await kv.del(row.key).catch(() => undefined);
+      await kv.set(row.key, {
+        ...(row?.value || {}),
+        status: 'deleted',
+        isDeleted: true,
+        deletedAt,
+      }).catch(() => undefined);
     }
 
     const withdrawalRows = await getKvRowsByPrefix('withdrawal:');
-    const deletedWithdrawalIds: string[] = [];
+    const archivedWithdrawalIds: string[] = [];
     for (const row of withdrawalRows) {
       if (String(row?.value?.userId || '') === userId) {
         const withdrawalId = String(row?.value?.id || '').trim();
         if (withdrawalId) {
-          deletedWithdrawalIds.push(withdrawalId);
+          archivedWithdrawalIds.push(withdrawalId);
         }
-        await kv.del(row.key).catch(() => undefined);
+        await kv.set(row.key, {
+          ...(row?.value || {}),
+          status: 'deleted',
+          isDeleted: true,
+          deletedAt,
+        }).catch(() => undefined);
       }
     }
 
-    if (deletedWithdrawalIds.length > 0) {
-      const pending = (await kv.get('withdrawals:pending') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
-      const approved = (await kv.get('withdrawals:approved') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
-      const denied = (await kv.get('withdrawals:denied') || []).filter((id: string) => !deletedWithdrawalIds.includes(String(id)));
+    if (archivedWithdrawalIds.length > 0) {
+      const pending = (await kv.get('withdrawals:pending') || []).filter((id: string) => !archivedWithdrawalIds.includes(String(id)));
+      const approved = (await kv.get('withdrawals:approved') || []).filter((id: string) => !archivedWithdrawalIds.includes(String(id)));
+      const denied = (await kv.get('withdrawals:denied') || []).filter((id: string) => !archivedWithdrawalIds.includes(String(id)));
       await kv.set('withdrawals:pending', pending);
       await kv.set('withdrawals:approved', approved);
       await kv.set('withdrawals:denied', denied);
@@ -4738,8 +4800,9 @@ app.delete('/admin/users/:userId', async (c) => {
     return c.json({
       success: true,
       deleted: true,
+      softDeleted: true,
       userId,
-      message: 'User account deleted successfully',
+      message: 'User account soft-deleted successfully',
     });
   } catch (error) {
     console.error(`Error deleting user account: ${error}`);
@@ -5160,7 +5223,9 @@ app.get('/admin/accounts', async (c) => {
       };
     }));
 
-    const admins = (rows || []).map((row: any) => {
+    const admins = (rows || [])
+      .filter((row: any) => !isDeletedRecord(row))
+      .map((row: any) => {
       const scopedIds = collectAdminScopedUserIds(row?.userId, row, allUsers || []);
       const scope = scopedIds.size > 0 ? { mode: 'users' as const, userIds: scopedIds } : getAdminScopeFromAccount(row);
       const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
@@ -5300,7 +5365,7 @@ app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
   }
 });
 
-// Admin: delete limited admin account (super admin only)
+// Admin: soft-delete limited admin account (super admin only)
 app.delete('/admin/accounts/:adminUserId', async (c) => {
   try {
     const superCheck = await requireSuperAdmin(c);
@@ -5318,14 +5383,20 @@ app.delete('/admin/accounts/:adminUserId', async (c) => {
       return c.json({ error: 'Admin account not found' }, 404);
     }
 
-    const supabase = getServiceClient();
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(adminUserId);
-    if (deleteError && !String(deleteError.message || '').toLowerCase().includes('not found')) {
-      return c.json({ error: deleteError.message || 'Failed to delete admin auth user' }, 400);
-    }
+    const deletedAt = new Date().toISOString();
+    const updated = {
+      ...existing,
+      active: false,
+      permissions: [],
+      status: 'deleted',
+      isDeleted: true,
+      revokedAt: existing?.revokedAt || deletedAt,
+      deletedAt,
+      updatedAt: deletedAt,
+    };
 
-    await kv.del(`admin:account:${adminUserId}`);
-    return c.json({ success: true, deleted: true, adminUserId });
+    await kv.set(`admin:account:${adminUserId}`, updated);
+    return c.json({ success: true, deleted: true, softDeleted: true, adminUserId });
   } catch (error) {
     console.error(`Error deleting admin account: ${error}`);
     return c.json({ error: 'Internal server error while deleting admin account' }, 500);

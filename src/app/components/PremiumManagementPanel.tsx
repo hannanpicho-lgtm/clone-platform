@@ -476,6 +476,10 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
       return;
     }
 
+    if (!window.confirm(`Archive product "${product.name}"? This will hide it from active product flows.`)) {
+      return;
+    }
+
     setLoading(true);
     setError('');
     setMessage('');

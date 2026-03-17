@@ -180,3 +180,23 @@ export async function revokeSubAdmin(session: AdminSession, adminUserId: string)
     throw new Error(data?.error || 'Failed to revoke sub-admin');
   }
 }
+
+export async function deleteAdminUser(session: AdminSession, userId: string): Promise<void> {
+  const response = await adminFetch(session, `/admin/users/${userId}`, {
+    method: 'DELETE',
+  });
+  if (!response || !response.ok) {
+    const payload = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(payload?.error || 'Failed to delete user');
+  }
+}
+
+export async function deleteSubAdmin(session: AdminSession, adminUserId: string): Promise<void> {
+  const response = await adminFetch(session, `/admin/accounts/${adminUserId}`, {
+    method: 'DELETE',
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to delete sub-admin');
+  }
+}

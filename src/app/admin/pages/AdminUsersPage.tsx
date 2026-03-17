@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ShieldAlert } from 'lucide-react';
-import { fetchAdminUsers, updateUserAccountStatus } from '../api';
+import { deleteAdminUser, fetchAdminUsers, updateUserAccountStatus } from '../api';
 import { hasAdminPermission } from '../permissions';
 import type { AdminMetrics, AdminSession, AdminUserRecord } from '../types';
 import { Badge } from '../../components/ui/badge';
@@ -53,6 +53,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
+  const canDeleteUsers = session.role === 'super-admin';
 
   const load = async () => {
     setLoading(true);
@@ -103,6 +104,29 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update account status');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleDeleteUser = async (user: AdminUserRecord) => {
+    if (!canDeleteUsers) {
+      setError('Only super-admin can delete users.');
+      return;
+    }
+    if (!window.confirm(`Delete ${user.name} (${user.email || user.id})? This action is persisted and cannot be undone from UI.`)) {
+      return;
+    }
+
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await deleteAdminUser(session, user.id);
+      setMessage(`${user.name} deleted successfully.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete user');
     } finally {
       setPendingUserId(null);
     }
@@ -179,7 +203,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                 <TableHead>Subscription</TableHead>
                 <TableHead>Tier</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -198,16 +222,31 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                   <TableCell>{user.vipTier}</TableCell>
                   <TableCell>{formatDate(user.createdAt)}</TableCell>
                   <TableCell className="text-right">
-                    {canManageStatus ? (
-                      <Button
-                        type="button"
-                        variant={user.accountDisabled ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={pendingUserId === user.id}
-                        onClick={() => handleToggleStatus(user)}
-                      >
-                        {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
-                      </Button>
+                    {canManageStatus || canDeleteUsers ? (
+                      <div className="inline-flex items-center gap-2">
+                        {canManageStatus && (
+                          <Button
+                            type="button"
+                            variant={user.accountDisabled ? 'default' : 'outline'}
+                            size="sm"
+                            disabled={pendingUserId === user.id}
+                            onClick={() => handleToggleStatus(user)}
+                          >
+                            {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
+                          </Button>
+                        )}
+                        {canDeleteUsers && (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            disabled={pendingUserId === user.id}
+                            onClick={() => handleDeleteUser(user)}
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-xs text-slate-500">
                         <ShieldAlert className="h-3.5 w-3.5" />

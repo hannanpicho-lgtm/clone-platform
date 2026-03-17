@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { createSubAdmin, fetchSubAdmins, revokeSubAdmin, updateSubAdmin } from '../api';
+import { createSubAdmin, deleteSubAdmin, fetchSubAdmins, revokeSubAdmin, updateSubAdmin } from '../api';
 import { SUB_ADMIN_DEFAULT_PERMISSIONS, SUB_ADMIN_PERMISSION_OPTIONS } from '../permissions';
 import type { AdminSession, LimitedAdminAccount } from '../types';
 import { Badge } from '../../components/ui/badge';
@@ -153,6 +153,25 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
     }
   };
 
+  const handleDelete = async (account: LimitedAdminAccount) => {
+    if (!window.confirm(`Delete sub-admin ${account.displayName || account.username}? This will persist after refresh.`)) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError('');
+      setMessage('');
+      await deleteSubAdmin(session, account.userId);
+      setMessage('Sub-admin deleted successfully.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete sub-admin');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -258,6 +277,9 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                         </Button>
                         <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>
                           Revoke
+                        </Button>
+                        <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>
+                          Delete
                         </Button>
                       </div>
                     </TableCell>
