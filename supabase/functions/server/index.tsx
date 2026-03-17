@@ -231,7 +231,8 @@ app.get("/health", (c) => {
 });
 app.get("/products", async (c) => {
   try {
-    const products = await getTaskProductCatalog();
+    const requestTenantId = resolveRequestTenantId(c);
+    const products = await getTaskProductCatalog(requestTenantId);
     return c.json({ products });
   } catch (error) {
     return c.json({ error: error.message || "Failed to fetch products" }, 500);
@@ -315,8 +316,8 @@ const DEFAULT_CONTACT_LINKS = {
   telegram2: '',
 };
 
-const getContactLinksConfig = async () => {
-  const row = await kv.get('support:contact-links') || {};
+const getContactLinksConfig = async (tenantId: TenantId = DEFAULT_TENANT_ID) => {
+  const row = await kv.get(`support:contact-links:${tenantId}`) || {};
   const hasWhatsapp = Object.prototype.hasOwnProperty.call(row, 'whatsapp');
   const hasTelegram = Object.prototype.hasOwnProperty.call(row, 'telegram');
   const hasWhatsapp2 = Object.prototype.hasOwnProperty.call(row, 'whatsapp2');
@@ -380,8 +381,8 @@ const DEFAULT_DEPOSIT_CONFIG = {
   minimumAmount: 50,
 };
 
-const getDepositConfig = async () => {
-  const row = await kv.get('payments:deposit-config') || {};
+const getDepositConfig = async (tenantId: TenantId = DEFAULT_TENANT_ID) => {
+  const row = await kv.get(`payments:deposit-config:${tenantId}`) || {};
   const rawCryptoAssets = Array.isArray(row?.crypto?.assets) && row.crypto.assets.length > 0
     ? row.crypto.assets
     : DEFAULT_DEPOSIT_CONFIG.crypto.assets;
@@ -453,8 +454,8 @@ const normalizeVipCommissionRange = (
   };
 };
 
-const getVipCommissionRangeConfig = async () => {
-  const row = await kv.get('vip:commission-ranges') || {};
+const getVipCommissionRangeConfig = async (tenantId: TenantId = DEFAULT_TENANT_ID) => {
+  const row = await kv.get(`vip:commission-ranges:${tenantId}`) || {};
   const sourceRanges = row?.ranges || row || {};
   const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
     acc[tier] = normalizeVipCommissionRange(sourceRanges?.[tier], DEFAULT_VIP_COMMISSION_RANGES[tier]);
@@ -583,6 +584,7 @@ const computeTotalEarnings = (user: any, totalEarned: number): number => {
 };
 
 const TASK_PRODUCT_CATALOG_KEY = 'task-products:catalog';
+const getTaskProductCatalogKey = (tenantId: TenantId) => `${TASK_PRODUCT_CATALOG_KEY}:${tenantId}`;
 
 const TASK_PRODUCT_DEFAULT_CATALOG = [
   { name: 'stainless steel black sink waterfall faucet', image: 'https://source.unsplash.com/1200x1200/?kitchen,faucet,sink' },
@@ -669,13 +671,13 @@ const normalizeTaskProduct = (input: any, index: number) => {
   };
 };
 
-const getTaskProductCatalog = async () => {
-  const row = await kv.get(TASK_PRODUCT_CATALOG_KEY);
+const getTaskProductCatalog = async (tenantId: TenantId = DEFAULT_TENANT_ID) => {
+  const row = await kv.get(getTaskProductCatalogKey(tenantId));
   const rawProducts = Array.isArray(row?.products) ? row.products : [];
 
   if (rawProducts.length === 0) {
     const defaults = buildDefaultTaskProductCatalog();
-    await kv.set(TASK_PRODUCT_CATALOG_KEY, {
+    await kv.set(getTaskProductCatalogKey(tenantId), {
       products: defaults,
       updatedAt: new Date().toISOString(),
       updatedBy: 'system',
@@ -701,14 +703,14 @@ const getTaskProductCatalog = async () => {
   });
 
   if (sanitizedProducts.length !== rawProducts.length) {
-    await saveTaskProductCatalog(sanitizedProducts, 'system_sanitize_images');
+    await saveTaskProductCatalog(sanitizedProducts, 'system_sanitize_images', tenantId);
   }
 
   return sanitizedProducts;
 };
 
-const saveTaskProductCatalog = async (products: any[], updatedBy: string) => {
-  await kv.set(TASK_PRODUCT_CATALOG_KEY, {
+const saveTaskProductCatalog = async (products: any[], updatedBy: string, tenantId: TenantId = DEFAULT_TENANT_ID) => {
+  await kv.set(getTaskProductCatalogKey(tenantId), {
     products,
     updatedAt: new Date().toISOString(),
     updatedBy,
@@ -755,7 +757,7 @@ const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) =>
   const vipTier = String(userProfile?.vipTier || 'Normal');
   const rate = getVipTaskCommissionRate(vipTier);
   const amountRange = getTaskAmountRangeByTier(vipTier);
-  const catalog = await getTaskProductCatalog();
+  const catalog = await getTaskProductCatalog(getRecordTenantId(userProfile, DEFAULT_TENANT_ID));
 
   const assignment = userProfile?.premiumAssignment || null;
   const premiumPosition = Number(assignment?.position ?? 0);
@@ -950,6 +952,32 @@ const requireSuperAdmin = async (c: any): Promise<{ ok: true } | { ok: false; re
   return { ok: true };
 };
 
+const resolveSuperAdminContext = async (
+  c: any,
+): Promise<
+  | { ok: true; tenantId: TenantId; allowAllTenants: boolean }
+  | { ok: false; response: any }
+> => {
+  const superCheck = await requireSuperAdmin(c);
+  if (!superCheck.ok) {
+    return superCheck;
+  }
+
+  const tenantId = resolveRequestTenantId(c);
+  const allowAllTenants = String(c.req.header('x-super-admin-all-tenants') || '').trim().toLowerCase() === 'true';
+  return { ok: true, tenantId, allowAllTenants };
+};
+
+const isTargetAccessibleForSuperAdminContext = (
+  context: { tenantId: TenantId; allowAllTenants: boolean },
+  record: any,
+): boolean => {
+  if (context.allowAllTenants) {
+    return true;
+  }
+  return isRecordVisibleForTenant(record, context.tenantId);
+};
+
 const isDeletedRecord = (record: any): boolean => {
   return Boolean(record?.isDeleted || record?.deletedAt);
 };
@@ -984,6 +1012,11 @@ const requireAdminPermission = async (
     return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
   }
 
+  const adminTenantId = getRecordTenantId(adminAccount, requestTenantId);
+  if (adminTenantId !== requestTenantId) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Tenant mismatch for admin account' }, 403) };
+  }
+
   const permissions = sanitizeAdminPermissions(adminAccount.permissions);
   const hasPermission = permissions.includes(ADMIN_PERMISSION_ALL) || permissions.includes(requiredPermission);
 
@@ -991,7 +1024,7 @@ const requireAdminPermission = async (
     return { ok: false, response: c.json({ error: `Forbidden - Missing permission: ${requiredPermission}` }, 403) };
   }
 
-  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: getRecordTenantId(adminAccount, requestTenantId) };
+  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: adminTenantId };
 };
 
 const requireSupportAccess = async (c: any) => {
@@ -1018,8 +1051,13 @@ const requireSupportAccess = async (c: any) => {
     return { ok: false, response: c.json({ error: 'Forbidden - Admin account is inactive or not found' }, 403) };
   }
 
+  const adminTenantId = getRecordTenantId(adminAccount, requestTenantId);
+  if (adminTenantId !== requestTenantId) {
+    return { ok: false, response: c.json({ error: 'Forbidden - Tenant mismatch for admin account' }, 403) };
+  }
+
   const permissions = sanitizeAdminPermissions(adminAccount.permissions);
-  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: getRecordTenantId(adminAccount, requestTenantId) };
+  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: adminTenantId };
 
 };
 
@@ -1100,7 +1138,7 @@ const collectAdminScopedUserIds = (
   return scopedIds;
 };
 
-const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null }): Promise<AdminScopeConfig> => {
+const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId: string | null; tenantId: TenantId }): Promise<AdminScopeConfig> => {
   if (adminAccess.isSuperAdmin || !adminAccess.userId) {
     return { mode: 'all' };
   }
@@ -1110,7 +1148,7 @@ const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId:
     return { mode: 'none' };
   }
 
-  const allUsers = await kv.getByPrefix('user:') || [];
+  const allUsers = (await kv.getByPrefix('user:') || []).filter((user: any) => isRecordVisibleForTenant(user, adminAccess.tenantId));
   const scopedIds = collectAdminScopedUserIds(adminAccess.userId, adminAccount, allUsers);
   if (scopedIds.size > 0) {
     return { mode: 'users', userIds: scopedIds };
@@ -1137,6 +1175,20 @@ const isUserInAdminScope = (scope: AdminScopeConfig, user: any): boolean => {
   }
 
   return String(user?.parentUserId || '') === scope.parentUserId;
+};
+
+const isUserInTenantAdminScope = (
+  adminAccess: { tenantId: TenantId },
+  scope: AdminScopeConfig,
+  user: any,
+): boolean => {
+  if (!user) {
+    return false;
+  }
+  if (!isRecordVisibleForTenant(user, adminAccess.tenantId)) {
+    return false;
+  }
+  return isUserInAdminScope(scope, user);
 };
 
 const getAdminScopeFromAccount = (adminAccount: any): AdminScopeConfig => {
@@ -1666,6 +1718,7 @@ app.post("/signup", async (c) => {
       userId,
       email: contactEmail || authEmail,
       name: displayName,
+      tenantId: requestTenantId,
       createdAt: new Date().toISOString(),
       status: 'active',
     });
@@ -1755,6 +1808,10 @@ app.get("/admin/invitation-codes", async (c) => {
         return null;
       }
 
+      if (!isRecordVisibleForTenant(payload, adminAccess.tenantId)) {
+        return null;
+      }
+
       if (!adminAccess.isSuperAdmin && ownerUserId !== adminAccess.userId) {
         return null;
       }
@@ -1763,6 +1820,7 @@ app.get("/admin/invitation-codes", async (c) => {
       return {
         code,
         ownerUserId,
+        tenantId: getRecordTenantId(payload, adminAccess.tenantId),
         ownerName: payload?.name || 'Platform Invite',
         ownerEmail: payload?.email || null,
         signups: referrals,
@@ -1799,6 +1857,12 @@ app.post("/admin/invitation-codes/generate", async (c) => {
       if (!ownerProfile && !ownerAdminAccount) {
         return c.json({ error: 'Owner user not found' }, 404);
       }
+      if (ownerProfile && !isRecordVisibleForTenant(ownerProfile, adminAccess.tenantId)) {
+        return c.json({ error: 'Forbidden - Owner user is outside your tenant scope' }, 403);
+      }
+      if (ownerAdminAccount && !isRecordVisibleForTenant(ownerAdminAccount, adminAccess.tenantId)) {
+        return c.json({ error: 'Forbidden - Owner admin is outside your tenant scope' }, 403);
+      }
     }
 
     const code = await generateInvitationCode();
@@ -1806,6 +1870,7 @@ app.post("/admin/invitation-codes/generate", async (c) => {
       userId: ownerUserId,
       email: ownerProfile?.email || ownerAdminAccount?.authEmail || null,
       name: ownerProfile?.name || ownerAdminAccount?.displayName || ownerAdminAccount?.username || 'Platform Invite',
+      tenantId: adminAccess.tenantId,
       createdAt: new Date().toISOString(),
       status: 'active',
       generatedBy: 'admin',
@@ -1818,6 +1883,7 @@ app.post("/admin/invitation-codes/generate", async (c) => {
       invitationCode: {
         code,
         ownerUserId,
+        tenantId: payload.tenantId,
         ownerName: payload.name,
         ownerEmail: payload.email,
         signups: 0,
@@ -1855,6 +1921,10 @@ app.put("/admin/invitation-codes/status", async (c) => {
       return c.json({ error: 'Invitation code not found' }, 404);
     }
 
+    if (!isRecordVisibleForTenant(existing, adminAccess.tenantId)) {
+      return c.json({ error: 'Forbidden - Invitation code is outside your tenant scope' }, 403);
+    }
+
     if (!adminAccess.isSuperAdmin && existing?.userId !== adminAccess.userId) {
       return c.json({ error: 'Forbidden - You can only manage your own invitation codes' }, 403);
     }
@@ -1875,7 +1945,8 @@ app.put("/admin/invitation-codes/status", async (c) => {
 
 app.get('/contact-links', async (c) => {
   try {
-    const config = await getContactLinksConfig();
+    const requestTenantId = resolveRequestTenantId(c);
+    const config = await getContactLinksConfig(requestTenantId);
 
     const authHeader = c.req.header('Authorization');
     if (authHeader) {
@@ -1884,6 +1955,9 @@ app.get('/contact-links', async (c) => {
 
       if (!error && userId) {
         const userProfile = await kv.get(`user:${userId}`);
+        if (userProfile && !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+          return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+        }
         // Policy: top-level regular users (those with a user profile but no parent) see only Telegram 1.
         // Admin accounts (valid JWT but no user: KV profile) are NOT filtered — they see all links.
         if (userProfile && !String(userProfile?.parentUserId || '').trim()) {
@@ -1924,7 +1998,7 @@ app.put('/admin/contact-links', async (c) => {
       return c.json({ error: 'Provide one or more contact links' }, 400);
     }
 
-    const currentConfig = await getContactLinksConfig();
+    const currentConfig = await getContactLinksConfig(adminAccess.tenantId);
     const nextWhatsapp = hasWhatsapp
       ? String(body?.whatsapp || '').trim()
       : String(currentConfig.whatsapp || '').trim();
@@ -1958,7 +2032,7 @@ app.put('/admin/contact-links', async (c) => {
       updatedBy: adminAccess.userId || 'super_admin',
     };
 
-    await kv.set('support:contact-links', payload);
+    await kv.set(`support:contact-links:${adminAccess.tenantId}`, payload);
     return c.json({ success: true, config: payload });
   } catch (error) {
     console.error(`Error updating contact links: ${error}`);
@@ -1973,7 +2047,7 @@ app.get('/admin/vip-commission-ranges', async (c) => {
       return adminAccess.response;
     }
 
-    const config = await getVipCommissionRangeConfig();
+    const config = await getVipCommissionRangeConfig(adminAccess.tenantId);
     return c.json({ success: true, config });
   } catch (error) {
     console.error(`Error fetching VIP commission ranges: ${error}`);
@@ -1989,7 +2063,7 @@ app.put('/admin/vip-commission-ranges', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const currentConfig = await getVipCommissionRangeConfig();
+    const currentConfig = await getVipCommissionRangeConfig(adminAccess.tenantId);
     const sourceRanges = body?.ranges || {};
 
     const ranges = VIP_TIER_ORDER.reduce((acc, tier) => {
@@ -2004,7 +2078,7 @@ app.put('/admin/vip-commission-ranges', async (c) => {
       updatedBy: adminAccess.userId || 'super_admin',
     };
 
-    await kv.set('vip:commission-ranges', payload);
+    await kv.set(`vip:commission-ranges:${adminAccess.tenantId}`, payload);
     return c.json({ success: true, config: payload });
   } catch (error) {
     console.error(`Error updating VIP commission ranges: ${error}`);
@@ -2014,7 +2088,8 @@ app.put('/admin/vip-commission-ranges', async (c) => {
 
 app.get('/deposit-config', async (c) => {
   try {
-    const config = await getDepositConfig();
+    const requestTenantId = resolveRequestTenantId(c);
+    const config = await getDepositConfig(requestTenantId);
     return c.json({ success: true, config });
   } catch (error) {
     console.error(`Error fetching deposit config: ${error}`);
@@ -2039,7 +2114,7 @@ app.put('/admin/deposit-config', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const currentConfig = await getDepositConfig();
+    const currentConfig = await getDepositConfig(adminAccess.tenantId);
     const payload = {
       bank: {
         accountName: String(body?.bank?.accountName || currentConfig.bank.accountName),
@@ -2072,7 +2147,7 @@ app.put('/admin/deposit-config', async (c) => {
       updatedBy: adminAccess.userId || 'super_admin',
     };
 
-    await kv.set('payments:deposit-config', payload);
+    await kv.set(`payments:deposit-config:${adminAccess.tenantId}`, payload);
     return c.json({ success: true, config: payload });
   } catch (error) {
     console.error(`Error updating deposit config: ${error}`);
@@ -2089,6 +2164,7 @@ app.post('/deposits/request', async (c) => {
 
     const accessToken = authHeader.replace('Bearer ', '');
     const { userId, error } = await verifyJWT(accessToken);
+    const requestTenantId = resolveRequestTenantId(c);
     if (error || !userId) {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
     }
@@ -2126,7 +2202,7 @@ app.post('/deposits/request', async (c) => {
     let resolvedDestinationWalletAddress: string | null = null;
 
     if (normalizedMethod === 'crypto') {
-      const depositConfig = await getDepositConfig();
+      const depositConfig = await getDepositConfig(requestTenantId);
       const configAssets = Array.isArray(depositConfig?.crypto?.assets) ? depositConfig.crypto.assets : [];
       const fallbackAsset = configAssets.find((item: any) => item?.asset === depositConfig?.crypto?.defaultAsset)
         || configAssets[0]
@@ -2154,6 +2230,9 @@ app.post('/deposits/request', async (c) => {
     const user = await kv.get(`user:${userId}`);
     if (!user) {
       return c.json({ error: 'User profile not found' }, 404);
+    }
+    if (!isRecordVisibleForTenant(user, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     const requestId = `dep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -2261,7 +2340,7 @@ app.post('/admin/signin', async (c) => {
     }
 
     const requesterIp = getRequesterIp(c);
-    const attemptsKey = `admin:signin:attempts:${normalizedUsername}:${requesterIp}`;
+    const attemptsKey = `admin:signin:attempts:${requestTenantId}:${normalizedUsername}:${requesterIp}`;
     const nowMs = Date.now();
     const lockDurationMs = 15 * 60 * 1000;
     const attemptWindowMs = 15 * 60 * 1000;
@@ -2458,6 +2537,10 @@ app.get("/profile", async (c) => {
         lastLoginCountry: requestLocation.country || profile?.lastLoginCountry || 'Unknown',
       };
       await kv.set(`user:${userId}`, effectiveProfile);
+    }
+
+    if (!isRecordVisibleForTenant(effectiveProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     if (effectiveProfile?.accountDisabled) {
@@ -2692,7 +2775,7 @@ app.get("/admin/users", async (c) => {
       };
     }));
 
-    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
+    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInTenantAdminScope(adminAccess, scope, user));
     const sortedUsers = scopedUsers.sort((a: any, b: any) => {
       const bCreatedAt = new Date(b?.createdAt || 0).getTime();
       const aCreatedAt = new Date(a?.createdAt || 0).getTime();
@@ -2718,9 +2801,9 @@ app.get("/admin/users", async (c) => {
 // Admin (super key only): cleanup test users in one action
 app.post('/admin/users/cleanup-test-data', async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'users.cleanup_test_data', 3, 10 * 60 * 1000);
@@ -2733,7 +2816,9 @@ app.post('/admin/users/cleanup-test-data', async (c) => {
     const deleteUsers = Boolean(body?.deleteUsers);
 
     const userRows = await getKvRowsByPrefix('user:');
-    const matchedRows = userRows.filter((row: any) => isLikelyTestUser(row?.value));
+    const matchedRows = userRows
+      .filter((row: any) => isLikelyTestUser(row?.value))
+      .filter((row: any) => isTargetAccessibleForSuperAdminContext(superContext, row?.value));
 
     const summary: any = {
       scannedUsers: userRows.length,
@@ -2811,7 +2896,7 @@ app.post("/admin/unfreeze", async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, user)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, user)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -2845,9 +2930,9 @@ app.post("/admin/unfreeze", async (c) => {
 // Admin: assign premium product to a user
 app.post("/admin/premium", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const rateLimit = await enforceAdminRateLimit(c, { isSuperAdmin: true, userId: null }, 'premium.assign', 20, 10 * 60 * 1000);
@@ -2876,6 +2961,9 @@ app.post("/admin/premium", async (c) => {
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, user)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
+    }
 
     const normalizedProductId = String(productId || '').trim();
     const todayDate = new Date().toISOString().slice(0, 10);
@@ -2893,7 +2981,7 @@ app.post("/admin/premium", async (c) => {
     const effectivePremiumPosition = currentProgress >= tasksPerSet
       ? 1
       : Math.min(tasksPerSet, Math.max(currentProgress + 1, requestedPremiumPosition));
-    const catalog = await getTaskProductCatalog();
+    const catalog = await getTaskProductCatalog(getRecordTenantId(user, superContext.tenantId));
     const assignedProduct = normalizedProductId
       ? catalog.find((item: any) => String(item?.id || '') === normalizedProductId)
       : null;
@@ -2988,7 +3076,7 @@ app.put("/admin/vip-tier", async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, user)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, user)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -3011,16 +3099,16 @@ app.put("/admin/vip-tier", async (c) => {
 // Admin: list all premium assignments
 app.get("/admin/premium/list", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const allUsers = await kv.getByPrefix('user:');
     const premiumAssignments = [];
 
     for (const user of allUsers) {
-      if (user?.premiumAssignment) {
+      if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
         premiumAssignments.push({
           userId: user.id,
           userEmail: user.email,
@@ -3047,9 +3135,9 @@ app.get("/admin/premium/list", async (c) => {
 // Admin: revoke premium assignment from a user
 app.post("/admin/premium/revoke", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const { userId } = await c.req.json();
@@ -3061,6 +3149,9 @@ app.post("/admin/premium/revoke", async (c) => {
     const user = await kv.get(key);
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, user)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     if (!user?.premiumAssignment) {
@@ -3095,9 +3186,9 @@ app.post("/admin/premium/revoke", async (c) => {
 // Admin: get premium analytics
 app.get("/admin/premium/analytics", async (c) => {
   try {
-    const adminCheck = await requireAdminKey(c);
-    if (!adminCheck.ok) {
-      return adminCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const allUsers = await kv.getByPrefix('user:');
@@ -3107,7 +3198,7 @@ app.get("/admin/premium/analytics", async (c) => {
     const assignments = [];
 
     for (const user of allUsers) {
-      if (user?.premiumAssignment) {
+      if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
         totalAssignments++;
         totalPremiumValue += user.premiumAssignment.amount;
         assignments.push({
@@ -3151,7 +3242,7 @@ app.get('/admin/task-products', async (c) => {
       return adminAccess.response;
     }
 
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     return c.json({ success: true, products });
   } catch (error) {
     console.error(`Error listing task products: ${error}`);
@@ -3180,7 +3271,7 @@ app.post('/admin/task-products', async (c) => {
       return c.json({ error: 'A valid image URL (http/https) is required' }, 400);
     }
 
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     const timestamp = new Date().toISOString();
 
     const newProduct = {
@@ -3195,7 +3286,7 @@ app.post('/admin/task-products', async (c) => {
     };
 
     const updatedProducts = [newProduct, ...products];
-    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin', adminAccess.tenantId);
 
     return c.json({ success: true, product: newProduct, products: updatedProducts });
   } catch (error) {
@@ -3216,9 +3307,9 @@ app.post('/admin/task-products/generate', async (c) => {
     const count = Math.max(1, Math.min(50, Number(body?.count || 10)));
 
     const generated = generateAiTaskProducts(count);
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     const updatedProducts = [...generated, ...products].slice(0, 500);
-    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin', adminAccess.tenantId);
 
     return c.json({ success: true, generated, products: updatedProducts });
   } catch (error) {
@@ -3241,7 +3332,7 @@ app.put('/admin/task-products/:productId', async (c) => {
     }
 
     const body = await c.req.json().catch(() => ({}));
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     const targetIndex = products.findIndex((item: any) => String(item?.id || '') === productId);
     if (targetIndex < 0) {
       return c.json({ error: 'Task product not found' }, 404);
@@ -3269,7 +3360,7 @@ app.put('/admin/task-products/:productId', async (c) => {
 
     const updatedProducts = [...products];
     updatedProducts[targetIndex] = updated;
-    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin', adminAccess.tenantId);
 
     return c.json({ success: true, product: updated, products: updatedProducts });
   } catch (error) {
@@ -3291,7 +3382,7 @@ app.delete('/admin/task-products/:productId', async (c) => {
       return c.json({ error: 'productId is required' }, 400);
     }
 
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     const exists = products.some((item: any) => String(item?.id || '') === productId);
     if (!exists) {
       return c.json({ error: 'Task product not found' }, 404);
@@ -3308,7 +3399,7 @@ app.delete('/admin/task-products/:productId', async (c) => {
         updatedAt: new Date().toISOString(),
       };
     });
-    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin', adminAccess.tenantId);
 
     return c.json({ success: true, archivedProductId: productId, products: updatedProducts });
   } catch (error) {
@@ -3330,7 +3421,7 @@ app.post('/admin/task-products/:productId/restore', async (c) => {
       return c.json({ error: 'productId is required' }, 400);
     }
 
-    const products = await getTaskProductCatalog();
+    const products = await getTaskProductCatalog(adminAccess.tenantId);
     const exists = products.some((item: any) => String(item?.id || '') === productId);
     if (!exists) {
       return c.json({ error: 'Task product not found' }, 404);
@@ -3348,7 +3439,7 @@ app.post('/admin/task-products/:productId/restore', async (c) => {
       };
     });
 
-    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin');
+    await saveTaskProductCatalog(updatedProducts, adminAccess.userId || 'super_admin', adminAccess.tenantId);
     return c.json({ success: true, restoredProductId: productId, products: updatedProducts });
   } catch (error) {
     console.error(`Error restoring task product: ${error}`);
@@ -4459,7 +4550,7 @@ app.get("/admin/withdrawals", async (c) => {
     for (const id of pendingIds) {
       const w = await kv.get(`withdrawal:${id}`);
       const owner = w ? await kv.get(`user:${w.userId}`) : null;
-      if (w && w.status === 'pending' && isUserInAdminScope(scope, owner)) {
+      if (w && w.status === 'pending' && isUserInTenantAdminScope(adminAccess, scope, owner)) {
         withdrawals.push(w);
       }
     }
@@ -4503,7 +4594,7 @@ app.post("/admin/approve-withdrawal", async (c) => {
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, owner)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, owner)) {
       return c.json({ error: 'Forbidden - Withdrawal is outside your admin scope' }, 403);
     }
 
@@ -4575,7 +4666,7 @@ app.post("/admin/deny-withdrawal", async (c) => {
 
     const owner = await kv.get(`user:${withdrawal.userId}`);
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, owner)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, owner)) {
       return c.json({ error: 'Forbidden - Withdrawal is outside your admin scope' }, 403);
     }
 
@@ -4656,7 +4747,7 @@ app.post('/admin/users/adjust-balance', async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, userProfile)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -4711,9 +4802,9 @@ app.post('/admin/users/adjust-balance', async (c) => {
 // Admin: disable/enable user account (super admin only)
 app.put('/admin/users/account-status', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const body = await c.req.json().catch(() => ({}));
@@ -4728,6 +4819,9 @@ app.put('/admin/users/account-status', async (c) => {
     const user = await kv.get(key);
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, user)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     const updatedUser = {
@@ -4752,9 +4846,9 @@ app.put('/admin/users/account-status', async (c) => {
 // Admin: soft-delete user account and related records (super admin only)
 app.delete('/admin/users/:userId', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const userId = String(c.req.param('userId') || '').trim();
@@ -4766,6 +4860,9 @@ app.delete('/admin/users/:userId', async (c) => {
     const user = await kv.get(userKey);
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, user)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     const deletedAt = new Date().toISOString();
@@ -4935,7 +5032,7 @@ app.post('/admin/users/assign-premium', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const catalog = await getTaskProductCatalog();
+    const catalog = await getTaskProductCatalog(getRecordTenantId(user, adminAccess.tenantId));
     const assignedProduct = normalizedProductId
       ? catalog.find((item: any) => String(item?.id || '') === normalizedProductId)
       : null;
@@ -4945,7 +5042,7 @@ app.post('/admin/users/assign-premium', async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, user)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, user)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -5046,7 +5143,7 @@ app.post('/admin/users/reset-task-set', async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, userProfile)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -5168,7 +5265,7 @@ app.put('/admin/users/task-limits', async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
-    if (!isUserInAdminScope(scope, userProfile)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
@@ -5317,7 +5414,7 @@ app.get('/admin/accounts', async (c) => {
       .map((row: any) => {
       const scopedIds = collectAdminScopedUserIds(row?.userId, row, allUsers || []);
       const scope = scopedIds.size > 0 ? { mode: 'users' as const, userIds: scopedIds } : getAdminScopeFromAccount(row);
-      const scopedUsers = tenantUsersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
+      const scopedUsers = tenantUsersWithEarnings.filter((user: any) => isUserInTenantAdminScope({ tenantId: requestTenantId }, scope, user));
       const usersCreated = scopedUsers.length;
       const totalEarningsFromUsers = roundCurrency(
         scopedUsers.reduce((sum: number, user: any) => sum + Number(user?.totalEarnings || 0), 0),
@@ -5379,9 +5476,9 @@ app.get('/admin/accounts', async (c) => {
 // Admin: update limited admin account permissions/status (super admin only)
 app.put('/admin/accounts/:adminUserId', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const adminUserId = c.req.param('adminUserId');
@@ -5392,6 +5489,9 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
     const existing = await kv.get(`admin:account:${adminUserId}`);
     if (!existing) {
       return c.json({ error: 'Admin account not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, existing)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     const { permissions, active, displayName } = await c.req.json();
@@ -5424,9 +5524,9 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
 // Admin: revoke limited admin account access (super admin only)
 app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const adminUserId = c.req.param('adminUserId');
@@ -5437,6 +5537,9 @@ app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
     const existing = await kv.get(`admin:account:${adminUserId}`);
     if (!existing) {
       return c.json({ error: 'Admin account not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, existing)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     const updated = {
@@ -5458,9 +5561,9 @@ app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
 // Admin: soft-delete limited admin account (super admin only)
 app.delete('/admin/accounts/:adminUserId', async (c) => {
   try {
-    const superCheck = await requireSuperAdmin(c);
-    if (!superCheck.ok) {
-      return superCheck.response;
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
     }
 
     const adminUserId = c.req.param('adminUserId');
@@ -5471,6 +5574,9 @@ app.delete('/admin/accounts/:adminUserId', async (c) => {
     const existing = await kv.get(`admin:account:${adminUserId}`);
     if (!existing) {
       return c.json({ error: 'Admin account not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, existing)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
     }
 
     const deletedAt = new Date().toISOString();
@@ -5559,7 +5665,7 @@ app.get("/admin/alerts", async (c) => {
       if (!ticket) continue;
 
       const ticketOwner = await kv.get(`user:${ticket.userId}`);
-      if (!isUserInAdminScope(scope, ticketOwner)) {
+      if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) {
         continue;
       }
 
@@ -5589,7 +5695,7 @@ app.get("/admin/alerts", async (c) => {
     }
 
     const users = await kv.getByPrefix('user:');
-    const scopedUsers = (users || []).filter((user: any) => isUserInAdminScope(scope, user));
+    const scopedUsers = (users || []).filter((user: any) => isUserInTenantAdminScope(adminAccess, scope, user));
 
     const frozenUsers = scopedUsers.filter((user: any) => Boolean(user?.accountFrozen));
     for (const frozenUser of frozenUsers.slice(0, 20)) {
@@ -6330,7 +6436,7 @@ app.put('/admin/support-tickets/:id/status', async (c) => {
 
     const scope = await getAdminScopeConfig(adminAccess);
     const ticketOwner = await kv.get(`user:${ticket.userId}`);
-    if (!isUserInAdminScope(scope, ticketOwner)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) {
       return c.json({ error: 'Forbidden - Ticket is outside your admin scope' }, 403);
     }
 
@@ -6375,7 +6481,7 @@ app.get('/admin/support-tickets', async (c) => {
       if (!ticket?.id || !ticket?.userId) continue;
 
       const ticketOwner = await kv.get(`user:${ticket.userId}`);
-      if (!isUserInAdminScope(scope, ticketOwner)) continue;
+      if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) continue;
 
       tickets.push(ticket);
     }
@@ -6418,7 +6524,7 @@ app.post('/admin/support-tickets/:id/reply', async (c) => {
 
     const scope = await getAdminScopeConfig(adminAccess);
     const ticketOwner = await kv.get(`user:${ticket.userId}`);
-    if (!isUserInAdminScope(scope, ticketOwner)) {
+    if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) {
       return c.json({ error: 'Forbidden - Ticket is outside your admin scope' }, 403);
     }
 
