@@ -9,6 +9,15 @@ export const SUB_ADMIN_DEFAULT_PERMISSIONS = [
 export const SUB_ADMIN_PERMISSION_OPTIONS = [
   { value: 'users.view', label: 'View users and subscriptions' },
   { value: 'users.manage_status', label: 'Suspend and activate users' },
+  { value: 'users.adjust_balance', label: 'Adjust user balances' },
+  { value: 'users.assign_premium', label: 'Assign premium products' },
+  { value: 'users.reset_tasks', label: 'Reset user task sets' },
+  { value: 'users.manage_task_limits', label: 'Update task and withdrawal limits' },
+  { value: 'users.unfreeze', label: 'Unfreeze frozen users' },
+  { value: 'users.update_vip', label: 'Change VIP tiers' },
+  { value: 'withdrawals.manage', label: 'Approve and deny withdrawals' },
+  { value: 'invitations.manage', label: 'Manage invitation codes' },
+  { value: 'premium.manage', label: 'Manage premium products' },
   { value: 'support.manage', label: 'View and manage support tickets' },
 ] as const;
 

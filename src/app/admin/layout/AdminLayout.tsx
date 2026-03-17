@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BarChart3, LogOut, Shield, UserCog, Users } from 'lucide-react';
+import { BarChart3, DollarSign, Gift, LifeBuoy, Link2, LogOut, Settings, Shield, UserCog, Users, Wallet } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -17,7 +17,14 @@ interface AdminLayoutProps {
 const NAV_ITEMS = [
   { path: '/admin/dashboard', label: 'Dashboard', icon: BarChart3, permission: null },
   { path: '/admin/users', label: 'Users', icon: Users, permission: 'users.view' },
+  { path: '/admin/withdrawals', label: 'Withdrawals', icon: Wallet, permission: 'withdrawals.manage' },
+  { path: '/admin/transactions', label: 'Transactions', icon: DollarSign, permission: null },
+  { path: '/admin/premium', label: 'Premium', icon: Gift, permission: 'premium.manage-or-assign' },
+  { path: '/admin/invitations', label: 'Invitations', icon: Link2, permission: 'invitations.manage' },
+  { path: '/admin/customer-service', label: 'Customer Service', icon: LifeBuoy, permission: 'support.manage' },
+  { path: '/admin/support-links', label: 'Support Links', icon: Link2, permission: 'support.manage' },
   { path: '/admin/sub-admins', label: 'Sub-admins', icon: UserCog, permission: 'super-admin-only' },
+  { path: '/admin/settings', label: 'Settings', icon: Settings, permission: null },
 ] as const;
 
 export function AdminLayout({ children, currentPath, session, onLogout }: AdminLayoutProps) {
@@ -25,6 +32,12 @@ export function AdminLayout({ children, currentPath, session, onLogout }: AdminL
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.permission === 'super-admin-only') {
       return isSuperAdmin(session);
+    }
+    if (item.permission === 'premium.manage-or-assign') {
+      return isSuperAdmin(session)
+        || session.permissions.includes('*')
+        || session.permissions.includes('premium.manage')
+        || session.permissions.includes('users.assign_premium');
     }
     if (!item.permission) {
       return true;

@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ShieldAlert } from 'lucide-react';
-import { deleteAdminUser, fetchAdminUsers, updateUserAccountStatus } from '../api';
+import {
+  adjustUserBalance,
+  assignUserPremium,
+  deleteAdminUser,
+  fetchAdminUsers,
+  resetUserTaskSet,
+  unfreezeUser,
+  updateUserAccountStatus,
+  updateUserTaskLimits,
+  updateUserVipTier,
+} from '../api';
 import { hasAdminPermission } from '../permissions';
 import type { AdminMetrics, AdminSession, AdminUserRecord } from '../types';
 import { Badge } from '../../components/ui/badge';
@@ -42,6 +52,24 @@ function getSubscriptionStatus(user: AdminUserRecord) {
   return user.vipTier !== 'Normal' ? 'Active' : 'Free';
 }
 
+function formatLocation(value?: string | null) {
+  const v = String(value || '').trim();
+  return v || 'Unknown';
+}
+
+function formatIp(value?: string | null) {
+  const v = String(value || '').trim();
+  return v || 'Unknown';
+}
+
+function tasksPerSetForTier() {
+  return 3;
+}
+
+function isResetRequired(user: AdminUserRecord) {
+  return Number(user.currentSetTasksCompleted || 0) >= tasksPerSetForTier();
+}
+
 export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [metrics, setMetrics] = useState<AdminMetrics>(EMPTY_METRICS);
@@ -51,9 +79,17 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [vipTierDraft, setVipTierDraft] = useState('Normal');
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
   const canDeleteUsers = session.role === 'super-admin';
+  const canAdjustBalance = hasAdminPermission(session, 'users.adjust_balance') || hasAdminPermission(session, 'users.manage');
+  const canAssignPremium = hasAdminPermission(session, 'users.assign_premium') || hasAdminPermission(session, 'premium.assign') || hasAdminPermission(session, 'premium.manage');
+  const canResetTasks = hasAdminPermission(session, 'users.reset_tasks') || hasAdminPermission(session, 'users.manage');
+  const canManageTaskLimits = hasAdminPermission(session, 'users.manage_task_limits') || hasAdminPermission(session, 'users.manage');
+  const canUnfreezeUsers = hasAdminPermission(session, 'users.unfreeze') || hasAdminPermission(session, 'users.manage');
+  const canUpdateVip = hasAdminPermission(session, 'users.update_vip') || hasAdminPermission(session, 'users.manage');
 
   const load = async () => {
     setLoading(true);
@@ -72,6 +108,16 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   useEffect(() => {
     load();
   }, [session]);
+
+  const selectedUser = useMemo(
+    () => users.find((user) => user.id === selectedUserId) || null,
+    [users, selectedUserId],
+  );
+
+  useEffect(() => {
+    if (!selectedUser) return;
+    setVipTierDraft(selectedUser.vipTier || 'Normal');
+  }, [selectedUser?.id, selectedUser?.vipTier]);
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -132,11 +178,154 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     }
   };
 
+  const handleUnfreeze = async (user: AdminUserRecord) => {
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await unfreezeUser(session, user.id);
+      setMessage(`${user.name} unfrozen successfully.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unfreeze user');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleUpdateVip = async (user: AdminUserRecord) => {
+    if (!vipTierDraft.trim()) {
+      setError('Select a VIP tier first.');
+      return;
+    }
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await updateUserVipTier(session, user.id, vipTierDraft);
+      setMessage(`${user.name} VIP tier updated to ${vipTierDraft}.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update VIP tier');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleAdjustBalance = async (user: AdminUserRecord) => {
+    const amountRaw = window.prompt(`Adjust balance for ${user.name}. Enter amount (+/-):`, '100');
+    if (amountRaw === null) return;
+    const amount = Number(amountRaw);
+    if (!Number.isFinite(amount) || amount === 0) {
+      setError('Invalid amount.');
+      return;
+    }
+    const category = window.prompt('Category (bonus/reward/topup/adjustment):', 'bonus') || 'bonus';
+    const note = window.prompt('Optional note:', '') || '';
+
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await adjustUserBalance(session, { userId: user.id, amount, category, note });
+      setMessage(`${user.name} balance adjusted.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to adjust balance');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleAssignPremium = async (user: AdminUserRecord) => {
+    const amountRaw = window.prompt(`Assign premium amount for ${user.name}:`, '1000');
+    if (amountRaw === null) return;
+    const amount = Number(amountRaw);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Invalid premium amount.');
+      return;
+    }
+    const posRaw = window.prompt('Optional encounter position:', '');
+    const position = posRaw && posRaw.trim() ? Number(posRaw) : undefined;
+    if (typeof position !== 'undefined' && !Number.isFinite(position)) {
+      setError('Invalid premium position.');
+      return;
+    }
+
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await assignUserPremium(session, { userId: user.id, amount, position });
+      setMessage(`Premium assigned to ${user.name}.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign premium');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleResetTaskSet = async (user: AdminUserRecord) => {
+    if (!window.confirm(`Reset task set for ${user.name}?`)) return;
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await resetUserTaskSet(session, user.id, isResetRequired(user) ? 'complete_set' : 'manual');
+      setMessage(`${user.name} task set reset.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset task set');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleUpdateTaskLimits = async (user: AdminUserRecord) => {
+    const dailyRaw = window.prompt('Daily task set limit:', String(user.dailyTaskSetLimit || 3));
+    if (dailyRaw === null) return;
+    const extraRaw = window.prompt('Extra task sets:', String(user.extraTaskSets || 0));
+    if (extraRaw === null) return;
+    const withdrawalRaw = window.prompt('Withdrawal limit (0 = no cap):', String(user.withdrawalLimit || 0));
+    if (withdrawalRaw === null) return;
+
+    const dailyTaskSetLimit = Number(dailyRaw);
+    const extraTaskSets = Number(extraRaw);
+    const withdrawalLimit = Number(withdrawalRaw);
+
+    if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
+      setError('Daily task set limit must be at least 1.');
+      return;
+    }
+    if (!Number.isFinite(extraTaskSets) || extraTaskSets < 0) {
+      setError('Extra task sets cannot be negative.');
+      return;
+    }
+    if (!Number.isFinite(withdrawalLimit) || withdrawalLimit < 0) {
+      setError('Withdrawal limit cannot be negative.');
+      return;
+    }
+
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await updateUserTaskLimits(session, { userId: user.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit });
+      setMessage(`${user.name} task limits updated.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update task limits');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
-        <p className="text-sm text-slate-500">Search, filter, suspend/activate users, and review subscription status.</p>
+        <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -202,6 +391,8 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                 <TableHead>Status</TableHead>
                 <TableHead>Subscription</TableHead>
                 <TableHead>Tier</TableHead>
+                <TableHead>Balance</TableHead>
+                <TableHead>Products</TableHead>
                 <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -212,6 +403,10 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                   <TableCell>
                     <div className="font-medium">{user.name}</div>
                     <div className="text-xs text-slate-500">{user.email || user.id}</div>
+                    <div className="text-xs text-slate-500">Location: {formatLocation(user.lastLoginCountry)}</div>
+                    <div className="text-xs text-slate-500">IP: {formatIp(user.lastLoginIp)}</div>
+                    <div className="text-xs text-slate-500">Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'N/A'}</div>
+                    {isResetRequired(user) && <div className="text-xs font-semibold text-amber-700">Reset required</div>}
                   </TableCell>
                   <TableCell>{getAccountBadge(user)}</TableCell>
                   <TableCell>
@@ -220,10 +415,23 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                     </Badge>
                   </TableCell>
                   <TableCell>{user.vipTier}</TableCell>
+                  <TableCell className={user.balance < 0 ? 'text-red-600' : 'text-green-700'}>${Number(user.balance || 0).toLocaleString()}</TableCell>
+                  <TableCell>{Number(user.productsSubmitted || 0)}</TableCell>
                   <TableCell>{formatDate(user.createdAt)}</TableCell>
                   <TableCell className="text-right">
-                    {canManageStatus || canDeleteUsers ? (
+                    {canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canResetTasks || canManageTaskLimits || canUpdateVip ? (
                       <div className="inline-flex items-center gap-2">
+                        {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pendingUserId === user.id}
+                            onClick={() => handleUnfreeze(user)}
+                          >
+                            Unfreeze
+                          </Button>
+                        )}
                         {canManageStatus && (
                           <Button
                             type="button"
@@ -235,6 +443,36 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
                           </Button>
                         )}
+                        {canAssignPremium && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingUserId === user.id || user.accountDisabled}
+                            onClick={() => handleAssignPremium(user)}
+                          >
+                            Premium
+                          </Button>
+                        )}
+                        {canAdjustBalance && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingUserId === user.id || user.accountDisabled}
+                            onClick={() => handleAdjustBalance(user)}
+                          >
+                            Adjust
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedUserId(user.id)}
+                        >
+                          Details
+                        </Button>
                         {canDeleteUsers && (
                           <Button
                             type="button"
@@ -265,6 +503,56 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
               )}
             </TableBody>
           </Table>
+
+          {selectedUser && (
+            <Card className="border-slate-200 bg-slate-50">
+              <CardHeader>
+                <CardTitle>User Details</CardTitle>
+                <CardDescription>{selectedUser.name} ({selectedUser.email || selectedUser.id})</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="text-sm"><span className="text-slate-500">Total earnings:</span> ${Number(selectedUser.totalEarnings || 0).toLocaleString()}</div>
+                  <div className="text-sm"><span className="text-slate-500">Frozen negative:</span> ${Number(selectedUser.frozenNegativeAmount || 0).toLocaleString()}</div>
+                  <div className="text-sm"><span className="text-slate-500">Task progress:</span> {Number(selectedUser.currentSetTasksCompleted || 0)} / {tasksPerSetForTier()}</div>
+                  <div className="text-sm"><span className="text-slate-500">Daily sets used:</span> {Number(selectedUser.taskSetsCompletedToday || 0)}</div>
+                  <div className="text-sm"><span className="text-slate-500">Daily limit:</span> {Number(selectedUser.dailyTaskSetLimit || 0)}</div>
+                  <div className="text-sm"><span className="text-slate-500">Extra sets:</span> {Number(selectedUser.extraTaskSets || 0)}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {canUpdateVip && (
+                    <>
+                      <Select value={vipTierDraft} onValueChange={setVipTierDraft}>
+                        <SelectTrigger className="w-[180px]"><SelectValue placeholder="VIP Tier" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Normal">Normal</SelectItem>
+                          <SelectItem value="Silver">Silver</SelectItem>
+                          <SelectItem value="Gold">Gold</SelectItem>
+                          <SelectItem value="Platinum">Platinum</SelectItem>
+                          <SelectItem value="Diamond">Diamond</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button type="button" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleUpdateVip(selectedUser)}>
+                        Update VIP
+                      </Button>
+                    </>
+                  )}
+                  {canResetTasks && (
+                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleResetTaskSet(selectedUser)}>
+                      Reset Task Set
+                    </Button>
+                  )}
+                  {canManageTaskLimits && (
+                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleUpdateTaskLimits(selectedUser)}>
+                      Set Limits
+                    </Button>
+                  )}
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedUserId(null)}>Close</Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </CardContent>
       </Card>
     </div>

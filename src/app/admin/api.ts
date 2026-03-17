@@ -1,11 +1,16 @@
 import { safeFetch } from '../../utils/safeFetch';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import type {
+  AdminAlertItem,
+  AdminAlertsSummary,
   AdminAuditLogItem,
+  AdminInvitationCode,
   AdminMetrics,
   AdminSession,
+  AdminSupportLinks,
   AdminSupportTicket,
   AdminUserRecord,
+  AdminWithdrawalRequest,
   LimitedAdminAccount,
 } from './types';
 
@@ -52,10 +57,21 @@ export async function fetchAdminUsers(session: AdminSession): Promise<{ users: A
         vipTier: String(user?.vipTier || 'Normal'),
         balance: Number(user?.balance || 0),
         productsSubmitted: Number(user?.productsSubmitted || 0),
+        totalEarnings: Number(user?.totalEarnings || 0),
+        frozenNegativeAmount: Number(user?.frozenNegativeAmount || 0),
         accountFrozen: Boolean(user?.accountFrozen),
+        freezeAmount: Number(user?.freezeAmount || 0),
         accountDisabled: Boolean(user?.accountDisabled),
         createdAt: String(user?.createdAt || ''),
         lastLoginAt: user?.lastLoginAt ? String(user.lastLoginAt) : null,
+        lastLoginCountry: user?.lastLoginCountry ? String(user.lastLoginCountry) : null,
+        lastLoginIp: user?.lastLoginIp ? String(user.lastLoginIp) : null,
+        dailyTaskSetLimit: Number(user?.dailyTaskSetLimit || 0),
+        extraTaskSets: Number(user?.extraTaskSets || 0),
+        withdrawalLimit: Number(user?.withdrawalLimit || 0),
+        taskSetsCompletedToday: Number(user?.taskSetsCompletedToday || 0),
+        currentSetTasksCompleted: Number(user?.currentSetTasksCompleted || 0),
+        currentSetDate: user?.currentSetDate ? String(user.currentSetDate) : null,
       })),
     );
 
@@ -199,4 +215,249 @@ export async function deleteSubAdmin(session: AdminSession, adminUserId: string)
     const data = response ? await response.json().catch(() => ({})) : {};
     throw new Error(data?.error || 'Failed to delete sub-admin');
   }
+}
+
+export async function unfreezeUser(session: AdminSession, userId: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/unfreeze', {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to unfreeze user');
+  }
+}
+
+export async function updateUserVipTier(session: AdminSession, userId: string, vipTier: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/vip-tier', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, vipTier }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to update VIP tier');
+  }
+}
+
+export async function adjustUserBalance(
+  session: AdminSession,
+  payload: { userId: string; amount: number; category: string; note?: string },
+): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/adjust-balance', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to adjust balance');
+  }
+}
+
+export async function assignUserPremium(
+  session: AdminSession,
+  payload: { userId: string; amount: number; position?: number },
+): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/assign-premium', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to assign premium');
+  }
+}
+
+export async function resetUserTaskSet(session: AdminSession, userId: string, mode: 'manual' | 'complete_set' = 'manual'): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/reset-task-set', {
+    method: 'POST',
+    body: JSON.stringify({ userId, mode }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to reset task set');
+  }
+}
+
+export async function updateUserTaskLimits(
+  session: AdminSession,
+  payload: { userId: string; dailyTaskSetLimit: number; extraTaskSets: number; withdrawalLimit: number },
+): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/task-limits', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to update task limits');
+  }
+}
+
+export async function fetchAdminWithdrawals(session: AdminSession): Promise<AdminWithdrawalRequest[]> {
+  const response = await adminFetch(session, '/admin/withdrawals');
+  if (!response || !response.ok) {
+    throw new Error('Failed to fetch withdrawals');
+  }
+  const data = await response.json().catch(() => ({}));
+  const withdrawals = Array.isArray(data?.withdrawals) ? data.withdrawals : [];
+  return withdrawals.map((item: any) => ({
+    id: String(item?.id || ''),
+    userId: String(item?.userId || ''),
+    userName: String(item?.userName || item?.name || 'Unknown User'),
+    userEmail: item?.userEmail ? String(item.userEmail) : item?.email ? String(item.email) : '',
+    amount: Number(item?.amount || 0),
+    status: item?.status === 'approved' ? 'approved' : item?.status === 'denied' ? 'denied' : 'pending',
+    requestedAt: String(item?.requestedAt || item?.createdAt || ''),
+    approvedAt: item?.approvedAt ? String(item.approvedAt) : undefined,
+    deniedAt: item?.deniedAt ? String(item.deniedAt) : undefined,
+    denialReason: item?.denialReason ? String(item.denialReason) : undefined,
+  }));
+}
+
+export async function approveWithdrawal(session: AdminSession, withdrawalId: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/approve-withdrawal', {
+    method: 'POST',
+    body: JSON.stringify({ withdrawalId }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to approve withdrawal');
+  }
+}
+
+export async function denyWithdrawal(session: AdminSession, withdrawalId: string, denialReason: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/deny-withdrawal', {
+    method: 'POST',
+    body: JSON.stringify({ withdrawalId, denialReason }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to deny withdrawal');
+  }
+}
+
+export async function fetchInvitationCodes(session: AdminSession): Promise<AdminInvitationCode[]> {
+  const response = await adminFetch(session, '/admin/invitation-codes');
+  if (!response || !response.ok) {
+    throw new Error('Failed to fetch invitation codes');
+  }
+  const data = await response.json().catch(() => ({}));
+  const invitationCodes = Array.isArray(data?.invitationCodes) ? data.invitationCodes : [];
+  return invitationCodes
+    .map((item: any) => ({
+      code: String(item?.code || '').trim(),
+      owner: String(item?.ownerName || item?.ownerEmail || 'Platform Invite'),
+      referrals: Number(item?.signups || 0),
+      status: item?.status === 'disabled' ? 'disabled' : 'active',
+      generatedAt: String(item?.createdAt || ''),
+      ownerUserId: item?.ownerUserId ? String(item.ownerUserId) : null,
+    }))
+    .filter((item: AdminInvitationCode) => Boolean(item.code));
+}
+
+export async function generateInvitationCode(session: AdminSession, ownerUserId?: string | null): Promise<void> {
+  const response = await adminFetch(session, '/admin/invitation-codes/generate', {
+    method: 'POST',
+    body: JSON.stringify({ ownerUserId: ownerUserId || null }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to generate invitation code');
+  }
+}
+
+export async function updateInvitationCodeStatus(session: AdminSession, code: string, status: 'active' | 'disabled'): Promise<void> {
+  const response = await adminFetch(session, '/admin/invitation-codes/status', {
+    method: 'PUT',
+    body: JSON.stringify({ code, status }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to update invitation code status');
+  }
+}
+
+export async function updateSupportTicketStatus(session: AdminSession, ticketId: string, status: 'open' | 'in_progress' | 'resolved'): Promise<void> {
+  const response = await adminFetch(session, `/admin/support-tickets/${ticketId}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: status === 'in_progress' ? 'in-progress' : status }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to update support ticket status');
+  }
+}
+
+export async function replySupportTicket(session: AdminSession, ticketId: string, message: string): Promise<void> {
+  const response = await adminFetch(session, `/admin/support-tickets/${ticketId}/reply`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to reply to support ticket');
+  }
+}
+
+export async function fetchContactLinks(session: AdminSession): Promise<AdminSupportLinks> {
+  const response = await adminFetch(session, '/contact-links');
+  if (!response || !response.ok) {
+    throw new Error('Failed to fetch support links');
+  }
+  const data = await response.json().catch(() => ({}));
+  const config = data?.config || {};
+  return {
+    whatsapp: String(config?.whatsapp || ''),
+    telegram: String(config?.telegram || ''),
+    whatsapp2: String(config?.whatsapp2 || ''),
+    telegram2: String(config?.telegram2 || ''),
+  };
+}
+
+export async function updateContactLinks(session: AdminSession, links: Partial<AdminSupportLinks>): Promise<AdminSupportLinks> {
+  const response = await adminFetch(session, '/admin/contact-links', {
+    method: 'PUT',
+    body: JSON.stringify(links),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to update support links');
+  }
+  const data = await response.json().catch(() => ({}));
+  const config = data?.config || {};
+  return {
+    whatsapp: String(config?.whatsapp || ''),
+    telegram: String(config?.telegram || ''),
+    whatsapp2: String(config?.whatsapp2 || ''),
+    telegram2: String(config?.telegram2 || ''),
+  };
+}
+
+export async function fetchAdminAlerts(session: AdminSession): Promise<{ alerts: AdminAlertItem[]; summary: AdminAlertsSummary }> {
+  const response = await adminFetch(session, '/admin/alerts');
+  if (!response || !response.ok) {
+    throw new Error('Failed to fetch admin alerts');
+  }
+
+  const data = await response.json().catch(() => ({}));
+  const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+  return {
+    alerts: alerts.map((item: any) => ({
+      id: String(item?.id || ''),
+      type: item?.type || 'support_ticket',
+      severity: item?.severity || 'medium',
+      title: String(item?.title || ''),
+      message: String(item?.message || ''),
+      createdAt: String(item?.createdAt || ''),
+      status: item?.status || 'action_required',
+    })),
+    summary: {
+      total: Number(data?.summary?.total || 0),
+      actionRequired: Number(data?.summary?.actionRequired || 0),
+      pendingWithdrawals: Number(data?.summary?.pendingWithdrawals || 0),
+      openSupportTickets: Number(data?.summary?.openSupportTickets || 0),
+      frozenAccounts: Number(data?.summary?.frozenAccounts || 0),
+      critical: Number(data?.summary?.critical || 0),
+      high: Number(data?.summary?.high || 0),
+    },
+  };
 }

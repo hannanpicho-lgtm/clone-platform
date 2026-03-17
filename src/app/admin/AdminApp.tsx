@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { AdminLogin } from '../components/AdminLogin';
 import { Button } from '../components/ui/button';
@@ -7,9 +7,16 @@ import { AdminLayout } from './layout/AdminLayout';
 import { evaluateAdminRouteAccess, resolveAdminRoute } from './middleware';
 import { clearAdminSession, loadAdminSession, saveAdminSession } from './session';
 import type { AdminSession } from './types';
+import { AdminCustomerServicePage } from './pages/AdminCustomerServicePage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AdminInvitationsPage } from './pages/AdminInvitationsPage';
+import { AdminPremiumPage } from './pages/AdminPremiumPage';
+import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { AdminSubAdminsPage } from './pages/AdminSubAdminsPage';
+import { AdminSupportLinksPage } from './pages/AdminSupportLinksPage';
+import { AdminTransactionsPage } from './pages/AdminTransactionsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminWithdrawalsPage } from './pages/AdminWithdrawalsPage';
 
 function getCurrentPath() {
   return typeof window !== 'undefined' ? window.location.pathname : '/admin';
@@ -136,11 +143,25 @@ export function AdminApp() {
   }
 
   const route = resolveAdminRoute(currentPath);
-  let page = <AdminDashboardPage session={session} />;
+  let page: React.ReactNode = <AdminDashboardPage session={session} />;
   if (route === 'users') {
     page = <AdminUsersPage session={session} />;
   } else if (route === 'sub-admins') {
     page = <AdminSubAdminsPage session={session} />;
+  } else if (route === 'withdrawals') {
+    page = <AdminWithdrawalsPage session={session} />;
+  } else if (route === 'transactions') {
+    page = <AdminTransactionsPage session={session} />;
+  } else if (route === 'premium') {
+    page = <AdminPremiumPage session={session} />;
+  } else if (route === 'invitations') {
+    page = <AdminInvitationsPage session={session} />;
+  } else if (route === 'customer-service') {
+    page = <AdminCustomerServicePage session={session} />;
+  } else if (route === 'support-links') {
+    page = <AdminSupportLinksPage session={session} />;
+  } else if (route === 'settings') {
+    page = <AdminSettingsPage session={session} />;
   }
 
   return (

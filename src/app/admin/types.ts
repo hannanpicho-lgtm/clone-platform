@@ -14,10 +14,21 @@ export interface AdminUserRecord {
   vipTier: string;
   balance: number;
   productsSubmitted: number;
+  totalEarnings?: number;
+  frozenNegativeAmount?: number;
   accountFrozen: boolean;
+  freezeAmount?: number;
   accountDisabled: boolean;
   createdAt: string;
   lastLoginAt?: string | null;
+  lastLoginCountry?: string | null;
+  lastLoginIp?: string | null;
+  dailyTaskSetLimit?: number;
+  extraTaskSets?: number;
+  withdrawalLimit?: number;
+  taskSetsCompletedToday?: number;
+  currentSetTasksCompleted?: number;
+  currentSetDate?: string | null;
 }
 
 export interface AdminMetrics {
@@ -65,4 +76,53 @@ export interface LimitedAdminAccount {
   createdAt?: string;
   updatedAt?: string | null;
   revokedAt?: string | null;
+}
+
+export interface AdminInvitationCode {
+  code: string;
+  owner: string;
+  referrals: number;
+  status: 'active' | 'disabled';
+  generatedAt: string;
+  ownerUserId?: string | null;
+}
+
+export interface AdminWithdrawalRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'denied';
+  requestedAt: string;
+  approvedAt?: string;
+  deniedAt?: string;
+  denialReason?: string;
+}
+
+export interface AdminSupportLinks {
+  whatsapp: string;
+  telegram: string;
+  whatsapp2: string;
+  telegram2: string;
+}
+
+export interface AdminAlertItem {
+  id: string;
+  type: 'withdrawal_pending' | 'withdrawal_approved' | 'withdrawal_denied' | 'support_ticket' | 'frozen_account' | 'new_referral' | 'premium_assignment';
+  severity: 'critical' | 'high' | 'medium' | 'info';
+  title: string;
+  message: string;
+  createdAt: string;
+  status: 'new' | 'action_required' | 'resolved';
+}
+
+export interface AdminAlertsSummary {
+  total: number;
+  actionRequired: number;
+  pendingWithdrawals: number;
+  openSupportTickets: number;
+  frozenAccounts: number;
+  critical: number;
+  high: number;
 }

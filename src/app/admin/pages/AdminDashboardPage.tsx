@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, DollarSign, LifeBuoy, TrendingUp, UserPlus, Users } from 'lucide-react';
-import { fetchAdminAuditLog, fetchAdminSupportTickets, fetchAdminUsers } from '../api';
-import { isSuperAdmin } from '../permissions';
-import type { AdminAuditLogItem, AdminMetrics, AdminSession, AdminSupportTicket, AdminUserRecord } from '../types';
+import { AlertCircle, Bell, DollarSign, LifeBuoy, Link2, TrendingUp, UserPlus, Users, Zap } from 'lucide-react';
+import { fetchAdminAlerts, fetchAdminAuditLog, fetchAdminSupportTickets, fetchAdminUsers, fetchInvitationCodes } from '../api';
+import { hasAdminPermission, isSuperAdmin } from '../permissions';
+import type { AdminAlertItem, AdminAlertsSummary, AdminAuditLogItem, AdminMetrics, AdminSession, AdminSupportTicket, AdminUserRecord } from '../types';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -47,6 +47,17 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
   const [metrics, setMetrics] = useState<AdminMetrics>(EMPTY_METRICS);
   const [tickets, setTickets] = useState<AdminSupportTicket[]>([]);
   const [auditLog, setAuditLog] = useState<AdminAuditLogItem[]>([]);
+  const [alerts, setAlerts] = useState<AdminAlertItem[]>([]);
+  const [alertsSummary, setAlertsSummary] = useState<AdminAlertsSummary>({
+    total: 0,
+    actionRequired: 0,
+    pendingWithdrawals: 0,
+    openSupportTickets: 0,
+    frozenAccounts: 0,
+    critical: 0,
+    high: 0,
+  });
+  const [activeInvitationCount, setActiveInvitationCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [targetUserId, setTargetUserId] = useState('');
@@ -64,10 +75,29 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
       try {
         setLoading(true);
         setError('');
-        const [{ users: nextUsers, metrics: nextMetrics }, nextTickets, nextAudit] = await Promise.all([
+        const [
+          { users: nextUsers, metrics: nextMetrics },
+          nextTickets,
+          nextAudit,
+          invitationCodes,
+          alertPayload,
+        ] = await Promise.all([
           fetchAdminUsers(session),
           fetchAdminSupportTickets(session),
           fetchAdminAuditLog(session, 12),
+          fetchInvitationCodes(session).catch(() => []),
+          fetchAdminAlerts(session).catch(() => ({
+            alerts: [],
+            summary: {
+              total: 0,
+              actionRequired: 0,
+              pendingWithdrawals: 0,
+              openSupportTickets: 0,
+              frozenAccounts: 0,
+              critical: 0,
+              high: 0,
+            },
+          })),
         ]);
 
         if (cancelled) return;
@@ -75,6 +105,9 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
         setMetrics(nextMetrics);
         setTickets(nextTickets);
         setAuditLog(nextAudit);
+        setActiveInvitationCount(invitationCodes.filter((item) => item.status === 'active').length);
+        setAlerts(alertPayload.alerts);
+        setAlertsSummary(alertPayload.summary);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to load admin dashboard');
@@ -100,6 +133,9 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
     return users.filter((user) => new Date(user.createdAt).getTime() >= cutoff).length;
   }, [users]);
   const openTickets = useMemo(() => tickets.filter((ticket) => ticket.status !== 'resolved').length, [tickets]);
+  const canManageInvitations = hasAdminPermission(session, 'invitations.manage');
+  const canManageSupport = hasAdminPermission(session, 'support.manage');
+  const canManageWithdrawals = hasAdminPermission(session, 'withdrawals.manage');
 
   useEffect(() => {
     if (!cryptoInvoice?.expiresAt) {
@@ -187,6 +223,20 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
       icon: LifeBuoy,
       description: 'Tickets needing admin attention',
     },
+    {
+      key: 'invites',
+      title: 'Active Invite Codes',
+      value: activeInvitationCount,
+      icon: Link2,
+      description: 'Invitation system status',
+    },
+    {
+      key: 'commissions',
+      title: 'Commissions Paid',
+      value: `$${metrics.totalCommissionsPaid.toFixed(2)}`,
+      icon: Zap,
+      description: 'Lifetime total',
+    },
     ...(isSuperAdmin(session)
       ? [{
           key: 'revenue',
@@ -220,7 +270,7 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
         </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
@@ -237,6 +287,46 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
           );
         })}
       </div>
+
+      <Card className="border-slate-200 bg-white">
+        <CardHeader>
+          <CardTitle>Quick Actions</CardTitle>
+          <CardDescription>Legacy operational shortcuts mapped to routed admin pages.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button type="button" onClick={() => { window.location.href = '/admin/users'; }}>Manage Users</Button>
+          <Button type="button" variant="outline" onClick={() => { window.location.href = '/admin/premium'; }}>Assign Premium</Button>
+          {canManageInvitations && <Button type="button" variant="outline" onClick={() => { window.location.href = '/admin/invitations'; }}>Invitation Codes</Button>}
+          {canManageWithdrawals && <Button type="button" variant="outline" onClick={() => { window.location.href = '/admin/withdrawals'; }}>Review Withdrawals</Button>}
+          {canManageSupport && <Button type="button" variant="outline" onClick={() => { window.location.href = '/admin/customer-service'; }}>Customer Service</Button>}
+          <Button type="button" variant="outline" onClick={() => { window.location.reload(); }}>Refresh Data</Button>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 bg-white">
+        <CardHeader>
+          <CardTitle>Critical Alerts</CardTitle>
+          <CardDescription>Action required: {alertsSummary.actionRequired}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {alerts.length === 0 ? (
+            <div className="text-sm text-slate-500">No active alerts.</div>
+          ) : (
+            alerts.slice(0, 8).map((item) => (
+              <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{item.title}</div>
+                  <Badge variant={item.severity === 'critical' || item.severity === 'high' ? 'destructive' : 'outline'}>
+                    {item.severity}
+                  </Badge>
+                </div>
+                <div className="mt-1 text-sm text-slate-600">{item.message}</div>
+                <div className="mt-1 text-xs text-slate-500">{formatDate(item.createdAt)}</div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
         <Card className="border-slate-200 bg-white">
