@@ -45,7 +45,7 @@ const getAnonClient = () => {
 
 const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
 
-const DEFAULT_TENANT_ID = 'tank';
+const DEFAULT_TENANT_ID: TenantId = 'tank';
 type TenantId = 'tank' | 'steadfast';
 
 const normalizeTenantId = (value: unknown, fallback: TenantId = DEFAULT_TENANT_ID): TenantId => {
@@ -71,20 +71,38 @@ const resolveRequestHost = (c: any): string => {
   }
 };
 
-const resolveRequestTenantId = (c: any): TenantId => {
+const resolveRequestTenantId = (c: any): TenantId | null => {
   const rawHeaderTenant = String(c.req.header('x-tenant-id') || '').trim();
   if (rawHeaderTenant) {
-    return normalizeTenantId(rawHeaderTenant, DEFAULT_TENANT_ID);
+    const normalizedHeader = String(rawHeaderTenant).toLowerCase();
+    if (normalizedHeader === 'tank' || normalizedHeader === 'steadfast') {
+      return normalizeTenantId(rawHeaderTenant, DEFAULT_TENANT_ID);
+    }
+    return null;
   }
 
   const host = resolveRequestHost(c);
   if (!host) {
-    return DEFAULT_TENANT_ID;
+    return null;
   }
   if (host.includes('steadfast')) {
     return 'steadfast';
   }
-  return 'tank';
+  if (host.includes('tank')) {
+    return 'tank';
+  }
+  if (host.includes('localhost') || host.includes('127.0.0.1')) {
+    return DEFAULT_TENANT_ID;
+  }
+  return null;
+};
+
+const requireTenantId = (c: any): { ok: true; tenantId: TenantId } | { ok: false; response: any } => {
+  const tenantId = resolveRequestTenantId(c);
+  if (!tenantId) {
+    return { ok: false, response: c.json({ error: 'Tenant context is required' }, 400) };
+  }
+  return { ok: true, tenantId };
 };
 
 const getRecordTenantId = (record: any, fallback: TenantId): TenantId => {
@@ -964,6 +982,9 @@ const resolveSuperAdminContext = async (
   }
 
   const tenantId = resolveRequestTenantId(c);
+  if (!tenantId) {
+    return { ok: false, response: c.json({ error: 'Tenant context is required' }, 400) };
+  }
   const allowAllTenants = String(c.req.header('x-super-admin-all-tenants') || '').trim().toLowerCase() === 'true';
   return { ok: true, tenantId, allowAllTenants };
 };
@@ -997,6 +1018,9 @@ const requireAdminPermission = async (
   const token = authHeader.replace('Bearer ', '').trim();
   const expectedKey = getAdminApiKey();
   const requestTenantId = resolveRequestTenantId(c);
+  if (!requestTenantId) {
+    return { ok: false, response: c.json({ error: 'Tenant context is required' }, 400) };
+  }
 
   if (expectedKey && token === expectedKey) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL], tenantId: requestTenantId };
@@ -1036,6 +1060,9 @@ const requireSupportAccess = async (c: any) => {
   const token = authHeader.replace('Bearer ', '').trim();
   const expectedKey = getAdminApiKey();
   const requestTenantId = resolveRequestTenantId(c);
+  if (!requestTenantId) {
+    return { ok: false, response: c.json({ error: 'Tenant context is required' }, 400) };
+  }
 
   if (expectedKey && token === expectedKey) {
     return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[], tenantId: requestTenantId };
@@ -2631,6 +2658,10 @@ app.get("/metrics", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
@@ -2638,6 +2669,11 @@ app.get("/metrics", async (c) => {
     if (error) {
       console.error(`Authorization error while fetching metrics: ${error}`);
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     // Get metrics from KV store
@@ -3456,6 +3492,10 @@ app.get('/tasks/next-product', async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error || !userId) {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
@@ -3464,6 +3504,9 @@ app.get('/tasks/next-product', async (c) => {
     const userProfile = await kv.get(`user:${userId}`);
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
+    }
+    if (!isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     if (userProfile?.accountDisabled) {
@@ -4181,9 +4224,18 @@ app.get('/records', async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error || !userId) {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     // Get submitted/frozen records
@@ -4234,6 +4286,10 @@ app.get("/earnings-multilevel", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
@@ -4247,6 +4303,9 @@ app.get("/earnings-multilevel", async (c) => {
     const userProfile = await kv.get(`user:${userId}`);
     if (!userProfile) {
       return c.json({ error: "User profile not found" }, 404);
+    }
+    if (!isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     // Get profits record
@@ -4292,6 +4351,10 @@ app.get("/earnings", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
@@ -4302,6 +4365,9 @@ app.get("/earnings", async (c) => {
     }
 
     const profile = await kv.get(`user:${userId}`);
+    if (!profile || !isRecordVisibleForTenant(profile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
     const profits = await kv.get(`profits:${userId}`);
     const referrals = await kv.getByPrefix(`referral:${userId}:`);
 
@@ -4336,6 +4402,10 @@ app.get("/referrals", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
@@ -4343,6 +4413,11 @@ app.get("/referrals", async (c) => {
     if (error) {
       console.error(`Authorization error while fetching referrals: ${error}`);
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     const referrals = await kv.getByPrefix(`referral:${userId}:`);
@@ -4504,6 +4579,10 @@ app.get("/withdrawal-history", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
@@ -4511,6 +4590,11 @@ app.get("/withdrawal-history", async (c) => {
     if (error) {
       console.error(`Authorization error while fetching withdrawal history: ${error}`);
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
     // Get all withdrawals for this user
@@ -6297,8 +6381,17 @@ app.get("/support-tickets", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error) return c.json({ error }, 401);
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
 
     const userTicketIds = await kv.get(`tickets:user:${userId}`) || [];
     const tickets = [];
@@ -6335,8 +6428,17 @@ app.get("/support-tickets/:id", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error) return c.json({ error }, 401);
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
 
     const ticketId = c.req.param('id');
     const ticket = await kv.get(`ticket:${ticketId}`);
@@ -6612,8 +6714,17 @@ app.get("/chat/conversations", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error) return c.json({ error }, 401);
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
 
     const convIds = await kv.get(`chat:conversations:${userId}`) || [];
     const conversations = [];
@@ -6656,8 +6767,17 @@ app.get("/chat/messages", async (c) => {
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
+    const requestTenantId = resolveRequestTenantId(c);
+    if (!requestTenantId) {
+      return c.json({ error: 'Tenant context is required' }, 400);
+    }
     const { userId, error } = await verifyJWT(accessToken);
     if (error) return c.json({ error }, 401);
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile || !isRecordVisibleForTenant(userProfile, requestTenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
 
     const conversationId = c.req.query('conversationId');
     const messageIds = await kv.get(`chat:messages:${conversationId}`) || [];
