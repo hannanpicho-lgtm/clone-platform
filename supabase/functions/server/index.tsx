@@ -45,6 +45,63 @@ const getAnonClient = () => {
 
 const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
 
+const DEFAULT_TENANT_ID = 'tank';
+type TenantId = 'tank' | 'steadfast';
+
+const normalizeTenantId = (value: unknown, fallback: TenantId = DEFAULT_TENANT_ID): TenantId => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'steadfast') {
+    return 'steadfast';
+  }
+  if (normalized === 'tank') {
+    return 'tank';
+  }
+  return fallback;
+};
+
+const resolveRequestHost = (c: any): string => {
+  const explicitHost = String(c.req.header('x-forwarded-host') || c.req.header('host') || '').trim().toLowerCase();
+  if (explicitHost) {
+    return explicitHost;
+  }
+  try {
+    return new URL(String(c.req.url || '')).host.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const resolveRequestTenantId = (c: any): TenantId => {
+  const rawHeaderTenant = String(c.req.header('x-tenant-id') || '').trim();
+  if (rawHeaderTenant) {
+    return normalizeTenantId(rawHeaderTenant, DEFAULT_TENANT_ID);
+  }
+
+  const host = resolveRequestHost(c);
+  if (!host) {
+    return DEFAULT_TENANT_ID;
+  }
+  if (host.includes('steadfast')) {
+    return 'steadfast';
+  }
+  return 'tank';
+};
+
+const getRecordTenantId = (record: any, fallback: TenantId): TenantId => {
+  return normalizeTenantId(record?.tenantId, fallback);
+};
+
+const isRecordVisibleForTenant = (record: any, tenantId: TenantId): boolean => {
+  const explicitTenant = String(record?.tenantId || '').trim().toLowerCase();
+  if (explicitTenant === 'tank' || explicitTenant === 'steadfast') {
+    return explicitTenant === tenantId;
+  }
+
+  // Legacy records without tenantId remain visible to the default tenant only.
+  const allowLegacyFallback = String(Deno.env.get('ALLOW_LEGACY_TENANT_FALLBACK') ?? 'true').toLowerCase() !== 'false';
+  return allowLegacyFallback && tenantId === DEFAULT_TENANT_ID;
+};
+
 const getKvRowsByPrefix = async (prefix: string): Promise<Array<{ key: string; value: any }>> => {
   const supabase = getServiceClient();
   const { data, error } = await supabase
@@ -901,7 +958,7 @@ const requireAdminPermission = async (
   c: any,
   requiredPermission: AdminPermission,
 ): Promise<
-  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[] }
+  | { ok: true; isSuperAdmin: boolean; userId: string | null; permissions: AdminPermission[]; tenantId: TenantId }
   | { ok: false; response: any }
 > => {
   const authHeader = c.req.header('Authorization');
@@ -911,9 +968,10 @@ const requireAdminPermission = async (
 
   const token = authHeader.replace('Bearer ', '').trim();
   const expectedKey = getAdminApiKey();
+  const requestTenantId = resolveRequestTenantId(c);
 
   if (expectedKey && token === expectedKey) {
-    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] };
+    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL], tenantId: requestTenantId };
   }
 
   const { userId, error } = await verifyJWT(token);
@@ -933,7 +991,7 @@ const requireAdminPermission = async (
     return { ok: false, response: c.json({ error: `Forbidden - Missing permission: ${requiredPermission}` }, 403) };
   }
 
-  return { ok: true, isSuperAdmin: false, userId, permissions };
+  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: getRecordTenantId(adminAccount, requestTenantId) };
 };
 
 const requireSupportAccess = async (c: any) => {
@@ -944,9 +1002,10 @@ const requireSupportAccess = async (c: any) => {
 
   const token = authHeader.replace('Bearer ', '').trim();
   const expectedKey = getAdminApiKey();
+  const requestTenantId = resolveRequestTenantId(c);
 
   if (expectedKey && token === expectedKey) {
-    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[] };
+    return { ok: true, isSuperAdmin: true, userId: null, permissions: [ADMIN_PERMISSION_ALL] as AdminPermission[], tenantId: requestTenantId };
   }
 
   const { userId, error } = await verifyJWT(token);
@@ -960,7 +1019,7 @@ const requireSupportAccess = async (c: any) => {
   }
 
   const permissions = sanitizeAdminPermissions(adminAccount.permissions);
-  return { ok: true, isSuperAdmin: false, userId, permissions };
+  return { ok: true, isSuperAdmin: false, userId, permissions, tenantId: getRecordTenantId(adminAccount, requestTenantId) };
 
 };
 
@@ -1559,6 +1618,7 @@ app.post("/signup", async (c) => {
     }
 
     const userId = data.user.id;
+    const requestTenantId = resolveRequestTenantId(c);
     
     // Generate invitation code for this user
     const userInvitationCode = await generateInvitationCode();
@@ -1576,6 +1636,7 @@ app.post("/signup", async (c) => {
       contactEmail,
       name: displayName,
       username: normalizedUsername,
+      tenantId: requestTenantId,
       vipTier: 'Normal',
       accountDisabled: false,
       gender: gender || 'male',
@@ -2192,6 +2253,7 @@ app.post("/signin", async (c) => {
 app.post('/admin/signin', async (c) => {
   try {
     const { username, password } = await c.req.json();
+    const requestTenantId = resolveRequestTenantId(c);
 
     const normalizedUsername = normalizeUsername(String(username || ''));
     if (!normalizedUsername || !password) {
@@ -2247,6 +2309,12 @@ app.post('/admin/signin', async (c) => {
       return c.json({ error: 'Admin account is inactive or not found' }, 403);
     }
 
+    const adminTenantId = getRecordTenantId(adminAccount, requestTenantId);
+    if (adminTenantId !== requestTenantId) {
+      await supabase.auth.signOut();
+      return c.json({ error: 'Forbidden - Admin account belongs to a different platform tenant' }, 403);
+    }
+
     const persistedPermissions = sanitizeAdminPermissions(adminAccount.permissions);
     const effectivePermissions = Array.from(
       new Set<AdminPermission>([
@@ -2265,6 +2333,7 @@ app.post('/admin/signin', async (c) => {
     const adminLoginLocation = await resolveBestRequestLocation(c);
     const updatedAdminAccount = {
       ...adminAccount,
+      tenantId: adminTenantId,
       permissions: effectivePermissions,
       lastLoginAt: new Date().toISOString(),
       lastLoginIp: adminLoginLocation.ip,
@@ -2310,6 +2379,7 @@ app.get("/profile", async (c) => {
     
     // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
+    const requestTenantId = resolveRequestTenantId(c);
     
     if (error) {
       console.error(`Authorization error while fetching profile: ${error}`);
@@ -2334,6 +2404,7 @@ app.get("/profile", async (c) => {
         contactEmail: null,
         name: metadataName || metadataUsername || 'User',
         username: metadataUsername || (authEmail ? authEmail.split('@')[0] : ''),
+        tenantId: requestTenantId,
         vipTier: 'Normal',
         accountDisabled: false,
         balance: 0,
@@ -2371,9 +2442,17 @@ app.get("/profile", async (c) => {
       || String(profile?.lastLoginCountry || '').trim().toLowerCase() === 'unknown';
 
     let effectiveProfile = profile;
+    if (!String(effectiveProfile?.tenantId || '').trim()) {
+      effectiveProfile = {
+        ...effectiveProfile,
+        tenantId: requestTenantId,
+      };
+      await kv.set(`user:${userId}`, effectiveProfile);
+    }
+
     if (shouldBackfillLoginMetadata) {
       effectiveProfile = {
-        ...profile,
+        ...effectiveProfile,
         lastLoginAt: profile?.lastLoginAt || new Date().toISOString(),
         lastLoginIp: requestLocation.ip || profile?.lastLoginIp || 'unknown',
         lastLoginCountry: requestLocation.country || profile?.lastLoginCountry || 'Unknown',
@@ -2566,11 +2645,13 @@ app.get("/admin/users", async (c) => {
     }
 
     const scope = await getAdminScopeConfig(adminAccess);
+    const requestTenantId = adminAccess.tenantId;
 
     const todayDate = new Date().toISOString().slice(0, 10);
     const rawUsers = await kv.getByPrefix('user:');
     const users = (rawUsers ?? [])
       .filter((user: any) => !isDeletedRecord(user))
+      .filter((user: any) => isRecordVisibleForTenant(user, requestTenantId))
       .map((user: any) => {
       const taskState = buildTaskState(user);
       const isCurrentDate = taskState.currentSetDate === todayDate;
@@ -2597,6 +2678,7 @@ app.get("/admin/users", async (c) => {
       currentSetTasksCompleted: visibleCurrentSetTasksCompleted,
       currentSetDate: isCurrentDate ? taskState.currentSetDate : todayDate,
       parentUserId: user?.parentUserId ?? null,
+      tenantId: getRecordTenantId(user, requestTenantId),
       createdAt: user?.createdAt ?? new Date().toISOString(),
       };
     });
@@ -5125,6 +5207,7 @@ app.post('/admin/accounts', async (c) => {
     }
 
     const { username, name, password, permissions } = await c.req.json();
+    const requestTenantId = resolveRequestTenantId(c);
 
     const normalizedUsername = normalizeUsername(String(username || ''));
     const displayName = String(name || username || '').trim();
@@ -5166,6 +5249,7 @@ app.post('/admin/accounts', async (c) => {
       username: normalizedUsername,
       displayName,
       authEmail: adminEmail,
+      tenantId: requestTenantId,
       role: 'limited_admin',
       active: true,
       permissions: adminPermissions,
@@ -5212,8 +5296,12 @@ app.get('/admin/accounts', async (c) => {
 
     const rows = await kv.getByPrefix('admin:account:');
     const allUsers = await kv.getByPrefix('user:');
+    const requestTenantId = resolveRequestTenantId(c);
 
     const usersWithEarnings = await Promise.all((allUsers || []).map(async (user: any) => {
+      if (!isRecordVisibleForTenant(user, requestTenantId)) {
+        return null;
+      }
       const totalEarnings = await resolveUserTotalEarnings(user);
       return {
         ...user,
@@ -5221,13 +5309,15 @@ app.get('/admin/accounts', async (c) => {
         frozenNegativeAmount: resolveFrozenNegativeAmount(user),
       };
     }));
+    const tenantUsersWithEarnings = usersWithEarnings.filter((user: any) => Boolean(user));
 
     const admins = (rows || [])
       .filter((row: any) => !isDeletedRecord(row))
+      .filter((row: any) => isRecordVisibleForTenant(row, requestTenantId))
       .map((row: any) => {
       const scopedIds = collectAdminScopedUserIds(row?.userId, row, allUsers || []);
       const scope = scopedIds.size > 0 ? { mode: 'users' as const, userIds: scopedIds } : getAdminScopeFromAccount(row);
-      const scopedUsers = usersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
+      const scopedUsers = tenantUsersWithEarnings.filter((user: any) => isUserInAdminScope(scope, user));
       const usersCreated = scopedUsers.length;
       const totalEarningsFromUsers = roundCurrency(
         scopedUsers.reduce((sum: number, user: any) => sum + Number(user?.totalEarnings || 0), 0),
@@ -5248,6 +5338,7 @@ app.get('/admin/accounts', async (c) => {
         username: row?.username,
         displayName: row?.displayName,
         authEmail: row?.authEmail,
+        tenantId: getRecordTenantId(row, requestTenantId),
         active: row?.active !== false,
         status: revoked ? 'revoked' : (row?.active === false ? 'disabled' : 'active'),
         permissions: sanitizeAdminPermissions(row?.permissions),
