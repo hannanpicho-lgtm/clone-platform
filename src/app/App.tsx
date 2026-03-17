@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
-import { AdminLogin } from './components/AdminLogin';
-import { AdminDashboard } from './components/AdminDashboard';
+import { AdminApp } from './admin/AdminApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getSupabaseClient } from '/utils/supabase/client';
 
@@ -170,52 +169,10 @@ export default function App() {
     <ErrorBoundary>
       <div className="min-h-screen">
         {adminPortalOnly ? (
-          !adminGateUnlocked ? (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-              <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 shadow-2xl">
-                <h1 className="text-2xl font-bold text-white text-center mb-2">Admin Portal Access</h1>
-                <p className="text-sm text-purple-200 text-center mb-6">Enter portal access key to continue</p>
-                <form onSubmit={handleAdminGateUnlock} className="space-y-4">
-                  <input
-                    type="password"
-                    value={gateInput}
-                    onChange={(e) => setGateInput(e.target.value)}
-                    placeholder="Access key"
-                    className="w-full h-11 rounded-md border border-white/20 bg-white/5 px-3 text-white placeholder:text-purple-300/60 focus:outline-none focus:ring-2 focus:ring-purple-400"
-                  />
-                  {gateError && <p className="text-sm text-red-300">{gateError}</p>}
-                  <button
-                    type="submit"
-                    className="w-full h-11 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold hover:from-purple-700 hover:to-pink-700"
-                  >
-                    Continue
-                  </button>
-                </form>
-              </div>
-            </div>
-          ) : (
-          isAdminAuthenticated ? (
-            <AdminDashboard
-              onLogout={handleAdminLogout}
-              adminAccessToken={adminAccessToken}
-              adminIsSuperAdmin={isSuperAdmin}
-              adminPermissions={adminPermissions}
-            />
-          ) : (
-            <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
-          ))
+          <AdminApp />
         ) : (
           isAdminRoute ? (
-            isAdminAuthenticated ? (
-              <AdminDashboard
-                onLogout={handleAdminLogout}
-                adminAccessToken={adminAccessToken}
-                adminIsSuperAdmin={isSuperAdmin}
-                adminPermissions={adminPermissions}
-              />
-            ) : (
-              <AdminLogin onLoginSuccess={handleAdminLoginSuccess} />
-            )
+            <AdminApp />
           ) : (
             accessToken ? (
               <Dashboard accessToken={accessToken} onLogout={handleLogout} />
