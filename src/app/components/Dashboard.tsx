@@ -302,6 +302,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
   const [uiNotice, setUiNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
+  // Forced password change modal state
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [passwordChangeForm, setPasswordChangeForm] = useState({ newPassword: '', confirmPassword: '' });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
@@ -599,6 +605,61 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     }, 100);
   };
 
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!passwordChangeForm.newPassword.trim()) {
+      setPasswordChangeError('Password is required');
+      return;
+    }
+
+    if (passwordChangeForm.newPassword.length < 6) {
+      setPasswordChangeError('Password must be at least 6 characters');
+      return;
+    }
+
+    if (passwordChangeForm.newPassword !== passwordChangeForm.confirmPassword) {
+      setPasswordChangeError('Passwords do not match');
+      return;
+    }
+
+    try {
+      setPasswordChangeLoading(true);
+      setPasswordChangeError('');
+
+      const { projectId } = await import('~/utils/supabase/info');
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/change-password-on-login`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ newPassword: passwordChangeForm.newPassword }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to change password');
+      }
+
+      // Password changed successfully
+      setShowPasswordChangeModal(false);
+      setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+      setUiNotice({ type: 'success', text: '✅ Password changed successfully! You can now access your account.' });
+      
+      // Reload profile to update must_change_password flag
+      setTimeout(() => {
+        setUiNotice(null);
+      }, 3000);
+
+    } catch (error: any) {
+      setPasswordChangeError(String(error?.message || 'Failed to change password'));
+    } finally {
+      setPasswordChangeLoading(false);
+    }
+  };
+
   useEffect(() => {
     setIsLoading(true);
 
@@ -651,6 +712,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
           setFreezeAmount(Number(loadedProfile?.freezeAmount ?? 0));
           setActivePremiumAssignment(loadedProfile?.premiumAssignment ?? null);
+          
+          // Check if user must change password (e.g., after credential reset by admin)
+          if (Boolean(loadedProfile?.must_change_password ?? false)) {
+            setShowPasswordChangeModal(true);
+            setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+            setPasswordChangeError('');
+          }
+          
           setError('');
         } catch (err: any) {
           const message = String(err?.message || 'Please try again in a moment.');
@@ -2447,6 +2516,70 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 />
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forced Password Change Modal */}
+      {showPasswordChangeModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4">
+              <h2 className="text-xl font-bold text-white">Change Your Password</h2>
+              <p className="text-sm text-amber-100 mt-1">Your account requires a password change for security reasons</p>
+            </div>
+
+            {/* Content */}
+            <form onSubmit={handlePasswordChange} className="px-6 py-6 space-y-4">
+              {passwordChangeError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 p-3">
+                  <p className="text-sm text-red-700 font-medium">{passwordChangeError}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordChangeForm.newPassword}
+                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                  placeholder="Enter new password (min. 6 characters)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
+                  disabled={passwordChangeLoading}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordChangeForm.confirmPassword}
+                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Confirm new password"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
+                  disabled={passwordChangeLoading}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="submit"
+                  disabled={passwordChangeLoading || !passwordChangeForm.newPassword}
+                  className="flex-1 px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {passwordChangeLoading ? 'Changing...' : 'Change Password'}
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-500 text-center">
+                ⚠️ You must change your password before access is granted to your account
+              </p>
+            </form>
           </div>
         </div>
       )}

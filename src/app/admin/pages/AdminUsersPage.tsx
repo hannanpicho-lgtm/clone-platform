@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ShieldAlert } from 'lucide-react';
+import { AlertCircle, ShieldAlert, Copy, Key } from 'lucide-react';
 import {
   adjustUserBalance,
   assignUserPremium,
   deleteAdminUser,
   fetchAdminUsers,
   resetUserTaskSet,
+  resetUserCredentials,
   unfreezeUser,
   updateUserAccountStatus,
   updateUserTaskLimits,
   updateUserVipTier,
+  type CredentialResetResult,
 } from '../api';
 import { hasAdminPermission } from '../permissions';
 import type { AdminMetrics, AdminSession, AdminUserRecord } from '../types';
@@ -82,6 +84,9 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [vipTierDraft, setVipTierDraft] = useState('Normal');
+  const [credentialResetModal, setCredentialResetModal] = useState<{ open: boolean; credentials: CredentialResetResult | null; userName: string }>({ open: false, credentials: null, userName: '' });
+  const [resetCredentialsPending, setResetCredentialsPending] = useState(false);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
   const detailsPanelRef = useRef<HTMLDivElement>(null);
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
@@ -98,6 +103,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const canManageTaskLimits = hasAdminPermission(session, 'users.manage_task_limits') || hasAdminPermission(session, 'users.manage');
   const canUnfreezeUsers = hasAdminPermission(session, 'users.unfreeze') || hasAdminPermission(session, 'users.manage');
   const canUpdateVip = hasAdminPermission(session, 'users.update_vip') || hasAdminPermission(session, 'users.manage');
+  const canManageCredentials = hasAdminPermission(session, 'users.manage_credentials');
 
   const load = async () => {
     setLoading(true);
@@ -329,6 +335,34 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     }
   };
 
+  const handleResetCredentials = async (user: AdminUserRecord) => {
+    if (!window.confirm(`Reset credentials for ${user.name}? The user will be required to set a new password on next login.`)) return;
+    
+    try {
+      setResetCredentialsPending(true);
+      setError('');
+      setMessage('');
+      const credentials = await resetUserCredentials(session, user.id, { resetUsername: false });
+      setCredentialResetModal({
+        open: true,
+        credentials,
+        userName: user.name,
+      });
+      setMessage('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset credentials');
+    } finally {
+      setResetCredentialsPending(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCredentialsCopied(true);
+    setTimeout(() => setCredentialsCopied(false), 2000);
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -473,6 +507,19 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             Adjust
                           </Button>
                         )}
+                        {canManageCredentials && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={resetCredentialsPending || user.accountDisabled}
+                            onClick={() => handleResetCredentials(user)}
+                            className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200"
+                          >
+                            <Key className="w-3.5 h-3.5 mr-1" />
+                            Reset Creds
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           size="sm"
@@ -563,6 +610,92 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
           )}
         </CardContent>
       </Card>
+
+      {/* Credential Reset Modal */}
+      {credentialResetModal.open && credentialResetModal.credentials && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="w-full max-w-md bg-white">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-amber-700">
+                <Key className="w-5 h-5" />
+                Credentials Reset for {credentialResetModal.userName}
+              </CardTitle>
+              <CardDescription>Share these credentials securely. The password is only displayed once.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Username</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="flex-1 bg-white border border-amber-200 rounded px-3 py-2 text-sm font-mono">
+                      {credentialResetModal.credentials.username}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => copyToClipboard(credentialResetModal.credentials!.username)}
+                      className="px-2"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Password</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="flex-1 bg-white border border-amber-200 rounded px-3 py-2 text-sm font-mono">
+                      {credentialResetModal.credentials.password}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => copyToClipboard(credentialResetModal.credentials!.password)}
+                      className="px-2"
+                    >
+                      <Copy className={`w-4 h-4 ${credentialsCopied ? 'text-green-600' : ''}`} />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+                <p className="font-semibold mb-1">⚠️ Important Security Notes:</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>Password expires in {credentialResetModal.credentials.expiresInMinutes} minutes</li>
+                  <li>User MUST change password on next login</li>
+                  <li>Store credentials securely before closing</li>
+                  <li>Delete this modal after sharing credentials</li>
+                  <li>Audit logs will record this reset action</li>
+                </ul>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="default"
+                  onClick={() => {
+                    const text = `Username: ${credentialResetModal.credentials!.username}\nPassword: ${credentialResetModal.credentials!.password}`;
+                    copyToClipboard(text);
+                  }}
+                  className="flex-1"
+                >
+                  Copy Both
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setCredentialResetModal({ open: false, credentials: null, userName: '' })}
+                  className="flex-1"
+                >
+                  Close
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

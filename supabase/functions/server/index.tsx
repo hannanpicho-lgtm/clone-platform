@@ -916,6 +916,8 @@ const ADMIN_ALLOWED_PERMISSIONS = [
   'users.manage_task_limits',
   'users.unfreeze',
   'users.update_vip',
+  'users.manage_credentials',
+  'users.manage_status',
   'support.manage',
   'withdrawals.manage',
   'invitations.manage',
@@ -7137,6 +7139,298 @@ app.get("/faq/search", async (c) => {
   } catch (error) {
     console.error(`Error searching FAQs: ${error}`);
     return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// Credential Reset System
+
+// Helper: Generate secure random password
+const generateSecurePassword = (length: number = 12): string => {
+  const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+  const numbers = '0123456789';
+  const symbols = '!@#$%^&*-_+=';
+  const allChars = uppercase + lowercase + numbers + symbols;
+
+  let password = '';
+  password += uppercase[Math.floor(Math.random() * uppercase.length)];
+  password += lowercase[Math.floor(Math.random() * lowercase.length)];
+  password += numbers[Math.floor(Math.random() * numbers.length)];
+  password += symbols[Math.floor(Math.random() * symbols.length)];
+
+  for (let i = password.length; i < length; i++) {
+    password += allChars[Math.floor(Math.random() * allChars.length)];
+  }
+
+  return password.split('').sort(() => 0.5 - Math.random()).join('');
+};
+
+// Helper: Validate admin credentials-edit permission
+const requireCredentialManagementPermission = async (c: any) => {
+  const adminAccess = await requireAdminPermission(c, 'users.manage_credentials');
+  return adminAccess;
+};
+
+// Admin: Reset user credentials (generate new username/password)
+app.post('/admin/users/:userId/reset-credentials', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.manage_credentials');
+    if (!adminAccess.ok) {
+      // Fall back to checking for super-admin status
+      const superContext = await resolveSuperAdminContext(c);
+      if (!superContext.ok) {
+        return c.json({ error: 'Forbidden - Requires users.manage_credentials permission or super-admin access' }, 403);
+      }
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess.ok ? adminAccess : { userId: 'super_admin', isSuperAdmin: true, tenantId: DEFAULT_TENANT_ID }, 'users.reset_credentials', 10, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for credential resets. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const userId = c.req.param('userId');
+    const body = await c.req.json().catch(() => ({}));
+    const resetUsername = Boolean(body?.resetUsername);
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Verify admin scope
+    const scope = await getAdminScopeConfig(adminAccess.ok ? adminAccess : { isSuperAdmin: true });
+    if (!isUserInTenantAdminScope(adminAccess.ok ? adminAccess : { isSuperAdmin: true }, scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    // Check if user is already marked as must_change_password
+    const alreadyRequiresChange = Boolean(userProfile.must_change_password);
+
+    // Generate new password
+    const newPassword = generateSecurePassword(14);
+
+    // Update password via Supabase Auth
+    const supabase = getServiceClient();
+    const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
+
+    if (authError) {
+      console.error(`Error resetting user password: ${authError?.message}`);
+      return c.json({ error: 'Failed to reset password. Please try again.' }, 400);
+    }
+
+    // Generate new username if requested
+    let newUsername: string | null = null;
+    let usernameUpdateError = null;
+    if (resetUsername) {
+      newUsername = `user_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      // Note: Username would typically be stored in user profile, not in Auth
+    }
+
+    // Update user profile: set must_change_password flag
+    const timestamp = new Date().toISOString();
+    const updatedProfile = {
+      ...userProfile,
+      must_change_password: true,
+      password_reset_at: timestamp,
+      password_reset_by: adminAccess.ok ? adminAccess.userId : 'super_admin',
+      ...(newUsername ? { username: newUsername } : {}),
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    // Log the reset action for audit purposes
+    const auditLog = {
+      type: 'user_credential_reset',
+      userId,
+      userName: userProfile.username || userProfile.email || userId,
+      resetBy: adminAccess.ok ? adminAccess.userId : 'super_admin',
+      adminName: adminAccess.ok ? adminAccess.displayName : 'Super Admin',
+      resetAt: timestamp,
+      resetIp: getRequesterIp(c),
+      tenantId: getRecordTenantId(userProfile, resolveRequestTenantId(c)),
+      resetUsername: resetUsername,
+      newUsernameGenerated: newUsername ? true : false,
+      wasPreviouslyRequired: alreadyRequiresChange,
+    };
+
+    try {
+      const logKey = `audit:credential-reset:${userId}:${Date.now()}`;
+      await kv.set(logKey, auditLog);
+
+      // Also maintain a list of resets per user for quick access
+      const resetLog = await kv.get(`audit:credential-resets:${userId}`) || [];
+      resetLog.push({
+        resetAt: timestamp,
+        resetBy: adminAccess.ok ? adminAccess.userId : 'super_admin',
+        newUsernameGenerated: newUsername ? true : false,
+      });
+      await kv.set(`audit:credential-resets:${userId}`, resetLog.slice(-100)); // Keep last 100 resets
+    } catch (err) {
+      console.warn(`Failed to log credential reset audit: ${err}`);
+    }
+
+    // Return the new credentials ONCE - not stored anywhere else
+    return c.json({
+      success: true,
+      message: 'User credentials reset successfully. Share these new credentials securely with the user.',
+      credentials: {
+        username: newUsername || userProfile.username,
+        password: newPassword,
+        expiresInMinutes: 30, // Admin should communicate new credentials within 30 minutes
+        requiresPasswordChange: true,
+        note: 'User must change password on next login',
+      },
+      user: {
+        id: userId,
+        name: userProfile.name,
+        email: userProfile.email,
+      },
+      audit: {
+        resetAt: timestamp,
+        resetBy: adminAccess.ok ? adminAccess.userId : 'super_admin',
+      },
+    });
+  } catch (error) {
+    console.error(`Error resetting user credentials: ${error}`);
+    return c.json({ error: 'Internal server error while resetting user credentials' }, 500);
+  }
+});
+
+// User: Change password after forced reset (must_change_password flow)
+app.post('/change-password-on-login', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error: verifyError } = await verifyJWT(accessToken);
+    if (verifyError) {
+      return c.json({ error: verifyError }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const newPassword = String(body?.newPassword || '').trim();
+
+    if (!newPassword || newPassword.length < 6) {
+      return c.json({ error: 'newPassword must be at least 6 characters' }, 400);
+    }
+
+    if (newPassword.length > 128) {
+      return c.json({ error: 'newPassword must be 128 characters or less' }, 400);
+    }
+
+    // Get user profile
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    // Verify user has must_change_password flag set
+    if (!userProfile.must_change_password) {
+      return c.json({ error: 'Password change not required for this account' }, 400);
+    }
+
+    // Update password in Supabase Auth
+    const supabase = getServiceClient();
+    const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
+
+    if (authError) {
+      console.error(`Error changing user password: ${authError?.message}`);
+      return c.json({ error: 'Failed to update password. Please try again.' }, 400);
+    }
+
+    // Update user profile: clear must_change_password flag
+    const timestamp = new Date().toISOString();
+    const updatedProfile = {
+      ...userProfile,
+      must_change_password: false,
+      password_changed_at: timestamp,
+    };
+
+    await kv.set(profileKey, updatedProfile);
+
+    // Log the password change
+    const auditLog = {
+      type: 'user_password_changed_after_reset',
+      userId,
+      changedAt: timestamp,
+      ipAddress: getRequesterIp(c),
+      userAgent: c.req.header('User-Agent'),
+    };
+
+    try {
+      const logKey = `audit:password-changed:${userId}:${Date.now()}`;
+      await kv.set(logKey, auditLog);
+    } catch (err) {
+      console.warn(`Failed to log password change: ${err}`);
+    }
+
+    return c.json({
+      success: true,
+      message: 'Password changed successfully',
+      user: {
+        id: userId,
+        name: userProfile.name,
+        email: userProfile.email,
+      },
+    });
+  } catch (error) {
+    console.error(`Error changing password on login: ${error}`);
+    return c.json({ error: 'Internal server error while changing password' }, 500);
+  }
+});
+
+// Admin: Get credential reset audit logs for a user
+app.get('/admin/users/:userId/credential-reset-logs', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.view');
+    if (!adminAccess.ok) {
+      return c.json({ error: 'Forbidden - Requires users.view permission' }, 403);
+    }
+
+    const userId = c.req.param('userId');
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    // Verify user exists and is in admin scope
+    const profileKey = `user:${userId}`;
+    const userProfile = await kv.get(profileKey);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    // Get credential reset logs
+    const resetLogs = await kv.get(`audit:credential-resets:${userId}`) || [];
+
+    return c.json({
+      success: true,
+      userId,
+      userName: userProfile.username || userProfile.email,
+      resetCount: resetLogs.length,
+      lastReset: resetLogs.length > 0 ? resetLogs[resetLogs.length - 1] : null,
+      allResets: resetLogs,
+    });
+  } catch (error) {
+    console.error(`Error fetching credential reset logs: ${error}`);
+    return c.json({ error: 'Internal server error while fetching logs' }, 500);
   }
 });
 

@@ -327,6 +327,56 @@ export async function updateUserTaskLimits(
   }
 }
 
+export interface CredentialResetResult {
+  username: string;
+  password: string;
+  expiresInMinutes: number;
+  requiresPasswordChange: boolean;
+  note: string;
+}
+
+export async function resetUserCredentials(
+  session: AdminSession,
+  userId: string,
+  options?: { resetUsername?: boolean }
+): Promise<CredentialResetResult> {
+  const response = await adminFetch(session, `/admin/users/${userId}/reset-credentials`, {
+    method: 'POST',
+    body: JSON.stringify({ resetUsername: options?.resetUsername || false }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to reset user credentials');
+  }
+  const result = await response.json().catch(() => ({}));
+  return result?.credentials || {
+    username: '',
+    password: '',
+    expiresInMinutes: 30,
+    requiresPasswordChange: true,
+    note: 'User must change password on next login',
+  };
+}
+
+export async function changePasswordOnLogin(session: AdminSession, newPassword: string): Promise<void> {
+  const response = await adminFetch(session, '/change-password-on-login', {
+    method: 'POST',
+    body: JSON.stringify({ newPassword }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to change password');
+  }
+}
+
+export async function fetchCredentialResetLogs(session: AdminSession, userId: string): Promise<any> {
+  const response = await adminFetch(session, `/admin/users/${userId}/credential-reset-logs`);
+  if (!response || !response.ok) {
+    throw new Error('Failed to fetch credential reset logs');
+  }
+  return response.json().catch(() => ({}));
+}
+
 export async function fetchAdminWithdrawals(session: AdminSession): Promise<AdminWithdrawalRequest[]> {
   const response = await adminFetch(session, '/admin/withdrawals');
   if (!response || !response.ok) {
