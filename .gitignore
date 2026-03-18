@@ -2,3 +2,6 @@ node_modules
 dist
 _restore/
 *.code-workspace
+
+# Local-only commit snapshots (never track)
+commit_snapshots/
