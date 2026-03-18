@@ -1,0 +1,26 @@
+﻿[
+    {
+        "case":  "tank+tank+no-header",
+        "status":  403
+    },
+    {
+        "case":  "tank+tank+tank-header",
+        "status":  200
+    },
+    {
+        "case":  "tank+tank+steadfast-header",
+        "status":  403
+    },
+    {
+        "case":  "steadfast+steadfast+no-header",
+        "status":  403
+    },
+    {
+        "case":  "steadfast+steadfast+steadfast-header",
+        "status":  200
+    },
+    {
+        "case":  "steadfast+steadfast+tank-header",
+        "status":  403
+    }
+]
