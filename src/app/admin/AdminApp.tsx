@@ -3,7 +3,8 @@ import { ShieldAlert } from 'lucide-react';
 import { AdminLogin } from '../components/AdminLogin';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
-import { fetchAdminSupportTickets } from './api';
+import { fetchAdminAlerts } from './api';
+import type { AdminAlertItem } from './types';
 import { AdminLayout } from './layout/AdminLayout';
 import { evaluateAdminRouteAccess, resolveAdminRoute } from './middleware';
 import { hasAdminPermission } from './permissions';
@@ -33,6 +34,14 @@ export function AdminApp() {
   const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
   const [session, setSession] = useState<AdminSession | null>(null);
   const [unreadSupportCount, setUnreadSupportCount] = useState(0);
+  const [notifications, setNotifications] = useState<AdminAlertItem[]>([]);
+  const [readIds, setReadIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(window.sessionStorage.getItem('admin_notif_read') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const currentPath = useMemo(() => getCurrentPath(), []);
 
   useEffect(() => {
@@ -53,35 +62,48 @@ export function AdminApp() {
   }, [access, currentPath]);
 
   useEffect(() => {
-    if (!session || !hasAdminPermission(session, 'support.manage')) {
+    if (!session) {
+      setNotifications([]);
       setUnreadSupportCount(0);
       return;
     }
 
     let alive = true;
-    const syncUnreadCount = async () => {
+    const syncAlerts = async () => {
       try {
-        const tickets = await fetchAdminSupportTickets(session);
+        const { alerts, summary } = await fetchAdminAlerts(session);
         if (!alive) return;
-        const unreadTotal = tickets.reduce((sum, ticket) => {
-          const unread = Number(ticket.unreadCount || 0);
-          return sum + (unread > 0 ? unread : 0);
-        }, 0);
-        setUnreadSupportCount(unreadTotal);
+        setNotifications(alerts);
+        setUnreadSupportCount(summary.openSupportTickets);
       } catch {
-        if (alive) {
-          setUnreadSupportCount(0);
-        }
+        // silent — keep previous state on transient errors
       }
     };
 
-    syncUnreadCount();
-    const intervalId = window.setInterval(syncUnreadCount, 8000);
+    syncAlerts();
+    const intervalId = window.setInterval(syncAlerts, 10_000);
     return () => {
       alive = false;
       window.clearInterval(intervalId);
     };
   }, [session]);
+
+  const handleMarkRead = (id: string) => {
+    setReadIds((prev) => {
+      if (prev.includes(id)) return prev;
+      const next = [...prev, id];
+      try { window.sessionStorage.setItem('admin_notif_read', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  };
+
+  const handleMarkAllRead = () => {
+    setReadIds((prev) => {
+      const next = [...new Set([...prev, ...notifications.map((n) => n.id)])];
+      try { window.sessionStorage.setItem('admin_notif_read', JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  };
 
   const handleAdminLoginSuccess = (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => {
     const nextSession: AdminSession = {
@@ -201,7 +223,7 @@ export function AdminApp() {
   }
 
   return (
-    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout} unreadSupportCount={unreadSupportCount}>
+    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout} unreadSupportCount={unreadSupportCount} notifications={notifications} readIds={readIds} onMarkRead={handleMarkRead} onMarkAllRead={handleMarkAllRead}>
       {page}
     </AdminLayout>
   );
