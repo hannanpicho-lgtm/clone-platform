@@ -290,7 +290,7 @@ export async function adjustUserBalance(
 
 export async function assignUserPremium(
   session: AdminSession,
-  payload: { userId: string; amount: number; position?: number },
+  payload: { userId: string; amount: number; targetDeficit?: number; position?: number },
 ): Promise<void> {
   const response = await adminFetch(session, '/admin/users/assign-premium', {
     method: 'POST',

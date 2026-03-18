@@ -930,17 +930,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     if (!actionTargetUser?.id) return;
 
     if (!premiumAmountInput.trim()) {
-      alert('❌ Premium amount is required');
+      alert('❌ Target deficit is required');
       return;
     }
 
     const payload: any = { userId: actionTargetUser.id };
     const parsedAmount = Number(premiumAmountInput);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      alert('❌ Invalid premium amount');
+      alert('❌ Invalid target deficit');
       return;
     }
     payload.amount = parsedAmount;
+    payload.targetDeficit = parsedAmount;
 
     if (premiumPositionInput.trim()) {
       const parsedPosition = Number(premiumPositionInput);
@@ -974,9 +975,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       await loadAdminData();
       setShowAssignPremiumModal(false);
       setActionTargetUser(null);
-      alert('✅ Premium assigned successfully');
+      alert('✅ Premium deficit assignment saved successfully');
     } catch {
-      alert('❌ Failed to assign premium');
+      alert('❌ Failed to assign premium deficit');
     } finally {
       setSubmittingAction(false);
     }
@@ -3431,14 +3432,15 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             </div>
             <div className="p-6 space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Premium Amount</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Target Deficit</label>
                 <Input
                   type="number"
                   step="0.01"
                   value={premiumAmountInput}
                   onChange={(e) => setPremiumAmountInput(e.target.value)}
-                  placeholder="Required"
+                  placeholder="Example: 100"
                 />
+                <p className="text-xs text-gray-500 mt-1">Encounter amount is calculated from the user's live balance plus this deficit.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Encounter Position (optional)</label>

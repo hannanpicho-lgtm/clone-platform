@@ -793,7 +793,8 @@ const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) =>
       : null;
     const fallbackPremiumProduct = getRandomTaskProduct(catalog, { premiumOnly: true }) || getRandomTaskProduct(catalog) || null;
     const premiumProduct = assignedCatalogProduct || fallbackPremiumProduct;
-    const premiumAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
+    const premiumSnapshot = resolvePremiumAssignmentSnapshot(assignment, Number(userProfile?.balance ?? 0));
+    const premiumAmount = premiumSnapshot.amount;
     const resolvedAmount = premiumAmount > 0
       ? premiumAmount
       : roundCurrency((amountRange.min + amountRange.max) / 2);
@@ -869,6 +870,52 @@ const buildPremiumBundleDetails = (enteredPremiumAmount: number) => {
     bundleTotal: normalizedBundleTotal,
     individualProductCount,
     bundleItems,
+  };
+};
+
+const resolvePremiumAssignmentSnapshot = (assignment: any, currentBalanceInput: number) => {
+  const currentBalance = roundCurrency(Number(currentBalanceInput ?? 0));
+  const configuredTargetDeficit = Number(assignment?.targetDeficit ?? NaN);
+  const hasTargetDeficit = Number.isFinite(configuredTargetDeficit) && configuredTargetDeficit > 0;
+  const targetDeficit = hasTargetDeficit ? roundCurrency(configuredTargetDeficit) : null;
+
+  if (assignment?.encounteredAt) {
+    const encounteredAmount = roundCurrency(Number(assignment?.amount ?? assignment?.projectedEncounterAmount ?? assignment?.enteredAmount ?? 0));
+    const storedBalanceAfterAssignment = Number(assignment?.balanceAfterAssignment ?? NaN);
+    const balanceAfterEncounter = Number.isFinite(storedBalanceAfterAssignment)
+      ? roundCurrency(storedBalanceAfterAssignment)
+      : roundCurrency(currentBalance - encounteredAmount);
+    const storedTopUpRequired = Number(assignment?.topUpRequired ?? NaN);
+    const topUpRequired = Number.isFinite(storedTopUpRequired)
+      ? roundCurrency(storedTopUpRequired)
+      : roundCurrency(Math.max(0, 0 - balanceAfterEncounter));
+
+    return {
+      amount: encounteredAmount,
+      targetDeficit,
+      balanceAfterEncounter,
+      topUpRequired,
+    };
+  }
+
+  if (targetDeficit !== null) {
+    const encounterAmount = roundCurrency(Math.max(0, currentBalance + targetDeficit));
+    const balanceAfterEncounter = roundCurrency(currentBalance - encounterAmount);
+    return {
+      amount: encounterAmount,
+      targetDeficit,
+      balanceAfterEncounter,
+      topUpRequired: roundCurrency(Math.max(0, 0 - balanceAfterEncounter)),
+    };
+  }
+
+  const configuredAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
+  const balanceAfterEncounter = roundCurrency(currentBalance - configuredAmount);
+  return {
+    amount: configuredAmount,
+    targetDeficit: null,
+    balanceAfterEncounter,
+    topUpRequired: roundCurrency(Math.max(0, 0 - balanceAfterEncounter)),
   };
 };
 
@@ -3022,16 +3069,17 @@ app.post("/admin/premium", async (c) => {
       return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
     }
 
-    const { userId, amount, position, productId } = await c.req.json();
-    if (!userId || amount === undefined || position === undefined) {
-      return c.json({ error: 'userId, amount, and position are required' }, 400);
+    const { userId, amount, targetDeficit, position, productId } = await c.req.json();
+    const requestedTargetDeficit = targetDeficit ?? amount;
+    if (!userId || requestedTargetDeficit === undefined || position === undefined) {
+      return c.json({ error: 'userId, targetDeficit, and position are required' }, 400);
     }
 
-    const premiumAmount = Number(amount);
+    const premiumAmount = Number(requestedTargetDeficit);
     const requestedPremiumPosition = Number(position);
 
     if (!Number.isFinite(premiumAmount) || premiumAmount <= 0) {
-      return c.json({ error: 'amount must be a positive number' }, 400);
+      return c.json({ error: 'targetDeficit must be a positive number' }, 400);
     }
 
     if (!Number.isInteger(requestedPremiumPosition) || requestedPremiumPosition <= 0) {
@@ -3072,13 +3120,14 @@ app.post("/admin/premium", async (c) => {
       return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
     }
 
-    const currentBalance = Number(user?.balance ?? 0);
-    const bundleDetails = buildPremiumBundleDetails(premiumAmount);
-    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
+    const currentBalance = roundCurrency(Number(user?.balance ?? 0));
+    const premiumSnapshot = resolvePremiumAssignmentSnapshot({ targetDeficit: premiumAmount }, currentBalance);
+    const bundleDetails = buildPremiumBundleDetails(premiumSnapshot.amount);
+    const bundleTotal = roundCurrency(Number(bundleDetails.bundleTotal || premiumSnapshot.amount || 0));
     const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
     const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
     const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const projectedTopUpRequired = roundCurrency(Math.max(0, 0 - balanceAfterAssignment));
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     const updatedUser = {
@@ -3087,6 +3136,8 @@ app.post("/admin/premium", async (c) => {
         orderId: premiumOrderId,
         amount: bundleTotal,
         enteredAmount: premiumAmount,
+        targetDeficit: premiumAmount,
+        assignmentMode: 'target_deficit',
         position: effectivePremiumPosition,
         productId: assignedProduct?.id || null,
         productName: assignedProduct?.name || null,
@@ -3099,6 +3150,7 @@ app.post("/admin/premium", async (c) => {
         previousBalance: null,
         balanceAfterAssignment: null,
         topUpRequired: null,
+        projectedEncounterAmount: bundleTotal,
         projectedBalanceAfterEncounter: balanceAfterAssignment,
         projectedTopUpRequired,
         encounteredAt: null,
@@ -3122,6 +3174,7 @@ app.post("/admin/premium", async (c) => {
         willFreezeOnEncounter: projectedTopUpRequired > 0,
         orderId: premiumOrderId,
         bundleTotal,
+        targetDeficit: premiumAmount,
         topUpRequired: projectedTopUpRequired,
         requestedPosition: requestedPremiumPosition,
         effectivePosition: effectivePremiumPosition,
@@ -3191,11 +3244,19 @@ app.get("/admin/premium/list", async (c) => {
 
     for (const user of allUsers) {
       if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
+        const snapshot = resolvePremiumAssignmentSnapshot(user.premiumAssignment, Number(user?.balance ?? 0));
         premiumAssignments.push({
           userId: user.id,
           userEmail: user.email,
           userName: user.name,
-          assignment: user.premiumAssignment,
+          assignment: {
+            ...user.premiumAssignment,
+            amount: snapshot.amount,
+            targetDeficit: snapshot.targetDeficit,
+            projectedEncounterAmount: snapshot.amount,
+            projectedBalanceAfterEncounter: snapshot.balanceAfterEncounter,
+            projectedTopUpRequired: snapshot.topUpRequired,
+          },
           currentBalance: user.balance,
           accountFrozen: user.accountFrozen,
           freezeAmount: user.freezeAmount,
@@ -3281,11 +3342,13 @@ app.get("/admin/premium/analytics", async (c) => {
 
     for (const user of allUsers) {
       if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
+        const snapshot = resolvePremiumAssignmentSnapshot(user.premiumAssignment, Number(user?.balance ?? 0));
         totalAssignments++;
-        totalPremiumValue += user.premiumAssignment.amount;
+        totalPremiumValue += snapshot.amount;
         assignments.push({
           userId: user.id,
-          amount: user.premiumAssignment.amount,
+          amount: snapshot.amount,
+          targetDeficit: snapshot.targetDeficit,
           position: user.premiumAssignment.position,
           assignedAt: user.premiumAssignment.assignedAt,
           isFrozen: user.accountFrozen,
@@ -3731,18 +3794,30 @@ app.post("/submit-product", async (c) => {
     );
 
     if (shouldTriggerPremiumEncounter) {
-      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const premiumSnapshot = resolvePremiumAssignmentSnapshot(activePremiumAssignment, currentBalance);
+      const bundleTotal = premiumSnapshot.amount;
+      const balanceAfterEncounter = premiumSnapshot.balanceAfterEncounter;
+      const topUpRequired = premiumSnapshot.topUpRequired;
       const encounteredAt = new Date().toISOString();
+      const bundleDetails = buildPremiumBundleDetails(bundleTotal);
+      const potentialPremiumProfit = roundCurrency(
+        bundleTotal * Number(activePremiumAssignment?.vipRate ?? getVipPremiumProfitRate(String(userProfile?.vipTier || 'Normal')))
+      );
 
       const updatedAssignment = {
         ...activePremiumAssignment,
         amount: bundleTotal,
+        targetDeficit: premiumSnapshot.targetDeficit,
+        potentialProfit: potentialPremiumProfit,
+        bundleProductCount: bundleDetails.individualProductCount,
+        bundleItems: bundleDetails.bundleItems,
         previousBalance: currentBalance,
         balanceAfterAssignment: balanceAfterEncounter,
         topUpRequired,
+        projectedEncounterAmount: bundleTotal,
+        projectedBalanceAfterEncounter: balanceAfterEncounter,
+        projectedTopUpRequired: topUpRequired,
         encounteredAt,
         encounteredTaskNumber: nextTaskNumber,
       };
@@ -4019,18 +4094,30 @@ app.post('/tasks/complete-product', async (c) => {
     );
 
     if (shouldTriggerPremiumEncounter) {
-      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
+      const premiumSnapshot = resolvePremiumAssignmentSnapshot(activePremiumAssignment, currentBalance);
+      const bundleTotal = premiumSnapshot.amount;
+      const balanceAfterEncounter = premiumSnapshot.balanceAfterEncounter;
+      const topUpRequired = premiumSnapshot.topUpRequired;
       const encounteredAt = new Date().toISOString();
+      const bundleDetails = buildPremiumBundleDetails(bundleTotal);
+      const potentialPremiumProfit = roundCurrency(
+        bundleTotal * Number(activePremiumAssignment?.vipRate ?? getVipPremiumProfitRate(String(userProfile?.vipTier || 'Normal')))
+      );
 
       const updatedAssignment = {
         ...activePremiumAssignment,
         amount: bundleTotal,
+        targetDeficit: premiumSnapshot.targetDeficit,
+        potentialProfit: potentialPremiumProfit,
+        bundleProductCount: bundleDetails.individualProductCount,
+        bundleItems: bundleDetails.bundleItems,
         previousBalance: currentBalance,
         balanceAfterAssignment: balanceAfterEncounter,
         topUpRequired,
+        projectedEncounterAmount: bundleTotal,
+        projectedBalanceAfterEncounter: balanceAfterEncounter,
+        projectedTopUpRequired: topUpRequired,
         encounteredAt,
         encounteredTaskNumber: nextTaskNumber,
       };
@@ -5139,17 +5226,18 @@ app.post('/admin/users/assign-premium', async (c) => {
 
     const normalizedProductId = String(body?.productId || '').trim();
 
-    if (body?.amount === undefined || body?.amount === null || body?.amount === '') {
-      return c.json({ error: 'amount is required for premium assignment' }, 400);
+    const requestedTargetDeficit = body?.targetDeficit ?? body?.amount;
+    if (requestedTargetDeficit === undefined || requestedTargetDeficit === null || requestedTargetDeficit === '') {
+      return c.json({ error: 'targetDeficit is required for premium assignment' }, 400);
     }
     if (body?.position === undefined || body?.position === null || body?.position === '') {
       return c.json({ error: 'position is required for premium assignment' }, 400);
     }
-    const amount = Number(body.amount);
+    const amount = Number(requestedTargetDeficit);
     const requestedPosition = Number(body.position);
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      return c.json({ error: 'amount must be a positive number' }, 400);
+      return c.json({ error: 'targetDeficit must be a positive number' }, 400);
     }
 
     if (!Number.isInteger(requestedPosition) || requestedPosition <= 0) {
@@ -5192,13 +5280,14 @@ app.post('/admin/users/assign-premium', async (c) => {
       ? 1
       : Math.min(tasksPerSet, Math.max(currentProgress + 1, requestedPosition));
 
-    const currentBalance = Number(user?.balance ?? 0);
-    const bundleDetails = buildPremiumBundleDetails(amount);
-    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
+    const currentBalance = roundCurrency(Number(user?.balance ?? 0));
+    const premiumSnapshot = resolvePremiumAssignmentSnapshot({ targetDeficit: amount }, currentBalance);
+    const bundleDetails = buildPremiumBundleDetails(premiumSnapshot.amount);
+    const bundleTotal = roundCurrency(Number(bundleDetails.bundleTotal || premiumSnapshot.amount || 0));
     const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
     const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
     const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
+    const projectedTopUpRequired = roundCurrency(Math.max(0, 0 - balanceAfterAssignment));
     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const updatedUser = {
       ...user,
@@ -5206,6 +5295,8 @@ app.post('/admin/users/assign-premium', async (c) => {
         orderId: premiumOrderId,
         amount: bundleTotal,
         enteredAmount: amount,
+        targetDeficit: amount,
+        assignmentMode: 'target_deficit',
         position: effectivePosition,
         productId: assignedProduct?.id || null,
         productName: assignedProduct?.name || null,
@@ -5218,6 +5309,7 @@ app.post('/admin/users/assign-premium', async (c) => {
         previousBalance: null,
         balanceAfterAssignment: null,
         topUpRequired: null,
+        projectedEncounterAmount: bundleTotal,
         projectedBalanceAfterEncounter: balanceAfterAssignment,
         projectedTopUpRequired,
         encounteredAt: null,
@@ -5242,6 +5334,7 @@ app.post('/admin/users/assign-premium', async (c) => {
         willFreezeOnEncounter: projectedTopUpRequired > 0,
         orderId: premiumOrderId,
         bundleTotal,
+        targetDeficit: amount,
         topUpRequired: projectedTopUpRequired,
         requestedPosition,
         effectivePosition,

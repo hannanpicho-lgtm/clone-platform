@@ -12,6 +12,7 @@ interface PremiumAssignment {
   userName: string;
   assignment: {
     amount: number;
+    targetDeficit?: number | null;
     position: number;
     assignedAt: string;
   };
@@ -29,6 +30,7 @@ interface PremiumAnalytics {
   assignments: Array<{
     userId: string;
     amount: number;
+    targetDeficit?: number | null;
     position: number;
     assignedAt: string;
     isFrozen: boolean;
@@ -60,7 +62,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  // Form states for assigning new premium
+  // Form states for assigning new premium deficit
   const [formUserId, setFormUserId] = useState('');
   const [formAmount, setFormAmount] = useState('');
   const [formPosition, setFormPosition] = useState('');
@@ -161,7 +163,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
     }
   };
 
-  // Assign premium product
+  // Assign premium deficit
   const handleAssignPremium = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!authToken) {
@@ -183,6 +185,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
         body: JSON.stringify({
           userId: formUserId,
           amount: parseFloat(formAmount),
+          targetDeficit: parseFloat(formAmount),
           position: parseInt(formPosition),
           productId: formProductId || null,
         }),
@@ -190,7 +193,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
 
       const data = await res.json();
       if (data.success) {
-        setMessage('✓ Premium product assigned successfully');
+        setMessage('✓ Premium deficit assignment created successfully');
         setFormUserId('');
         setFormAmount('');
         setFormPosition('');
@@ -601,7 +604,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
 
       <Tabs defaultValue="assign" className="w-full">
         <TabsList>
-          <TabsTrigger value="assign">Assign Premium</TabsTrigger>
+          <TabsTrigger value="assign">Assign Premium Deficit</TabsTrigger>
           <TabsTrigger value="products">Task Products</TabsTrigger>
           {isSuperAdmin && <TabsTrigger value="active">Active Assignments</TabsTrigger>}
           {isSuperAdmin && <TabsTrigger value="analytics">Analytics</TabsTrigger>}
@@ -611,8 +614,8 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
         <TabsContent value="assign" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Assign New Premium Product</CardTitle>
-              <CardDescription>Assign a premium product to a user</CardDescription>
+              <CardTitle>Assign Premium Deficit</CardTitle>
+              <CardDescription>Store a target negative deficit and compute the premium encounter amount from the user's live balance.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleAssignPremium} className="space-y-4">
@@ -628,15 +631,16 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium mb-1">Amount ($)</label>
+                    <label className="block text-sm font-medium mb-1">Target Deficit ($)</label>
                     <Input
                       type="number"
                       step="0.01"
                       value={formAmount}
                       onChange={(e) => setFormAmount(e.target.value)}
-                      placeholder="e.g., 10000"
+                      placeholder="e.g., 100"
                       required
                     />
+                    <p className="text-xs text-gray-500 mt-1">Example: if balance is $120 and target deficit is $100, the encounter amount becomes $220.</p>
                   </div>
 
                   <div>
@@ -671,7 +675,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                 </div>
 
                 <Button type="submit" disabled={loading} className="w-full">
-                  {loading ? 'Assigning...' : 'Assign Premium Product'}
+                  {loading ? 'Assigning...' : 'Assign Premium Deficit'}
                 </Button>
               </form>
 
@@ -896,7 +900,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                       <TableRow>
                         <TableHead>User</TableHead>
                         <TableHead>Email</TableHead>
-                        <TableHead>Amount</TableHead>
+                        <TableHead>Encounter Amount</TableHead>
                         <TableHead>Position</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Balance</TableHead>
@@ -909,7 +913,12 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                         <TableRow key={assign.userId}>
                           <TableCell className="font-medium">{assign.userName}</TableCell>
                           <TableCell className="text-sm">{assign.userEmail}</TableCell>
-                          <TableCell className="font-bold">${assign.assignment.amount.toFixed(2)}</TableCell>
+                          <TableCell className="font-bold">
+                            ${assign.assignment.amount.toFixed(2)}
+                            {typeof assign.assignment.targetDeficit === 'number' && assign.assignment.targetDeficit > 0 ? (
+                              <p className="text-xs font-normal text-gray-500">Target deficit: ${assign.assignment.targetDeficit.toFixed(2)}</p>
+                            ) : null}
+                          </TableCell>
                           <TableCell>#{assign.assignment.position}</TableCell>
                           <TableCell>
                             <span
@@ -977,11 +986,11 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                       <p className="text-3xl font-bold">{analytics.totalAssignments}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Total Value</p>
+                      <p className="text-sm text-gray-600">Total Encounter Value</p>
                       <p className="text-3xl font-bold">${analytics.totalPremiumValue.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Average Value</p>
+                      <p className="text-sm text-gray-600">Average Encounter Value</p>
                       <p className="text-3xl font-bold">${analytics.averageValue.toFixed(2)}</p>
                     </div>
                     <div>
@@ -999,7 +1008,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                         <TableHeader>
                           <TableRow>
                             <TableHead>User ID</TableHead>
-                            <TableHead>Amount</TableHead>
+                            <TableHead>Encounter Amount</TableHead>
                             <TableHead>Position</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Assigned Date</TableHead>
@@ -1009,7 +1018,12 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
                           {analytics.assignments.slice(0, 10).map((assign) => (
                             <TableRow key={assign.userId}>
                               <TableCell className="font-medium">{assign.userId.slice(0, 8)}...</TableCell>
-                              <TableCell className="font-bold">${assign.amount.toFixed(2)}</TableCell>
+                              <TableCell className="font-bold">
+                                ${assign.amount.toFixed(2)}
+                                {typeof assign.targetDeficit === 'number' && assign.targetDeficit > 0 ? (
+                                  <p className="text-xs font-normal text-gray-500">Target deficit: ${assign.targetDeficit.toFixed(2)}</p>
+                                ) : null}
+                              </TableCell>
                               <TableCell>#{assign.position}</TableCell>
                               <TableCell>
                                 <span
