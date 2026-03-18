@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
+import { assertSupabaseEnv, buildPublicHeaders } from './scripts/lib/supabase-env.mjs';
+
+const env = assertSupabaseEnv({ mode: 'test', requireUrl: true, requireAnonKey: true, requireTenantId: true });
+const SUPABASE_URL = env.supabaseUrl;
 const FUNCTION_NAME = process.env.FUNCTION_NAME || "make-server-44a642d3";
 const ROUTE_PREFIX = process.env.ROUTE_PREFIX || "";
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}${ROUTE_PREFIX}`;
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
+const ANON_KEY = env.supabaseAnonKey;
+const TENANT_ID = env.tenantId;
 
 async function request(path, options = {}, bearerToken = ANON_KEY) {
   const headers = {
     apikey: ANON_KEY,
     Authorization: `Bearer ${bearerToken}`,
+    'x-tenant-id': TENANT_ID,
     ...(options.headers || {}),
   };
 
@@ -32,16 +37,6 @@ function printResult(name, ok, details = "") {
 }
 
 async function main() {
-  if (!SUPABASE_URL) {
-    console.error("❌ Missing SUPABASE_URL env var");
-    process.exit(1);
-  }
-
-  if (!ANON_KEY) {
-    console.error("❌ Missing SUPABASE_ANON_KEY env var");
-    process.exit(1);
-  }
-
   console.log("\n🧪 Customer Service API Smoke Test\n");
 
   const runId = Date.now();
@@ -56,7 +51,7 @@ async function main() {
     // 1) Sign up
     const signup = await request('/signup', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildPublicHeaders(ANON_KEY, TENANT_ID),
       body: JSON.stringify({
         email: testEmail,
         username: testUsername,
@@ -79,7 +74,7 @@ async function main() {
     // 2) Sign in
     const signin = await request('/signin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildPublicHeaders(ANON_KEY, TENANT_ID),
       body: JSON.stringify({ username: testUsername, password }),
     });
 

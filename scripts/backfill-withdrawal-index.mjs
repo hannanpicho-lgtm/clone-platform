@@ -13,16 +13,13 @@
  *   DRY_RUN=1 SUPABASE_URL=... SUPABASE_SERVICE_KEY=... node scripts/backfill-withdrawal-index.mjs
  */
 import { createClient } from '@supabase/supabase-js';
+import { assertSupabaseEnv } from './lib/supabase-env.mjs';
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const env = assertSupabaseEnv({ mode: 'production', requireUrl: true, requireServiceRoleKey: true });
+const SUPABASE_URL = env.supabaseUrl;
+const SUPABASE_SERVICE_KEY = env.supabaseServiceRoleKey;
 const DRY_RUN = process.env.DRY_RUN === '1';
 const KV_TABLE = 'kv_store_44a642d3';
-
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.error('ERROR: set SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables');
-  process.exit(1);
-}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

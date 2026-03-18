@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { assertSupabaseEnv, buildPublicHeaders } from './scripts/lib/supabase-env.mjs';
+
 /**
  * Test Premium Management Endpoints
  * Tests the new premium dashboard endpoints:
@@ -8,11 +10,13 @@
  * - GET /admin/premium/analytics - Get premium analytics
  */
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const env = assertSupabaseEnv({ mode: 'test', requireUrl: true, requireAnonKey: true, requireTenantId: true });
+const SUPABASE_URL = env.supabaseUrl;
 const FUNCTION_NAME = process.env.FUNCTION_NAME || 'make-server-44a642d3';
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}`;
-const ADMIN_API_KEY = process.env.SUPABASE_ADMIN_API_KEY || process.env.ADMIN_API_KEY || '';
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const ADMIN_API_KEY = env.adminApiKey || '';
+const ANON_KEY = env.supabaseAnonKey;
+const TENANT_ID = env.tenantId;
 
 const colors = {
   reset: '\x1b[0m',
@@ -44,6 +48,7 @@ async function request(path, method = 'GET', body = null) {
     headers: {
       'Authorization': `Bearer ${ADMIN_API_KEY}`,
       'Content-Type': 'application/json',
+      'x-tenant-id': TENANT_ID,
     },
   };
 
@@ -78,9 +83,7 @@ async function runTests() {
     const signupRes = await fetch(`${FUNCTION_URL}/signup`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${ANON_KEY}`,
-        'apikey': ANON_KEY,
-        'Content-Type': 'application/json',
+        ...buildPublicHeaders(ANON_KEY, TENANT_ID),
       },
       body: JSON.stringify({
         email: `premium-test-${timestamp}@test.local`,

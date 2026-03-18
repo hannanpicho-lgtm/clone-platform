@@ -1,27 +1,17 @@
 #!/usr/bin/env node
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "";
+import { assertSupabaseEnv, buildAuthHeaders, buildPublicHeaders } from './scripts/lib/supabase-env.mjs';
+
+const env = assertSupabaseEnv({ mode: 'test', requireUrl: true, requireAnonKey: true, requireTenantId: true });
+const SUPABASE_URL = env.supabaseUrl;
 const FUNCTION_NAME = process.env.FUNCTION_NAME || "make-server-44a642d3";
 const ROUTE_PREFIX = process.env.ROUTE_PREFIX || "";
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/${FUNCTION_NAME}${ROUTE_PREFIX}`;
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
-const PUBLIC_HEADERS = {
-  "Content-Type": "application/json",
-  "apikey": ANON_KEY,
-  "Authorization": `Bearer ${ANON_KEY}`,
-};
+const ANON_KEY = env.supabaseAnonKey;
+const TENANT_ID = env.tenantId;
+const PUBLIC_HEADERS = buildPublicHeaders(ANON_KEY, TENANT_ID);
 
 async function test() {
-  if (!SUPABASE_URL) {
-    console.error("❌ Missing SUPABASE_URL env var");
-    process.exit(1);
-  }
-
-  if (!ANON_KEY) {
-    console.error("❌ Missing SUPABASE_ANON_KEY env var");
-    process.exit(1);
-  }
-
   console.log("🧪 Testing new backend endpoints...\n");
   const runId = Date.now();
 
@@ -32,6 +22,7 @@ async function test() {
       headers: {
         "apikey": ANON_KEY,
         "Authorization": `Bearer ${ANON_KEY}`,
+        "x-tenant-id": TENANT_ID,
       },
     });
     let data = await res.json();
@@ -84,7 +75,7 @@ async function test() {
         // Test 4: Get profile
         console.log("✅ Test 4: Get profile (should include new fields)");
         res = await fetch(`${FUNCTION_URL}/profile`, {
-          headers: { "Authorization": `Bearer ${accessToken}` },
+          headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
         });
         data = await res.json();
         console.log(`Status: ${res.status}`);
@@ -94,7 +85,7 @@ async function test() {
         // Test 5: Get earnings
         console.log("✅ Test 5: Get earnings (new endpoint)");
         res = await fetch(`${FUNCTION_URL}/earnings`, {
-          headers: { "Authorization": `Bearer ${accessToken}` },
+          headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
         });
         data = await res.json();
         console.log(`Status: ${res.status}`);
@@ -106,8 +97,7 @@ async function test() {
         res = await fetch(`${FUNCTION_URL}/submit-product`, {
           method: "POST",
           headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${accessToken}` 
+            ...buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID, true),
           },
           body: JSON.stringify({
             productName: "Test Product",
@@ -122,7 +112,7 @@ async function test() {
         // Test 7: Check earnings again
         console.log("✅ Test 7: Get earnings after product submission");
         res = await fetch(`${FUNCTION_URL}/earnings`, {
-          headers: { "Authorization": `Bearer ${accessToken}` },
+          headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
         });
         data = await res.json();
         console.log(`Status: ${res.status}`);
@@ -132,7 +122,7 @@ async function test() {
         // Test 8: Get referrals (should be empty as no children yet)
         console.log("✅ Test 8: Get referrals");
         res = await fetch(`${FUNCTION_URL}/referrals`, {
-          headers: { "Authorization": `Bearer ${accessToken}` },
+          headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
         });
         data = await res.json();
         console.log(`Status: ${res.status}`);
@@ -166,7 +156,7 @@ async function test() {
           // Test 10: Check referrals again (should show child)
           console.log("✅ Test 10: Get referrals (parent view - should show child)");
           res = await fetch(`${FUNCTION_URL}/referrals`, {
-            headers: { "Authorization": `Bearer ${accessToken}` },
+            headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
           });
           data = await res.json();
           console.log(`Status: ${res.status}`);
@@ -179,8 +169,7 @@ async function test() {
             res = await fetch(`${FUNCTION_URL}/submit-product`, {
               method: "POST",
               headers: { 
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${childAccessToken}` 
+                ...buildAuthHeaders(childAccessToken, ANON_KEY, TENANT_ID, true),
               },
               body: JSON.stringify({
                 productName: "Child Product",
@@ -195,7 +184,7 @@ async function test() {
             // Test 12: Check parent earnings (should include commission)
             console.log("✅ Test 12: Parent check earnings (should include child commission)");
             res = await fetch(`${FUNCTION_URL}/earnings`, {
-              headers: { "Authorization": `Bearer ${accessToken}` },
+              headers: buildAuthHeaders(accessToken, ANON_KEY, TENANT_ID),
             });
             data = await res.json();
             console.log(`Status: ${res.status}`);
