@@ -3838,9 +3838,9 @@ app.post("/submit-product", async (c) => {
         await kv.set(`product:${userId}:${Date.now()}`, {
           id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           userId,
-          productName: normalizedName,
+          productName: String(productName || '').trim(),
           productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
-          productValue: normalizedValue,
+          productValue: Number(productValue || 0),
           userEarned: 0,
           commissionsCascade: [],
           status: 'frozen',
