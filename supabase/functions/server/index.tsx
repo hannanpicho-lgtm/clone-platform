@@ -236,7 +236,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization", "apikey"],
+    allowHeaders: ["Content-Type", "Authorization", "apikey", "x-tenant-id", "x-super-admin-all-tenants", "x-admin-key"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
