@@ -5649,6 +5649,136 @@ app.put('/admin/accounts/:adminUserId', async (c) => {
   }
 });
 
+// Admin: change admin account password (super admin only)
+app.put('/admin/accounts/:adminUserId/password', async (c) => {
+  try {
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
+    }
+
+    const adminUserId = c.req.param('adminUserId');
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    const { newPassword } = await c.req.json();
+    if (!newPassword || String(newPassword).length < 6) {
+      return c.json({ error: 'newPassword must be at least 6 characters' }, 400);
+    }
+
+    const existing = await kv.get(`admin:account:${adminUserId}`);
+    if (!existing) {
+      return c.json({ error: 'Admin account not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, existing)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
+    }
+
+    // Update the password in Supabase auth
+    const supabase = getServiceClient();
+    const { error } = await supabase.auth.admin.updateUserById(adminUserId, {
+      password: newPassword,
+    });
+
+    if (error) {
+      console.error(`Error updating admin password: ${error?.message}`);
+      return c.json({ error: 'Failed to update admin password' }, 400);
+    }
+
+    // Log the password change for audit purposes
+    const auditLog = {
+      type: 'admin_password_changed',
+      adminUserId,
+      changedBy: superContext.superAdminId || 'system',
+      changedAt: new Date().toISOString(),
+      changedIp: getRequesterIp(c),
+      targetTenantId: getRecordTenantId(existing, resolveRequestTenantId(c)),
+    };
+    try {
+      await kv.set(`audit:admin-password-change:${adminUserId}:${Date.now()}`, auditLog);
+    } catch (err) {
+      console.warn(`Failed to log password change audit: ${err}`);
+    }
+
+    return c.json({
+      success: true,
+      message: 'Admin password updated successfully',
+      admin: {
+        userId: existing.userId,
+        username: existing.username,
+        displayName: existing.displayName,
+      },
+    });
+  } catch (error) {
+    console.error(`Error changing admin password: ${error}`);
+    return c.json({ error: 'Internal server error while changing admin password' }, 500);
+  }
+});
+
+// Admin: trigger password reset email for admin account (super admin only)
+app.post('/admin/accounts/:adminUserId/reset-password', async (c) => {
+  try {
+    const superContext = await resolveSuperAdminContext(c);
+    if (!superContext.ok) {
+      return superContext.response;
+    }
+
+    const adminUserId = c.req.param('adminUserId');
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    const existing = await kv.get(`admin:account:${adminUserId}`);
+    if (!existing) {
+      return c.json({ error: 'Admin account not found' }, 404);
+    }
+    if (!isTargetAccessibleForSuperAdminContext(superContext, existing)) {
+      return c.json({ error: 'Forbidden - Cross-tenant operation requires explicit super-admin all-tenant context' }, 403);
+    }
+
+    // Trigger password reset email
+    const supabase = getServiceClient();
+    const { error } = await supabase.auth.resetPasswordForEmail(existing.authEmail, {
+      redirectTo: `${FRONTEND_URL}/admin/auth/reset-password`,
+    });
+
+    if (error) {
+      console.error(`Error sending password reset email: ${error?.message}`);
+      return c.json({ error: 'Failed to send password reset email' }, 400);
+    }
+
+    // Log the password reset request for audit purposes
+    const auditLog = {
+      type: 'admin_password_reset_triggered',
+      adminUserId,
+      triggeredBy: superContext.superAdminId || 'system',
+      triggeredAt: new Date().toISOString(),
+      triggeredIp: getRequesterIp(c),
+      targetTenantId: getRecordTenantId(existing, resolveRequestTenantId(c)),
+    };
+    try {
+      await kv.set(`audit:admin-password-reset:${adminUserId}:${Date.now()}`, auditLog);
+    } catch (err) {
+      console.warn(`Failed to log password reset audit: ${err}`);
+    }
+
+    return c.json({
+      success: true,
+      message: 'Password reset email sent to admin account',
+      admin: {
+        userId: existing.userId,
+        username: existing.username,
+        displayName: existing.displayName,
+        authEmail: existing.authEmail,
+      },
+    });
+  } catch (error) {
+    console.error(`Error triggering password reset: ${error}`);
+    return c.json({ error: 'Internal server error while triggering password reset' }, 500);
+  }
+});
+
 // Admin: revoke limited admin account access (super admin only)
 app.post('/admin/accounts/:adminUserId/revoke', async (c) => {
   try {

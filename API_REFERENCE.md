@@ -1093,6 +1093,206 @@ Get platform-wide metrics.
 
 ---
 
+### [Admin] Create Admin Account
+
+Create a new limited admin account with initial password.
+
+**Endpoint**: `POST /admin/accounts`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Request Body**:
+```json
+{
+  "username": "newadmin",
+  "name": "New Admin",
+  "password": "SecurePass123!",
+  "permissions": ["manage_users", "manage_withdrawals", "manage_support_tickets"]
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "admin": {
+    "userId": "admin-uuid",
+    "username": "newadmin",
+    "displayName": "New Admin",
+    "authEmail": "admin.newadmin@platform.com",
+    "tenantId": "tenant-uuid",
+    "active": true,
+    "permissions": ["manage_users", "manage_withdrawals", "manage_support_tickets"],
+    "createdAt": "2026-02-23T10:00:00Z"
+  }
+}
+```
+
+---
+
+### [Admin] Update Admin Account
+
+Update permissions, display name, or status of an admin account.
+
+**Endpoint**: `PUT /admin/accounts/:adminUserId`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Request Body** (all fields optional):
+```json
+{
+  "permissions": ["manage_users", "manage_support_tickets"],
+  "displayName": "Admin Updated",
+  "active": true
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "admin": {
+    "userId": "admin-uuid",
+    "username": "newadmin",
+    "displayName": "Admin Updated",
+    "active": true,
+    "permissions": ["manage_users", "manage_support_tickets"],
+    "updatedAt": "2026-02-23T11:00:00Z"
+  }
+}
+```
+
+---
+
+### [Admin] Change Admin Password
+
+Directly change an admin account's password (super admin sets new password).
+
+**Endpoint**: `PUT /admin/accounts/:adminUserId/password`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Request Body**:
+```json
+{
+  "newPassword": "NewSecurePass456!"
+}
+```
+
+**Validation**:
+- Password must be at least 6 characters
+- Admin account must exist and be accessible
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Admin password updated successfully",
+  "admin": {
+    "userId": "admin-uuid",
+    "username": "newadmin",
+    "displayName": "New Admin"
+  }
+}
+```
+
+---
+
+### [Admin] Reset Admin Password via Email
+
+Trigger a password reset email for an admin account. Admin receives a password reset link.
+
+**Endpoint**: `POST /admin/accounts/:adminUserId/reset-password`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Password reset email sent to admin account",
+  "admin": {
+    "userId": "admin-uuid",
+    "username": "newadmin",
+    "displayName": "New Admin",
+    "authEmail": "admin.newadmin@platform.com"
+  }
+}
+```
+
+**Process**:
+1. Super admin triggers password reset for an admin
+2. Admin receives reset link at their email
+3. Admin follows link to set new password
+4. Audit log records the reset request
+
+---
+
+### [Admin] List Admin Accounts
+
+List all admin accounts with their permissions and statistics.
+
+**Endpoint**: `GET /admin/accounts`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Response**:
+```json
+{
+  "success": true,
+  "admins": [
+    {
+      "userId": "admin-uuid-1",
+      "username": "admin1",
+      "displayName": "Admin One",
+      "authEmail": "admin.admin1@platform.com",
+      "active": true,
+      "status": "active",
+      "permissions": ["manage_users", "manage_withdrawals"],
+      "usersCreated": 45,
+      "totalEarningsFromUsers": 12500.50,
+      "createdAt": "2026-02-20T10:00:00Z",
+      "updatedAt": "2026-02-23T11:00:00Z"
+    }
+  ],
+  "accountability": {
+    "totalLimitedAdmins": 3,
+    "activeLimitedAdmins": 2,
+    "disabledLimitedAdmins": 1,
+    "revokedLimitedAdmins": 0,
+    "totalUsersCreated": 125,
+    "totalEarningsFromManagedUsers": 45230.75
+  }
+}
+```
+
+---
+
+### [Admin] Revoke Admin Access
+
+Revoke admin access for a limited admin account (disables login, resets permissions).
+
+**Endpoint**: `POST /admin/accounts/:adminUserId/revoke`  
+**Auth**: ✅ Super admin only  
+**Status Code**: 200
+
+**Response**:
+```json
+{
+  "success": true,
+  "admin": {
+    "userId": "admin-uuid",
+    "username": "newadmin",
+    "displayName": "New Admin",
+    "active": false,
+    "status": "revoked",
+    "revokedAt": "2026-02-23T12:00:00Z"
+  }
+}
+```
+
+---
+
 ## Error Handling
 
 ### Standard HTTP Status Codes
