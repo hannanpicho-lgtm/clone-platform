@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import {
@@ -229,6 +230,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+  const branding = getCurrentTenantBranding();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const menuScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1281,7 +1283,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <h3 className="font-bold text-gray-900 mb-3">Notifications</h3>
             <div className="space-y-3">
               <div className="p-3 bg-blue-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900">Welcome to Tanknewmedia!</p>
+                <p className="text-sm font-medium text-gray-900">Welcome to {branding.appName}!</p>
                 <p className="text-xs text-gray-600 mt-1">Your account has been activated</p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
@@ -1306,7 +1308,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           >
             <Menu className="h-6 w-6" />
           </button>
-          <h1 className="text-2xl font-bold tracking-wider">TANK</h1>
+          <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
           <div className="flex items-center space-x-3">
             <button
               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
@@ -1367,9 +1369,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
             >
               <Bell className="h-4 w-4 text-purple-400 flex-shrink-0" />
-              <span className="text-sm font-medium">Welcome to Tanknewmedia for Innovative Software Development · Access Your VIP Data Platform · Manage Products & Earn Commissions · View Your Performance Metrics · Connect with Our Support Team</span>
+              <span className="text-sm font-medium">{branding.tickerText}</span>
               <Bell className="h-4 w-4 text-purple-400 flex-shrink-0" />
-              <span className="text-sm font-medium">Welcome to Tanknewmedia for Innovative Software Development · Access Your VIP Data Platform · Manage Products & Earn Commissions · View Your Performance Metrics · Connect with Our Support Team</span>
+              <span className="text-sm font-medium">{branding.tickerText}</span>
             </motion.div>
           </div>
         </div>
@@ -1407,7 +1409,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   Open and extensible
                 </h2>
                 <p className="text-sm text-gray-600 text-center leading-relaxed">
-                  Tanknewmedia offers custom software development services that help innovative companies and startups design and build digital products with AI, mobile, and web technologies.
+                  {branding.homeCardBody}
                 </p>
               </CardContent>
             </Card>

@@ -10,6 +10,8 @@ export interface TenantBranding {
   adminPortalSubtitle: string;
   adminGateTitle: string;
   adminGatePrompt: string;
+  tickerText: string;
+  homeCardBody: string;
 }
 
 const BRANDING_BY_TENANT: Record<FrontendTenantId, TenantBranding> = {
@@ -23,6 +25,8 @@ const BRANDING_BY_TENANT: Record<FrontendTenantId, TenantBranding> = {
     adminPortalSubtitle: 'TankPlatform Management',
     adminGateTitle: 'TankPlatform Admin Access',
     adminGatePrompt: 'Enter portal access key to continue.',
+    tickerText: 'Welcome to Tanknewmedia for Innovative Software Development · Access Your VIP Data Platform · Manage Products & Earn Commissions · View Your Performance Metrics · Connect with Our Support Team',
+    homeCardBody: 'Tanknewmedia offers custom software development services that help innovative companies and startups design and build digital products with AI, mobile, and web technologies.',
   },
   steadfast: {
     tenantId: 'steadfast',
@@ -34,6 +38,8 @@ const BRANDING_BY_TENANT: Record<FrontendTenantId, TenantBranding> = {
     adminPortalSubtitle: 'Steadfast Management',
     adminGateTitle: 'Steadfast Admin Access',
     adminGatePrompt: 'Enter portal access key to continue.',
+    tickerText: 'Welcome to Steadfast Workbench · Access Your VIP Data Platform · Manage Products & Earn Commissions · View Your Performance Metrics · Connect with Our Support Team',
+    homeCardBody: 'Steadfast Workbench provides a secure and reliable platform for managing products, tracking performance, and growing your earnings with trusted enterprise-grade tools.',
   },
 };
 

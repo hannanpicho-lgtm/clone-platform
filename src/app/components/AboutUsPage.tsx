@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface AboutUsPageProps {
   onClose: () => void;
@@ -21,10 +22,10 @@ export function AboutUsPage({ onClose }: AboutUsPageProps) {
 
       {/* Content */}
       <div className="p-4 space-y-6 pb-8">
-        {/* About Tanknewmedia */}
+        {/* About Platform */}
         <Card>
           <CardContent className="pt-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">About Tanknewmedia</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-4">About {getCurrentTenantBranding().appName}</h2>
             <div className="space-y-4 text-gray-700 text-sm leading-relaxed">
               <p>
                 We're a full-service design & digital growth companies.
@@ -78,8 +79,8 @@ export function AboutUsPage({ onClose }: AboutUsPageProps) {
         <Card className="bg-gradient-to-br from-teal-600 to-blue-600 text-white">
           <CardContent className="pt-6">
             <div className="text-center space-y-3">
-              <h2 className="text-3xl font-bold">TNK</h2>
-              <h3 className="text-xl font-semibold">TANKNEWMEDIA-DATA</h3>
+              <h2 className="text-3xl font-bold">{getCurrentTenantBranding().logoText}</h2>
+              <h3 className="text-xl font-semibold">{getCurrentTenantBranding().appName.replace(/\s+/g, '').toUpperCase()}-DATA</h3>
               <p className="text-sm opacity-90 leading-relaxed">
                 Empowering businesses with cutting-edge data collection and optimization solutions
               </p>

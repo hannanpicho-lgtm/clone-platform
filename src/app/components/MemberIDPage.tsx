@@ -126,7 +126,7 @@ export function MemberIDPage({ memberId, userName, invitationCode, onClose }: Me
             <div className="space-y-3 text-sm text-gray-700">
               <p className="flex items-start">
                 <span className="mr-2 text-blue-600">•</span>
-                <span>Share your Member ID with friends to invite them to join Tanknewmedia</span>
+                <span>Share your Member ID with friends to invite them to join {getCurrentTenantBranding().appName}</span>
               </p>
               <p className="flex items-start">
                 <span className="mr-2 text-blue-600">•</span>

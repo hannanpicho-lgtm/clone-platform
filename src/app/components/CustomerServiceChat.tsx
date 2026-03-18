@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Send } from 'lucide-react';
 import { Button } from './ui/button';
 import { projectId } from '/utils/supabase/info';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface Message {
   id: string;
@@ -60,7 +61,7 @@ export function CustomerServiceChat({ onClose, accessToken, userName, accountFro
         id: 'welcome-message',
         text: accountFrozen
           ? `Hello ${userName}, I can see your account is frozen. Send your top-up receipt and we will assist with reset/unfreeze.`
-          : `Hello ${userName}! Welcome to Tanknewmedia Customer Service. How can I help you today?`,
+          : `Hello ${userName}! Welcome to ${getCurrentTenantBranding().appName} Customer Service. How can I help you today?`,
         sender: 'admin',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       });

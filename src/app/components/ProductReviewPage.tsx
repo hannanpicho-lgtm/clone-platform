@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { Menu, Bell, Star } from 'lucide-react';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
@@ -16,6 +17,7 @@ interface ProductReviewPageProps {
 }
 
 export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReviewPageProps) {
+  const branding = getCurrentTenantBranding();
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
   const [reviewType, setReviewType] = useState('');
@@ -33,7 +35,7 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
             <Menu className="h-6 w-6" />
           </button>
-          <h1 className="text-2xl font-bold tracking-wider">TANK</h1>
+          <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
           <div className="flex items-center space-x-3">
             <button className="p-2 relative hover:bg-white/10 rounded-lg transition-colors">
               <Bell className="h-6 w-6" />
