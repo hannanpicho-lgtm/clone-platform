@@ -16,12 +16,25 @@ import type {
 
 const ADMIN_FUNCTION_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
 
+function resolveTenantIdFromHost(): 'tank' | 'steadfast' {
+  if (typeof window === 'undefined') {
+    return 'tank';
+  }
+
+  const host = String(window.location.hostname || '').toLowerCase();
+  if (host.includes('steadfast')) {
+    return 'steadfast';
+  }
+  return 'tank';
+}
+
 async function adminFetch(session: AdminSession, path: string, init?: RequestInit) {
   return safeFetch(`${ADMIN_FUNCTION_BASE}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${session.accessToken || publicAnonKey}`,
       'Content-Type': 'application/json',
+      'x-tenant-id': resolveTenantIdFromHost(),
       ...(init?.headers || {}),
     },
   });
