@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import App from "./app/App.tsx";
 import "./styles/index.css";
 import { getCurrentTenantBranding, resolveFrontendTenantId } from "./app/branding/tenantBranding";
+import { getTenantUiBundle } from "./app/tenants/registry";
 
 const installTenantHeaderFetchWrapper = () => {
   if (typeof window === 'undefined') return;
@@ -44,7 +45,10 @@ const installTenantHeaderFetchWrapper = () => {
 
 if (typeof document !== 'undefined') {
   const branding = getCurrentTenantBranding();
+  const tenantUi = getTenantUiBundle(branding.tenantId);
   document.title = branding.appName;
+  document.body.classList.remove('tenant-tank', 'tenant-steadfast');
+  document.body.classList.add(tenantUi.appClassName);
 }
 
 installTenantHeaderFetchWrapper();

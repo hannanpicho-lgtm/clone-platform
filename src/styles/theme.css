@@ -180,3 +180,17 @@
   }
 }
 
+@layer base {
+  body.tenant-tank {
+    --primary: #f59e0b;
+    --ring: #f59e0b;
+    --radius: 0.625rem;
+  }
+
+  body.tenant-steadfast {
+    --primary: #0284c7;
+    --ring: #0284c7;
+    --radius: 0.5rem;
+  }
+}
+
