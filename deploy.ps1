@@ -21,7 +21,6 @@
 
 param(
     [string]$Environment = "production",
-    [switch]$SkipTests,
     [switch]$DryRun,
     [switch]$Force,
     [switch]$RollbackLatest
@@ -89,6 +88,17 @@ function Invoke-Command {
     }
 }
 
+function Invoke-EnvValidation {
+    param([string]$StepName)
+    Write-Status "Running mandatory Supabase env validation before $StepName" "INFO"
+    & npm run validate:supabase-env
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "Supabase env validation failed before $StepName - aborting" "ERROR"
+        exit 1
+    }
+    Write-Status "Supabase env validation passed before $StepName" "SUCCESS"
+}
+
 # ============================================================================
 # PHASE 1: PRE-DEPLOYMENT VALIDATION
 # ============================================================================
@@ -151,20 +161,16 @@ if (-not (Test-Path ".env.production.local") -and -not (Test-Path ".env.local"))
 
 Write-Host ""
 Write-Status "Phase 2: Testing Starting..." "STEP"
+Invoke-EnvValidation "tests"
+$testPassed = Invoke-Command "Running smoke tests (27 tests)" {
+    & npm run test:smoke
+    if ($LASTEXITCODE -ne 0) { throw "Smoke tests failed with exit code $LASTEXITCODE" }
+    return $true
+}
 
-if ($SkipTests) {
-    Write-Status "Tests skipped (--SkipTests)" "WARNING"
-} else {
-    $testPassed = Invoke-Command "Running smoke tests (27 tests)" {
-        & npm run test:smoke
-        if ($LASTEXITCODE -ne 0) { throw "Smoke tests failed with exit code $LASTEXITCODE" }
-        return $true
-    }
-    
-    if (-not $testPassed) {
-        Write-Status "Tests failed - deployment aborted" "ERROR"
-        exit 1
-    }
+if (-not $testPassed) {
+    Write-Status "Tests failed - deployment aborted" "ERROR"
+    exit 1
 }
 
 # ============================================================================
@@ -173,6 +179,7 @@ if ($SkipTests) {
 
 Write-Host ""
 Write-Status "Phase 3: Building Project..." "STEP"
+Invoke-EnvValidation "build"
 
 $buildPassed = Invoke-Command "Building frontend (TypeScript/Vite)" {
     $env:NODE_OPTIONS = "--max-old-space-size=4096"
@@ -187,7 +194,7 @@ if (-not $buildPassed) {
     exit 1
 }
 
-Write-Status "Build artifacts created: $(ls -r dist/ -ErrorAction Ignore | Measure-Object).Count files" "SUCCESS"
+Write-Status "Build artifacts created: $(Get-ChildItem -Recurse dist/ -ErrorAction Ignore | Measure-Object).Count files" "SUCCESS"
 
 # ============================================================================
 # PHASE 4: DEPLOYMENT
@@ -195,6 +202,7 @@ Write-Status "Build artifacts created: $(ls -r dist/ -ErrorAction Ignore | Measu
 
 Write-Host ""
 Write-Status "Phase 4: Deploying to Production..." "STEP"
+Invoke-EnvValidation "deployment"
 
 if ($DryRun) {
     Write-Status "DRY RUN enabled - showing deployment steps only" "WARNING"

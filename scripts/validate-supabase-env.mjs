@@ -5,8 +5,8 @@ import { assertSupabaseEnv } from './lib/supabase-env.mjs';
 const args = new Set(process.argv.slice(2));
 const modeArg = [...args].find((arg) => arg.startsWith('--mode='));
 const mode = modeArg ? modeArg.split('=')[1] : 'local';
-const requireAnonKey = args.has('--require-anon-key');
-const requireServiceRoleKey = args.has('--require-service-role');
+const requireAnonKey = !args.has('--no-require-anon-key');
+const requireServiceRoleKey = !args.has('--no-require-service-role');
 const requireAdminApiKey = args.has('--require-admin-api-key');
 const requireTenantId = args.has('--require-tenant-id');
 
