@@ -6,6 +6,7 @@ import { Card } from '../../components/ui/card';
 import { Separator } from '../../components/ui/separator';
 import { isSuperAdmin } from '../permissions';
 import type { AdminSession } from '../types';
+import { getCurrentTenantBranding } from '../../branding/tenantBranding';
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
 
 export function AdminLayout({ children, currentPath, session, onLogout }: AdminLayoutProps) {
   const roleLabel = isSuperAdmin(session) ? 'Super Admin' : 'Sub-admin';
+  const branding = getCurrentTenantBranding();
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.permission === 'super-admin-only') {
       return isSuperAdmin(session);
@@ -55,7 +57,7 @@ export function AdminLayout({ children, currentPath, session, onLogout }: AdminL
             </div>
             <div>
               <div className="font-semibold">Admin Control</div>
-              <div className="text-sm text-slate-500">TankPlatform</div>
+              <div className="text-sm text-slate-500">{branding.appName}</div>
             </div>
           </div>
 

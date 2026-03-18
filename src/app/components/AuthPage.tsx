@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { getSupabaseClient } from '/utils/supabase/client';
 import { Loader2 } from 'lucide-react';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface AuthPageProps {
   onAuthSuccess: (accessToken: string) => void;
@@ -45,6 +46,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [signinPassword, setSigninPassword] = useState('');
 
   const supabase = getSupabaseClient();
+  const branding = getCurrentTenantBranding();
 
   const signInViaBackend = async (username: string, password: string): Promise<string> => {
     const { projectId, publicAnonKey } = await import('/utils/supabase/info');
@@ -200,8 +202,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
       {/* Logo and Title */}
       <div className="text-center mb-12 relative z-10">
-        <h1 className="text-6xl font-bold text-amber-400 mb-2 drop-shadow-lg">TANK</h1>
-        <p className="text-2xl text-amber-300 drop-shadow-lg">Simulation RPG</p>
+        <h1 className="text-6xl font-bold text-amber-400 mb-2 drop-shadow-lg">{branding.logoText}</h1>
+        <p className="text-2xl text-amber-300 drop-shadow-lg">{branding.loginTagline}</p>
       </div>
 
       {/* Login Form */}
@@ -411,7 +413,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
       {/* Footer */}
       <div className="fixed bottom-4 text-center text-sm text-gray-300/60 relative z-10">
-        <p>2024 Site tanknewmedia-data. All rights reserved</p>
+        <p>{branding.footerText}</p>
       </div>
     </div>
   );

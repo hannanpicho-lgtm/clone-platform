@@ -17,6 +17,7 @@ import { AdminSupportLinksPage } from './pages/AdminSupportLinksPage';
 import { AdminTransactionsPage } from './pages/AdminTransactionsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminWithdrawalsPage } from './pages/AdminWithdrawalsPage';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 function getCurrentPath() {
   return typeof window !== 'undefined' ? window.location.pathname : '/admin';
@@ -24,6 +25,7 @@ function getCurrentPath() {
 
 export function AdminApp() {
   const adminGateKey = String(import.meta.env.VITE_ADMIN_SITE_GATE_KEY || '').trim();
+  const branding = getCurrentTenantBranding();
   const [gateInput, setGateInput] = useState('');
   const [gateError, setGateError] = useState('');
   const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
@@ -91,8 +93,8 @@ export function AdminApp() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 shadow-2xl">
-          <h1 className="text-2xl font-bold text-white text-center mb-2">Admin Portal Access</h1>
-          <p className="text-sm text-purple-200 text-center mb-6">Enter portal access key to continue</p>
+          <h1 className="text-2xl font-bold text-white text-center mb-2">{branding.adminGateTitle}</h1>
+          <p className="text-sm text-purple-200 text-center mb-6">{branding.adminGatePrompt}</p>
           <form onSubmit={handleAdminGateUnlock} className="space-y-4">
             <input
               type="password"

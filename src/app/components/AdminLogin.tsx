@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Shield, Lock, AlertCircle } from 'lucide-react';
 import { safeFetch } from '/src/utils/safeFetch';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface AdminLoginProps {
   onLoginSuccess: (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => void;
@@ -15,6 +16,7 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const branding = getCurrentTenantBranding();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +112,8 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           >
             <Shield className="w-10 h-10 text-white" />
           </motion.div>
-          <h1 className="text-4xl font-bold text-white mb-2">Admin Portal</h1>
-          <p className="text-purple-200">Tanknewmedia Platform Management</p>
+          <h1 className="text-4xl font-bold text-white mb-2">{branding.adminPortalTitle}</h1>
+          <p className="text-purple-200">{branding.adminPortalSubtitle}</p>
         </div>
 
         {/* Login Card */}

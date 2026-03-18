@@ -3,32 +3,13 @@ console.log("main.tsx loaded");
 import { createRoot } from "react-dom/client";
 import App from "./app/App.tsx";
 import "./styles/index.css";
-
-const resolveTenantIdForFrontend = (): 'tank' | 'steadfast' | null => {
-  const explicit = String(import.meta.env.VITE_TENANT_ID || '').trim().toLowerCase();
-  if (explicit === 'tank' || explicit === 'steadfast') {
-    return explicit;
-  }
-
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const host = String(window.location.hostname || '').toLowerCase();
-  if (host.includes('steadfast')) {
-    return 'steadfast';
-  }
-  if (host.includes('tank')) {
-    return 'tank';
-  }
-  return null;
-};
+import { getCurrentTenantBranding, resolveFrontendTenantId } from "./app/branding/tenantBranding";
 
 const installTenantHeaderFetchWrapper = () => {
   if (typeof window === 'undefined') return;
 
   const originalFetch = window.fetch.bind(window);
-  const tenantId = resolveTenantIdForFrontend();
+  const tenantId = resolveFrontendTenantId(window.location.hostname);
   if (!tenantId) {
     return;
   }
@@ -60,6 +41,11 @@ const installTenantHeaderFetchWrapper = () => {
     });
   };
 };
+
+if (typeof document !== 'undefined') {
+  const branding = getCurrentTenantBranding();
+  document.title = branding.appName;
+}
 
 installTenantHeaderFetchWrapper();
 
