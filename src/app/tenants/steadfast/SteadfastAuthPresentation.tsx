@@ -119,8 +119,8 @@ export function SteadfastAuthPresentation(props: TenantAuthPresentationProps) {
             ) : (
               <form onSubmit={handleSignin} className="space-y-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Username</label>
-                  <Input type="text" value={signinUsername} onChange={(e) => setSigninUsername(e.target.value)} placeholder="Enter username" required className="h-11 border-slate-300" />
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Username or Email</label>
+                  <Input type="text" value={signinUsername} onChange={(e) => setSigninUsername(e.target.value)} placeholder="Enter username or email" required className="h-11 border-slate-300" />
                 </div>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700">Password</label>

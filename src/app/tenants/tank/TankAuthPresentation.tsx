@@ -170,10 +170,10 @@ export function TankAuthPresentation(props: TenantAuthPresentationProps) {
           ) : (
             <form onSubmit={handleSignin} className="space-y-5">
               <div>
-                <label className="block text-sm text-gray-300 mb-2">Username</label>
+                <label className="block text-sm text-gray-300 mb-2">Username or Email</label>
                 <Input
                   type="text"
-                  placeholder="Username"
+                  placeholder="Username or Email"
                   value={signinUsername}
                   onChange={(e) => setSigninUsername(e.target.value)}
                   required

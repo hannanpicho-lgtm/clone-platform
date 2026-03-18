@@ -1482,6 +1482,37 @@ const buildAuthEmailFromUsername = (username: string): string => {
   return `${normalized}@${AUTH_EMAIL_DOMAIN}`;
 };
 
+const resolveStoredAuthEmailForSignin = async (loginIdentifier: string, tenantId: TenantId | null): Promise<string | null> => {
+  const normalizedIdentifier = String(loginIdentifier || '').trim().toLowerCase();
+  if (!normalizedIdentifier) {
+    return null;
+  }
+
+  const userRows = await getKvRowsByPrefix('user:');
+  const matchedProfile = userRows
+    .map((row) => row.value)
+    .find((profile) => {
+      if (!profile || isDeletedRecord(profile)) {
+        return false;
+      }
+
+      if (tenantId && !isRecordVisibleForTenant(profile, tenantId)) {
+        return false;
+      }
+
+      const profileUsername = normalizeUsername(String(profile?.username || profile?.name || ''));
+      const profileContactEmail = String(profile?.contactEmail || '').trim().toLowerCase();
+      const profileAuthEmail = String(profile?.email || '').trim().toLowerCase();
+
+      return profileUsername === normalizeUsername(normalizedIdentifier)
+        || profileContactEmail === normalizedIdentifier
+        || profileAuthEmail === normalizedIdentifier;
+    });
+
+  const matchedAuthEmail = String(matchedProfile?.email || '').trim().toLowerCase();
+  return matchedAuthEmail || null;
+};
+
 const isValidEmail = (value: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 };
@@ -2312,15 +2343,28 @@ app.post("/signin", async (c) => {
     }
 
     const loginIdentifier = String(email || username || '').trim();
+    const requestTenantId = resolveRequestTenantId(c);
     const loginEmail = loginIdentifier.includes('@')
       ? loginIdentifier.toLowerCase()
       : buildAuthEmailFromUsername(loginIdentifier);
 
     const supabase = getAnonClient();
-    const { data, error } = await supabase.auth.signInWithPassword({
+    let { data, error } = await supabase.auth.signInWithPassword({
       email: loginEmail,
       password,
     });
+
+    if (error) {
+      const fallbackAuthEmail = await resolveStoredAuthEmailForSignin(loginIdentifier, requestTenantId);
+      if (fallbackAuthEmail && fallbackAuthEmail !== loginEmail) {
+        const fallbackResult = await supabase.auth.signInWithPassword({
+          email: fallbackAuthEmail,
+          password,
+        });
+        data = fallbackResult.data;
+        error = fallbackResult.error;
+      }
+    }
 
     if (error) {
       console.error(`Error during user signin: ${error.message}`);
