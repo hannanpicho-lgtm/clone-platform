@@ -48,8 +48,22 @@ export interface AdminSupportTicket {
   category: string;
   priority: 'high' | 'medium' | 'low';
   status: 'open' | 'in_progress' | 'resolved';
+  message?: string;
+  createdAt?: string;
   updatedAt: string;
   repliesCount: number;
+  unreadByAdmin?: boolean;
+  unreadCount?: number;
+  replies?: AdminSupportMessage[];
+}
+
+export interface AdminSupportMessage {
+  id: string;
+  userId?: string;
+  userName: string;
+  message: string;
+  createdAt: string;
+  role: 'user' | 'admin';
 }
 
 export interface AdminAuditLogItem {

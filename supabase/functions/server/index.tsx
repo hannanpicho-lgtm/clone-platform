@@ -6517,6 +6517,9 @@ app.post("/support-tickets", async (c) => {
       message,
       priority: priority || "normal",
       status: "open",
+      unreadByAdmin: true,
+      unreadCount: 1,
+      lastReadByAdminAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       replies: [],
@@ -6659,9 +6662,12 @@ app.post("/support-tickets/:id/reply", async (c) => {
       userName: user.name,
       message,
       createdAt: new Date().toISOString(),
+      role: 'user',
     };
 
     ticket.replies.push(reply);
+    ticket.unreadByAdmin = true;
+    ticket.unreadCount = Number(ticket.unreadCount || 0) + 1;
     if (ticket.status === 'resolved') {
       ticket.status = 'open';
     }
@@ -6732,6 +6738,52 @@ app.put('/admin/support-tickets/:id/status', async (c) => {
   }
 });
 
+// Admin: mark support ticket as read (clears unread badge counters)
+app.post('/admin/support-tickets/:id/mark-read', async (c) => {
+  try {
+    const adminAccess = await requireSupportAccess(c);
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    if (!adminAccess.isSuperAdmin) {
+      const hasSupportAccess = adminAccess.permissions.includes(ADMIN_PERMISSION_ALL)
+        || adminAccess.permissions.includes('support.manage');
+      if (!hasSupportAccess) {
+        return c.json({ error: 'Forbidden - Missing permission: support.manage' }, 403);
+      }
+    }
+
+    const ticketId = c.req.param('id');
+    const ticket = await kv.get(`ticket:${ticketId}`);
+    if (!ticket) {
+      return c.json({ error: 'Ticket not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    const ticketOwner = await kv.get(`user:${ticket.userId}`);
+    if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) {
+      return c.json({ error: 'Forbidden - Ticket is outside your admin scope' }, 403);
+    }
+
+    ticket.unreadByAdmin = false;
+    ticket.unreadCount = 0;
+    ticket.lastReadByAdminAt = new Date().toISOString();
+    ticket.updatedAt = ticket.updatedAt || new Date().toISOString();
+
+    await kv.set(`ticket:${ticketId}`, ticket);
+
+    return c.json({
+      success: true,
+      ticket,
+      message: 'Ticket marked as read',
+    });
+  } catch (error) {
+    console.error(`Error marking support ticket as read: ${error}`);
+    return c.json({ error: 'Internal server error while marking support ticket as read' }, 500);
+  }
+});
+
 // Admin: list support tickets (all active admins can review customer service queue)
 app.get('/admin/support-tickets', async (c) => {
   try {
@@ -6759,7 +6811,15 @@ app.get('/admin/support-tickets', async (c) => {
       const ticketOwner = await kv.get(`user:${ticket.userId}`);
       if (!isUserInTenantAdminScope(adminAccess, scope, ticketOwner)) continue;
 
-      tickets.push(ticket);
+      const replies = Array.isArray(ticket?.replies) ? ticket.replies : [];
+      const unreadCount = Number(ticket?.unreadCount || 0);
+
+      tickets.push({
+        ...ticket,
+        replies,
+        unreadByAdmin: Boolean(ticket?.unreadByAdmin || unreadCount > 0),
+        unreadCount,
+      });
     }
 
     return c.json({
@@ -6822,6 +6882,9 @@ app.post('/admin/support-tickets/:id/reply', async (c) => {
     ticket.replies = Array.isArray(ticket.replies) ? ticket.replies : [];
     ticket.replies.push(reply);
     ticket.status = status || (ticket.status === 'resolved' ? 'resolved' : 'in-progress');
+    ticket.unreadByAdmin = false;
+    ticket.unreadCount = 0;
+    ticket.lastReadByAdminAt = new Date().toISOString();
     ticket.updatedAt = new Date().toISOString();
 
     await kv.set(`ticket:${ticketId}`, ticket);

@@ -3,8 +3,10 @@ import { ShieldAlert } from 'lucide-react';
 import { AdminLogin } from '../components/AdminLogin';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
+import { fetchAdminSupportTickets } from './api';
 import { AdminLayout } from './layout/AdminLayout';
 import { evaluateAdminRouteAccess, resolveAdminRoute } from './middleware';
+import { hasAdminPermission } from './permissions';
 import { clearAdminSession, loadAdminSession, saveAdminSession } from './session';
 import type { AdminSession } from './types';
 import { AdminCustomerServicePage } from './pages/AdminCustomerServicePage';
@@ -30,6 +32,7 @@ export function AdminApp() {
   const [gateError, setGateError] = useState('');
   const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
   const [session, setSession] = useState<AdminSession | null>(null);
+  const [unreadSupportCount, setUnreadSupportCount] = useState(0);
   const currentPath = useMemo(() => getCurrentPath(), []);
 
   useEffect(() => {
@@ -48,6 +51,37 @@ export function AdminApp() {
       window.location.replace(access.redirectTo);
     }
   }, [access, currentPath]);
+
+  useEffect(() => {
+    if (!session || !hasAdminPermission(session, 'support.manage')) {
+      setUnreadSupportCount(0);
+      return;
+    }
+
+    let alive = true;
+    const syncUnreadCount = async () => {
+      try {
+        const tickets = await fetchAdminSupportTickets(session);
+        if (!alive) return;
+        const unreadTotal = tickets.reduce((sum, ticket) => {
+          const unread = Number(ticket.unreadCount || 0);
+          return sum + (unread > 0 ? unread : 0);
+        }, 0);
+        setUnreadSupportCount(unreadTotal);
+      } catch {
+        if (alive) {
+          setUnreadSupportCount(0);
+        }
+      }
+    };
+
+    syncUnreadCount();
+    const intervalId = window.setInterval(syncUnreadCount, 8000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [session]);
 
   const handleAdminLoginSuccess = (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => {
     const nextSession: AdminSession = {
@@ -167,7 +201,7 @@ export function AdminApp() {
   }
 
   return (
-    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout}>
+    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout} unreadSupportCount={unreadSupportCount}>
       {page}
     </AdminLayout>
   );

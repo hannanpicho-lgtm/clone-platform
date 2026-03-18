@@ -109,11 +109,33 @@ export async function fetchAdminSupportTickets(session: AdminSession): Promise<A
     userName: String(ticket?.userName || ticket?.user || 'Unknown User'),
     subject: String(ticket?.subject || ticket?.category || 'Support request'),
     category: String(ticket?.category || 'general'),
+    message: String(ticket?.message || ''),
     priority: (ticket?.priority === 'high' ? 'high' : ticket?.priority === 'low' ? 'low' : 'medium') as 'high' | 'medium' | 'low',
     status: (ticket?.status === 'resolved' ? 'resolved' : ticket?.status === 'in_progress' || ticket?.status === 'in-progress' ? 'in_progress' : 'open') as 'open' | 'in_progress' | 'resolved',
+    createdAt: String(ticket?.createdAt || ticket?.updatedAt || new Date().toISOString()),
     updatedAt: String(ticket?.updatedAt || ticket?.createdAt || new Date().toISOString()),
     repliesCount: Array.isArray(ticket?.replies) ? ticket.replies.length : 0,
+    unreadByAdmin: Boolean(ticket?.unreadByAdmin),
+    unreadCount: Number(ticket?.unreadCount || 0),
+    replies: (Array.isArray(ticket?.replies) ? ticket.replies : []).map((reply: any) => ({
+      id: String(reply?.id || ''),
+      userId: reply?.userId ? String(reply.userId) : undefined,
+      userName: String(reply?.userName || 'Unknown User'),
+      message: String(reply?.message || ''),
+      createdAt: String(reply?.createdAt || ticket?.updatedAt || new Date().toISOString()),
+      role: reply?.role === 'admin' ? 'admin' : 'user',
+    })),
   }));
+}
+
+export async function markSupportTicketRead(session: AdminSession, ticketId: string): Promise<void> {
+  const response = await adminFetch(session, `/admin/support-tickets/${ticketId}/mark-read`, {
+    method: 'POST',
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to mark support ticket as read');
+  }
 }
 
 export async function fetchAdminAuditLog(session: AdminSession, limit = 25): Promise<AdminAuditLogItem[]> {

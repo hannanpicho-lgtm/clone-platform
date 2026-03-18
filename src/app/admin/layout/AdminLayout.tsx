@@ -13,6 +13,7 @@ interface AdminLayoutProps {
   currentPath: string;
   session: AdminSession;
   onLogout: () => void;
+  unreadSupportCount?: number;
 }
 
 const NAV_ITEMS = [
@@ -28,7 +29,7 @@ const NAV_ITEMS = [
   { path: '/admin/settings', label: 'Settings', icon: Settings, permission: null },
 ] as const;
 
-export function AdminLayout({ children, currentPath, session, onLogout }: AdminLayoutProps) {
+export function AdminLayout({ children, currentPath, session, onLogout, unreadSupportCount = 0 }: AdminLayoutProps) {
   const roleLabel = isSuperAdmin(session) ? 'Super Admin' : 'Sub-admin';
   const branding = getCurrentTenantBranding();
   const visibleItems = NAV_ITEMS.filter((item) => {
@@ -77,13 +78,20 @@ export function AdminLayout({ children, currentPath, session, onLogout }: AdminL
                   key={item.path}
                   type="button"
                   variant={active ? 'default' : 'ghost'}
-                  className="w-full justify-start gap-2"
+                  className="w-full justify-between gap-2"
                   onClick={() => {
                     window.location.href = item.path;
                   }}
                 >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
+                  <span className="flex items-center gap-2">
+                    <Icon className="h-4 w-4" />
+                    {item.label}
+                  </span>
+                  {item.path === '/admin/customer-service' && unreadSupportCount > 0 ? (
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold text-white">
+                      {unreadSupportCount > 99 ? '99+' : unreadSupportCount}
+                    </span>
+                  ) : null}
                 </Button>
               );
             })}
@@ -118,6 +126,11 @@ export function AdminLayout({ children, currentPath, session, onLogout }: AdminL
                       }}
                     >
                       {item.label}
+                      {item.path === '/admin/customer-service' && unreadSupportCount > 0 ? (
+                        <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold text-white">
+                          {unreadSupportCount > 99 ? '99+' : unreadSupportCount}
+                        </span>
+                      ) : null}
                     </Button>
                   );
                 })}
