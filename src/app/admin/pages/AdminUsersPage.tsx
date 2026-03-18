@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ShieldAlert, Copy, Key } from 'lucide-react';
 import {
   adjustUserBalance,
@@ -22,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Input } from '../../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../../components/ui/sheet';
 
 interface AdminUsersPageProps {
   session: AdminSession;
@@ -87,14 +87,8 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [credentialResetModal, setCredentialResetModal] = useState<{ open: boolean; credentials: CredentialResetResult | null; userName: string }>({ open: false, credentials: null, userName: '' });
   const [resetCredentialsPending, setResetCredentialsPending] = useState(false);
   const [credentialsCopied, setCredentialsCopied] = useState(false);
-  const detailsPanelRef = useRef<HTMLDivElement>(null);
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
-    useEffect(() => {
-      if (selectedUserId && detailsPanelRef.current) {
-        setTimeout(() => detailsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      }
-    }, [selectedUserId]);
 
   const canDeleteUsers = session.role === 'super-admin';
   const canAdjustBalance = hasAdminPermission(session, 'users.adjust_balance') || hasAdminPermission(session, 'users.manage');
@@ -441,7 +435,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             </TableHeader>
             <TableBody>
               {filteredUsers.map((user) => (
-                <TableRow key={user.id}>
+                <TableRow key={user.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedUserId(user.id)}>
                   <TableCell>
                     <div className="font-medium">{user.name}</div>
                     <div className="text-xs text-slate-500">{user.email || user.id}</div>
@@ -469,7 +463,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             variant="outline"
                             size="sm"
                             disabled={pendingUserId === user.id}
-                            onClick={() => handleUnfreeze(user)}
+                            onClick={(e) => { e.stopPropagation(); handleUnfreeze(user); }}
                           >
                             Unfreeze
                           </Button>
@@ -480,7 +474,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             variant={user.accountDisabled ? 'default' : 'outline'}
                             size="sm"
                             disabled={pendingUserId === user.id}
-                            onClick={() => handleToggleStatus(user)}
+                            onClick={(e) => { e.stopPropagation(); handleToggleStatus(user); }}
                           >
                             {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
                           </Button>
@@ -491,7 +485,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             size="sm"
                             variant="outline"
                             disabled={pendingUserId === user.id || user.accountDisabled}
-                            onClick={() => handleAssignPremium(user)}
+                            onClick={(e) => { e.stopPropagation(); handleAssignPremium(user); }}
                           >
                             Premium
                           </Button>
@@ -502,7 +496,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             size="sm"
                             variant="outline"
                             disabled={pendingUserId === user.id || user.accountDisabled}
-                            onClick={() => handleAdjustBalance(user)}
+                            onClick={(e) => { e.stopPropagation(); handleAdjustBalance(user); }}
                           >
                             Adjust
                           </Button>
@@ -513,28 +507,20 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             size="sm"
                             variant="outline"
                             disabled={resetCredentialsPending || user.accountDisabled}
-                            onClick={() => handleResetCredentials(user)}
+                            onClick={(e) => { e.stopPropagation(); handleResetCredentials(user); }}
                             className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200"
                           >
                             <Key className="w-3.5 h-3.5 mr-1" />
                             Reset Creds
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSelectedUserId(user.id)}
-                        >
-                          Details
-                        </Button>
                         {canDeleteUsers && (
                           <Button
                             type="button"
                             variant="destructive"
                             size="sm"
                             disabled={pendingUserId === user.id}
-                            onClick={() => handleDeleteUser(user)}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteUser(user); }}
                           >
                             Delete
                           </Button>
@@ -559,57 +545,161 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             </TableBody>
           </Table>
 
-          {selectedUser && (
-            <Card ref={detailsPanelRef} className="border-slate-200 bg-slate-50">
-              <CardHeader>
-                <CardTitle>User Details</CardTitle>
-                <CardDescription>{selectedUser.name} ({selectedUser.email || selectedUser.id})</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="text-sm"><span className="text-slate-500">Total earnings:</span> ${Number(selectedUser.totalEarnings || 0).toLocaleString()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Frozen negative:</span> ${Number(selectedUser.frozenNegativeAmount || 0).toLocaleString()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Task progress:</span> {Number(selectedUser.currentSetTasksCompleted || 0)} / {tasksPerSetForTier()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Daily sets used:</span> {Number(selectedUser.taskSetsCompletedToday || 0)}</div>
-                  <div className="text-sm"><span className="text-slate-500">Daily limit:</span> {Number(selectedUser.dailyTaskSetLimit || 0)}</div>
-                  <div className="text-sm"><span className="text-slate-500">Extra sets:</span> {Number(selectedUser.extraTaskSets || 0)}</div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {canUpdateVip && (
-                    <>
-                      <Select value={vipTierDraft} onValueChange={setVipTierDraft}>
-                        <SelectTrigger className="w-[180px]"><SelectValue placeholder="VIP Tier" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Normal">Normal</SelectItem>
-                          <SelectItem value="Silver">Silver</SelectItem>
-                          <SelectItem value="Gold">Gold</SelectItem>
-                          <SelectItem value="Platinum">Platinum</SelectItem>
-                          <SelectItem value="Diamond">Diamond</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button type="button" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleUpdateVip(selectedUser)}>
-                        Update VIP
-                      </Button>
-                    </>
-                  )}
-                  {canResetTasks && (
-                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleResetTaskSet(selectedUser)}>
-                      Reset Task Set
-                    </Button>
-                  )}
-                  {canManageTaskLimits && (
-                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleUpdateTaskLimits(selectedUser)}>
-                      Set Limits
-                    </Button>
-                  )}
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedUserId(null)}>Close</Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </CardContent>
       </Card>
+
+      {/* User details slide-over panel */}
+      <Sheet open={!!selectedUser} onOpenChange={(open) => { if (!open) setSelectedUserId(null); }}>
+        <SheetContent side="right" className="sm:max-w-[42vw] w-full p-0 overflow-y-auto flex flex-col">
+          <SheetHeader className="p-6 pb-4 border-b border-slate-100 shrink-0">
+            <SheetTitle className="text-base">
+              {selectedUser?.name || 'User Details'}
+            </SheetTitle>
+            <SheetDescription className="text-xs">
+              {selectedUser?.email || selectedUser?.id}
+            </SheetDescription>
+          </SheetHeader>
+
+          {selectedUser && (
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+              {/* Status row */}
+              <div className="flex flex-wrap gap-2 items-center">
+                {getAccountBadge(selectedUser)}
+                <Badge variant={getSubscriptionStatus(selectedUser) === 'Active' ? 'default' : 'secondary'}>
+                  {getSubscriptionStatus(selectedUser)}
+                </Badge>
+                <span className="text-sm text-slate-500 font-medium">{selectedUser.vipTier}</span>
+                {isResetRequired(selectedUser) && (
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">Reset Required</span>
+                )}
+              </div>
+
+              {/* Financial stats */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">Balance</div>
+                  <div className={`text-base font-semibold ${selectedUser.balance < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                    ${Number(selectedUser.balance || 0).toLocaleString()}
+                  </div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">Total Earnings</div>
+                  <div className="text-base font-semibold">${Number(selectedUser.totalEarnings || 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">Frozen Negative</div>
+                  <div className="text-base font-semibold text-red-600">${Number(selectedUser.frozenNegativeAmount || 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-slate-500 mb-1">Products Submitted</div>
+                  <div className="text-base font-semibold">{Number(selectedUser.productsSubmitted || 0)}</div>
+                </div>
+              </div>
+
+              {/* Task progress */}
+              <div>
+                <div className="text-sm font-medium text-slate-700 mb-2">Task Progress</div>
+                <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 text-sm">
+                  <div><span className="text-slate-500">Progress:</span> {Number(selectedUser.currentSetTasksCompleted || 0)} / {tasksPerSetForTier()}</div>
+                  <div><span className="text-slate-500">Sets today:</span> {Number(selectedUser.taskSetsCompletedToday || 0)}</div>
+                  <div><span className="text-slate-500">Daily limit:</span> {Number(selectedUser.dailyTaskSetLimit || 0)}</div>
+                  <div><span className="text-slate-500">Extra sets:</span> {Number(selectedUser.extraTaskSets || 0)}</div>
+                  <div><span className="text-slate-500">Withdrawal limit:</span> ${Number(selectedUser.withdrawalLimit || 0).toLocaleString()}</div>
+                </div>
+              </div>
+
+              {/* Account info */}
+              <div>
+                <div className="text-sm font-medium text-slate-700 mb-2">Account Info</div>
+                <div className="space-y-1 text-sm">
+                  <div><span className="text-slate-500">Created:</span> {formatDate(selectedUser.createdAt)}</div>
+                  <div><span className="text-slate-500">Last login:</span> {selectedUser.lastLoginAt ? new Date(selectedUser.lastLoginAt).toLocaleString() : 'N/A'}</div>
+                  <div><span className="text-slate-500">Location:</span> {formatLocation(selectedUser.lastLoginCountry)}</div>
+                  <div><span className="text-slate-500">IP:</span> {formatIp(selectedUser.lastLoginIp)}</div>
+                </div>
+              </div>
+
+              {/* Quick actions */}
+              {(canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canManageCredentials) && (
+                <div className="border-t border-slate-100 pt-4">
+                  <div className="text-sm font-medium text-slate-700 mb-3">Actions</div>
+                  <div className="flex flex-wrap gap-2">
+                    {canUnfreezeUsers && selectedUser.accountFrozen && !selectedUser.accountDisabled && (
+                      <Button type="button" variant="outline" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleUnfreeze(selectedUser)}>
+                        Unfreeze
+                      </Button>
+                    )}
+                    {canManageStatus && (
+                      <Button type="button" variant={selectedUser.accountDisabled ? 'default' : 'outline'} size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleToggleStatus(selectedUser)}>
+                        {pendingUserId === selectedUser.id ? 'Saving...' : selectedUser.accountDisabled ? 'Activate' : 'Suspend'}
+                      </Button>
+                    )}
+                    {canAdjustBalance && (
+                      <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleAdjustBalance(selectedUser)}>
+                        Adjust Balance
+                      </Button>
+                    )}
+                    {canAssignPremium && (
+                      <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleAssignPremium(selectedUser)}>
+                        Assign Premium
+                      </Button>
+                    )}
+                    {canManageCredentials && (
+                      <Button type="button" size="sm" variant="outline" disabled={resetCredentialsPending || selectedUser.accountDisabled} onClick={() => handleResetCredentials(selectedUser)} className="text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200">
+                        <Key className="w-3.5 h-3.5 mr-1" />
+                        Reset Creds
+                      </Button>
+                    )}
+                    {canDeleteUsers && (
+                      <Button type="button" variant="destructive" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleDeleteUser(selectedUser)}>
+                        Delete
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* VIP & task controls */}
+              {(canUpdateVip || canResetTasks || canManageTaskLimits) && (
+                <div className="border-t border-slate-100 pt-4">
+                  <div className="text-sm font-medium text-slate-700 mb-3">VIP &amp; Task Controls</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canUpdateVip && (
+                      <>
+                        <Select value={vipTierDraft} onValueChange={setVipTierDraft}>
+                          <SelectTrigger className="w-[160px]"><SelectValue placeholder="VIP Tier" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Normal">Normal</SelectItem>
+                            <SelectItem value="Silver">Silver</SelectItem>
+                            <SelectItem value="Gold">Gold</SelectItem>
+                            <SelectItem value="Platinum">Platinum</SelectItem>
+                            <SelectItem value="Diamond">Diamond</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button type="button" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleUpdateVip(selectedUser)}>
+                          Update VIP
+                        </Button>
+                      </>
+                    )}
+                    {canResetTasks && (
+                      <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleResetTaskSet(selectedUser)}>
+                        Reset Task Set
+                      </Button>
+                    )}
+                    {canManageTaskLimits && (
+                      <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleUpdateTaskLimits(selectedUser)}>
+                        Set Limits
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
 
       {/* Credential Reset Modal */}
       {credentialResetModal.open && credentialResetModal.credentials && (
