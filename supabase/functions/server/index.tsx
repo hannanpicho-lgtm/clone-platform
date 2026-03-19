@@ -1807,6 +1807,7 @@ app.post("/signup", async (c) => {
       balance: 0,
       principalBalance: 0,
       welcomeBonusGranted: false,
+      creditScore: 100,
       dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
       extraTaskSets: 0,
       withdrawalLimit: 0,
@@ -2609,6 +2610,7 @@ app.get("/profile", async (c) => {
         balance: 0,
         principalBalance: 0,
         welcomeBonusGranted: false,
+        creditScore: 100,
         dailyTaskSetLimit: DEFAULT_DAILY_TASK_SET_LIMIT,
         extraTaskSets: 0,
         withdrawalLimit: 0,
@@ -2645,6 +2647,14 @@ app.get("/profile", async (c) => {
       effectiveProfile = {
         ...effectiveProfile,
         tenantId: requestTenantId,
+      };
+      await kv.set(`user:${userId}`, effectiveProfile);
+    }
+
+    if (!Number.isFinite(Number(effectiveProfile?.creditScore))) {
+      effectiveProfile = {
+        ...effectiveProfile,
+        creditScore: 100,
       };
       await kv.set(`user:${userId}`, effectiveProfile);
     }
@@ -2883,6 +2893,7 @@ app.get("/admin/users", async (c) => {
       productsSubmitted: Number(user?.productsSubmitted ?? 0),
       accountFrozen: Boolean(user?.accountFrozen ?? false),
       freezeAmount: Number(user?.freezeAmount ?? 0),
+      creditScore: Number.isFinite(Number(user?.creditScore)) ? Number(user?.creditScore) : 100,
       dailyTaskSetLimit: Number(user?.dailyTaskSetLimit ?? DEFAULT_DAILY_TASK_SET_LIMIT),
       extraTaskSets: Number(user?.extraTaskSets ?? 0),
       withdrawalLimit: Number(user?.withdrawalLimit ?? 0),
@@ -5597,7 +5608,7 @@ app.put('/admin/users/task-limits', async (c) => {
       return adminAccess.response;
     }
 
-    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit } = await c.req.json();
+    const { userId, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore } = await c.req.json();
     if (!userId) {
       return c.json({ error: 'userId is required' }, 400);
     }
@@ -5618,6 +5629,11 @@ app.put('/admin/users/task-limits', async (c) => {
       return c.json({ error: 'withdrawalLimit must be a non-negative number' }, 400);
     }
 
+    const parsedCreditScore = Number(creditScore ?? 100);
+    if (!Number.isFinite(parsedCreditScore) || parsedCreditScore < 0 || parsedCreditScore > 100) {
+      return c.json({ error: 'creditScore must be a number between 0 and 100' }, 400);
+    }
+
     const profileKey = `user:${userId}`;
     const userProfile = await kv.get(profileKey);
     if (!userProfile) {
@@ -5634,6 +5650,7 @@ app.put('/admin/users/task-limits', async (c) => {
       dailyTaskSetLimit: baseLimit,
       extraTaskSets: extraSets,
       withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
+      creditScore: roundCurrency(parsedCreditScore),
       updatedAt: new Date().toISOString(),
     };
 
@@ -5646,6 +5663,7 @@ app.put('/admin/users/task-limits', async (c) => {
         dailyTaskSetLimit: baseLimit,
         extraTaskSets: extraSets,
         withdrawalLimit: roundCurrency(parsedWithdrawalLimit),
+        creditScore: roundCurrency(parsedCreditScore),
         maxSetsPerDay: baseLimit + extraSets,
       },
     });

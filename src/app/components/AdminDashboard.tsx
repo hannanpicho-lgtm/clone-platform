@@ -55,6 +55,7 @@ interface User {
   accountDisabled?: boolean;
   accountFrozen: boolean;
   freezeAmount?: number;
+  creditScore?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
   withdrawalLimit?: number;
@@ -257,6 +258,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
   const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
   const [withdrawalLimitInput, setWithdrawalLimitInput] = useState('0');
+  const [creditScoreInput, setCreditScoreInput] = useState('100');
   const [permissionsInput, setPermissionsInput] = useState('');
   const [denyWithdrawalId, setDenyWithdrawalId] = useState('');
   const [denyReasonInput, setDenyReasonInput] = useState('Insufficient verification details');
@@ -1016,6 +1018,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setTaskLimitDailyInput(String(user.dailyTaskSetLimit ?? 3));
     setTaskLimitExtraInput(String(user.extraTaskSets ?? 0));
     setWithdrawalLimitInput(String(user.withdrawalLimit ?? 0));
+    setCreditScoreInput(String(user.creditScore ?? 100));
     setShowTaskLimitsModal(true);
   };
 
@@ -1025,6 +1028,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     const dailyTaskSetLimit = Number(taskLimitDailyInput);
     const extraTaskSets = Number(taskLimitExtraInput);
     const withdrawalLimit = Number(withdrawalLimitInput);
+    const creditScore = Number(creditScoreInput);
 
     if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
       alert('❌ Daily task set limit must be at least 1');
@@ -1041,6 +1045,11 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       return;
     }
 
+    if (!Number.isFinite(creditScore) || creditScore < 0 || creditScore > 100) {
+      alert('❌ Credit score must be between 0 and 100');
+      return;
+    }
+
     try {
       setSubmittingAction(true);
       const response = await safeFetch(
@@ -1051,7 +1060,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             Authorization: `Bearer ${getAdminAuthToken()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit }),
+          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore }),
         }
       );
 
@@ -3244,6 +3253,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   value={withdrawalLimitInput}
                   onChange={(e) => setWithdrawalLimitInput(e.target.value)}
                   placeholder="e.g. 500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Credit Score (0 - 100)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={creditScoreInput}
+                  onChange={(e) => setCreditScoreInput(e.target.value)}
+                  placeholder="e.g. 100"
                 />
               </div>
               <div className="flex gap-2 pt-2">

@@ -20,7 +20,6 @@ import {
 import { ProductsView, ProductData } from './ProductsView';
 import { ProductReviewPage } from './ProductReviewPage';
 import { VIPTiersCarousel } from './VIPTiersCarousel';
-import { FAQPage } from './FAQPage';
 import { EarningsDashboard } from './EarningsDashboard';
 import { ReferralManager } from './ReferralManager';
 import { WithdrawalForm } from './WithdrawalForm';
@@ -86,6 +85,7 @@ interface UserProfile {
   freezeAmount?: number;
   withdrawalLimit?: number;
   productsSubmitted?: number;
+  creditScore?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
   taskSetsCompletedToday?: number;
@@ -520,6 +520,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       ...prev,
       balance: Number(updatedUser?.balance ?? prev.balance ?? 0),
       productsSubmitted: Number(updatedUser?.productsSubmitted ?? prev.productsSubmitted ?? 0),
+      creditScore: Number.isFinite(Number(updatedUser?.creditScore)) ? Number(updatedUser?.creditScore) : Number(prev.creditScore ?? 100),
       dailyTaskSetLimit: Number(updatedUser?.dailyTaskSetLimit ?? prev.dailyTaskSetLimit ?? 1),
       extraTaskSets: Number(updatedUser?.extraTaskSets ?? prev.extraTaskSets ?? 0),
       taskSetsCompletedToday: Number(updatedUser?.taskSetsCompletedToday ?? prev.taskSetsCompletedToday ?? 0),
@@ -782,6 +783,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   }, [accessToken, manualRefreshToken]);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setManualRefreshToken((prev) => prev + 1);
+    }, 45000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     if (depositMethod !== 'crypto') {
       return;
     }
@@ -824,6 +833,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         invitationCode: 'DEMO1',
         name: 'Demo User',
         vipTier: 'Silver',
+        creditScore: 100,
         createdAt: new Date().toISOString(),
       };
       const demoMetrics: Metrics = {
@@ -868,6 +878,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     invitationCode: 'DEMO1',
     name: 'Demo User',
     vipTier: 'Silver',
+    creditScore: 100,
     createdAt: new Date().toISOString(),
   } : profile!;
 
@@ -919,6 +930,19 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       ? Number(todaysProfit || 0) + premiumProjectedProfitValue
       : Number(todaysProfit || 0),
   );
+  const creditScoreValue = Math.max(0, Math.min(100, Number((displayProfile as any)?.creditScore ?? 100)));
+  const creditScoreOffset = 2 * Math.PI * 40 * (1 - creditScoreValue / 100);
+
+  const openFaqSection = () => {
+    setShowFAQ(true);
+    setActiveNav('home');
+    setTimeout(() => {
+      const faqSection = document.getElementById('faq-knowledge-section');
+      if (faqSection) {
+        faqSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 120);
+  };
 
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
@@ -1092,16 +1116,16 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   {/* Left side - Stats */}
                   <div className="space-y-2 flex-1">
                     <div>
-                      <p className="text-blue-200 text-xs">Today's Profit</p>
-                      <p className="text-white font-bold text-lg">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs uppercase tracking-wide">Today's Commission</p>
+                      <p className="text-emerald-100 font-bold text-lg">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Total Asset</p>
+                      <p className="text-blue-200 text-xs uppercase tracking-wide">Total Account Balance</p>
                       <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Assets</p>
-                      <p className="text-white font-bold text-lg">$0</p>
+                      <p className="text-blue-200 text-xs uppercase tracking-wide">Current Balance</p>
+                      <p className="text-white font-bold text-lg">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
                     </div>
                   </div>
 
@@ -1125,12 +1149,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         stroke="#22c55e"
                         strokeWidth="8"
                         fill="none"
-                        strokeDasharray={`${2 * Math.PI * 40 * 0.6} ${2 * Math.PI * 40}`}
+                        strokeDasharray={`${2 * Math.PI * 40}`}
+                        strokeDashoffset={creditScoreOffset}
                         strokeLinecap="round"
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-white font-bold text-xl">60%</span>
+                      <span className="text-white font-bold text-xl">{Math.round(creditScoreValue)}%</span>
                       <span className="text-blue-200 text-xs">Credit</span>
                       <span className="text-blue-200 text-xs">Score</span>
                     </div>
@@ -1291,7 +1316,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowFAQ(true);
+                      openFaqSection();
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
@@ -1567,45 +1592,56 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   </div>
                 )}
 
-                <div className="px-6 py-5 text-center">
-                  <Rocket className="mx-auto h-14 w-14 text-white/95" />
-                  <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TODAY'S COMMISSION</p>
-                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(todaysCommissionValue)}</p>
-                  <p className="mt-4 text-base text-white/95">The displayed amount reflects today&apos;s earned commissions.</p>
-                  {accountFrozen && premiumProjectedProfitValue > 0 && (
-                    <p className="mt-2 inline-flex items-center rounded-full border border-green-300/60 bg-green-500/20 px-3 py-1 text-sm font-semibold text-green-100">
-                      Includes projected premium commission: +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))}
-                    </p>
-                  )}
-                </div>
-
-                <div className="mx-5 border-t border-white/80" />
-
-                <div className="grid grid-cols-1 gap-6 px-6 py-6 text-center md:grid-cols-2">
-                  <div>
-                    <Wallet className="mx-auto h-14 w-14 text-white/95" />
-                    <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TOTAL ACCOUNT BALANCE</p>
-                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
-                    <p className="mt-4 text-base text-white/95">Includes premium value and premium commission profit after unfreeze.</p>
+                <div className="px-6 py-6">
+                  <div className="mb-4 text-center">
+                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/80">Financial Summary</p>
+                    <h3 className="mt-2 text-3xl font-black tracking-wide">Clear Account Snapshot</h3>
                   </div>
-                  <div>
-                    <Snowflake className="mx-auto h-14 w-14 text-white/95" />
-                    <p className="mt-2 text-4xl font-extrabold tracking-wide">Uphold Amount</p>
-                    <p className="mt-2 inline-block rounded-lg border border-red-300/70 bg-red-500/20 px-3 py-2 text-5xl font-black text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
-                    <p className="mt-4 text-base font-semibold text-red-100">Negative deficit held during premium freeze.</p>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                      <div className="flex items-center gap-3">
+                        <Rocket className="h-8 w-8 text-emerald-200" />
+                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Today&apos;s Commission</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-black text-emerald-100">{formatUsdFigure(todaysCommissionValue)}</p>
+                      <p className="mt-1 text-xs text-white/80">Includes today&apos;s realized earnings.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                      <div className="flex items-center gap-3">
+                        <Wallet className="h-8 w-8 text-white/95" />
+                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Total Account Balance</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-black text-white">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
+                      <p className="mt-1 text-xs text-white/80">Current balance plus premium release projection.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                      <div className="flex items-center gap-3">
+                        <Wallet className="h-8 w-8 text-white/95" />
+                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Current Balance</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-black text-white">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
+                      <p className="mt-1 text-xs text-white/80">Base balance before premium settlement adjustments.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-red-300/40 bg-red-500/20 p-4">
+                      <div className="flex items-center gap-3">
+                        <Snowflake className="h-8 w-8 text-red-100" />
+                        <p className="text-xs font-semibold uppercase tracking-wide text-red-100">Uphold Amount</p>
+                      </div>
+                      <p className="mt-2 text-3xl font-black text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
+                      <p className="mt-1 text-xs font-semibold text-red-100">Negative deficit held during premium freeze.</p>
+                    </div>
                   </div>
-                </div>
 
-                <div className="mx-5 border-t border-white/80" />
-
-                <div className="px-6 py-5 text-center">
-                  <p className="text-4xl font-extrabold tracking-wide">Current Balance</p>
-                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
-                  <p className="mt-4 text-base text-white/95">Base balance before premium bundle value and premium commission are applied.</p>
                   {accountFrozen && premiumProjectedProfitValue > 0 && (
-                    <p className="mt-3 inline-flex items-center rounded-full border border-green-300/60 bg-green-500/20 px-4 py-1 text-base font-semibold text-green-100">
-                      You will earn +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))} after unfreezing.
-                    </p>
+                    <div className="mt-4 rounded-xl border border-emerald-300/50 bg-emerald-500/20 px-4 py-3 text-center">
+                      <p className="text-sm font-semibold text-emerald-100">
+                        Expected premium profit after unfreeze: +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))}
+                      </p>
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -1614,7 +1650,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <div className="mb-6 grid gap-3 sm:grid-cols-2">
               <Button
                 onClick={() => setActiveNav('analytics')}
-                className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                className="btn-primary-action w-full bg-blue-600 text-white"
               >
                 Submit Products & Earn
               </Button>
@@ -1632,7 +1668,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
                   setShowDepositModal(true);
                 }}
-                className="w-full bg-slate-800 text-white hover:bg-slate-900"
+                className="btn-primary-action w-full bg-slate-800 text-white"
               >
                 Deposit Funds (Bank/Crypto)
               </Button>
@@ -1758,6 +1794,40 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </CardContent>
               </Card>
             </div>
+
+            {showFAQ && (
+              <section id="faq-knowledge-section" className="mb-6 scroll-mt-24">
+                <Card className="overflow-hidden border border-blue-100 shadow-lg">
+                  <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-4 text-white">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-xl font-bold">FAQ & Knowledge Base</h3>
+                        <p className="text-xs text-white/90">Get quick answers without leaving your dashboard.</p>
+                      </div>
+                      <button
+                        onClick={() => setShowFAQ(false)}
+                        className="rounded-lg border border-white/40 px-3 py-1 text-sm font-semibold text-white hover:bg-white/10"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                  </div>
+                  <CardContent className="px-5 py-5">
+                    <FAQ
+                      accessToken={accessToken}
+                      onCreateSupportTicket={() => {
+                        setShowFAQ(false);
+                        setShowSupportTickets(true);
+                      }}
+                      onStartLiveChat={() => {
+                        setShowFAQ(false);
+                        setShowLiveChat(true);
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </section>
+            )}
           </>
         )}
 
@@ -2254,13 +2324,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         <VIPTiersCarousel
           currentTier={displayProfile.vipTier}
           onClose={() => setShowVIPCarousel(false)}
-        />
-      )}
-
-      {/* FAQ Page */}
-      {showFAQ && (
-        <FAQPage
-          onClose={() => setShowFAQ(false)}
         />
       )}
 
@@ -2867,42 +2930,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       )}
 
-      {/* FAQ Modal */}
-      {showFAQ && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">❓ FAQ & Knowledge Base</h2>
-                  <button
-                    onClick={() => setShowFAQ(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <FAQ
-                  accessToken={accessToken}
-                  onCreateSupportTicket={() => {
-                    setShowFAQ(false);
-                    setShowSupportTickets(true);
-                  }}
-                  onStartLiveChat={() => {
-                    setShowFAQ(false);
-                    setShowLiveChat(true);
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

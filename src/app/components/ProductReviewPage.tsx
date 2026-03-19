@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Button } from './ui/button';
 import { Menu, Bell, Star } from 'lucide-react';
 import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
@@ -196,7 +195,7 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
             onClick={handleSubmit}
             disabled={accountFrozen}
             title={accountFrozen ? 'Task submission is paused while your account is frozen for premium settlement.' : undefined}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
+            className="btn-primary-action w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold py-4 shadow-lg hover:from-blue-500 hover:to-cyan-400 active:scale-[0.98] disabled:bg-slate-400 disabled:cursor-not-allowed disabled:shadow-none"
           >
             Submit
           </button>

@@ -428,14 +428,16 @@ export function ProductsView({
                 disabled={completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen}
                 title={accountFrozen ? 'Task submission is paused while your account is frozen for premium settlement.' : undefined}
                 className={`
-                  w-32 h-32 rounded-full shadow-2xl
+                  btn-primary-action min-h-[3.5rem] w-full max-w-[15rem] rounded-2xl
                   flex items-center justify-center
-                  text-white text-xl font-bold
+                  text-white text-base font-semibold tracking-wide
                   transition-all duration-300
-                  ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600 hover:scale-105 active:scale-95'}
+                  ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen
+                    ? 'bg-slate-400 cursor-not-allowed shadow-none'
+                    : 'bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 active:scale-[0.98]'}
                 `}
               >
-                {accountFrozen ? 'Frozen' : (completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start')}
+                {accountFrozen ? 'Account Frozen' : (completedTasksInCurrentSet >= maxProducts ? 'Task Set Complete' : 'Start Task')}
               </button>
             </div>
 
