@@ -53,6 +53,14 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
 
       {/* Content */}
       <div className="max-w-2xl mx-auto px-4 py-8">
+        {accountFrozen && (
+          <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-center">
+            <p className="text-sm font-semibold text-red-700">
+              Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
+            </p>
+          </div>
+        )}
+
         {/* Product Info */}
         <div className="text-center mb-6">
           {/* Product Image */}

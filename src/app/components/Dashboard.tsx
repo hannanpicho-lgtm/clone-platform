@@ -407,8 +407,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setTaskActionNotice(message);
           return;
         }
-        setCurrentProduct(fallbackProduct);
-        setShowReviewPage(true);
+        setTaskActionNotice('Unable to load the next task from server. Task order is locked by admin position rules. Please retry.');
         return;
       }
 
@@ -425,8 +424,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       });
       setShowReviewPage(true);
     } catch {
-      setCurrentProduct(fallbackProduct);
-      setShowReviewPage(true);
+      setTaskActionNotice('Network issue while loading the next task. Task order is preserved; please try again.');
     }
   };
 
@@ -889,18 +887,37 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     })} USD`;
   };
 
-  const todaysCommissionValue = Number(todaysProfit || 0);
   const totalAccountBalanceValue = Number(balance || 0);
-  const holdAmountValue = Number(
-    Math.max(
-      Number(freezeAmount || 0),
-      Math.abs(Math.min(totalAccountBalanceValue, 0)),
-    ),
+  const premiumProjectedProfitValue = Number(
+    (activePremiumAssignment as any)?.potentialProfit
+    ?? premiumProfitBeforeFreeze
+    ?? 0,
   );
-  const currentBalanceBeforePremiumValue = Number(
+  const currentBalanceBeforePremiumRaw = Number(
     (displayProfile as any)?.premiumAssignment?.previousBalance
     ?? (displayProfile as any)?.principalBalance
     ?? totalAccountBalanceValue,
+  );
+  const currentBalanceBeforePremiumValue = Math.max(0, currentBalanceBeforePremiumRaw);
+  const upholdAmountMagnitudeValue = Number(
+    accountFrozen
+      ? Math.max(
+          Number(freezeAmount || 0),
+          Number((activePremiumAssignment as any)?.topUpRequired || 0),
+          Math.abs(Math.min(totalAccountBalanceValue, 0)),
+        )
+      : 0,
+  );
+  const upholdAmountValue = accountFrozen ? -Math.abs(upholdAmountMagnitudeValue) : 0;
+  const projectedTotalAccountBalanceValue = Number(
+    accountFrozen
+      ? currentBalanceBeforePremiumValue + upholdAmountMagnitudeValue + premiumProjectedProfitValue
+      : totalAccountBalanceValue,
+  );
+  const todaysCommissionValue = Number(
+    accountFrozen
+      ? Number(todaysProfit || 0) + premiumProjectedProfitValue
+      : Number(todaysProfit || 0),
   );
 
   const submitDepositRequest = async () => {
@@ -1539,11 +1556,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             {/* Home Financial Summary */}
             <Card className="mb-6 overflow-hidden border-0 bg-[#0c5b8e] text-white shadow-lg">
               <CardContent className="p-0">
+                {accountFrozen && (
+                  <div className="border-b border-white/35 bg-[#0a4f7b] px-6 py-4 text-center">
+                    <p className="text-sm font-semibold tracking-wide text-white/95">
+                      Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
+                    </p>
+                  </div>
+                )}
+
                 <div className="px-6 py-5 text-center">
                   <Rocket className="mx-auto h-14 w-14 text-white/95" />
                   <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TODAY'S COMMISSION</p>
                   <p className="mt-2 text-5xl font-black">{formatUsdFigure(todaysCommissionValue)}</p>
                   <p className="mt-4 text-base text-white/95">The displayed amount reflects today&apos;s earned commissions.</p>
+                  {accountFrozen && premiumProjectedProfitValue > 0 && (
+                    <p className="mt-2 text-sm font-semibold text-green-200">
+                      Includes projected premium commission of {formatUsdFigure(premiumProjectedProfitValue)}.
+                    </p>
+                  )}
                 </div>
 
                 <div className="mx-5 border-t border-white/80" />
@@ -1552,14 +1582,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <div>
                     <Wallet className="mx-auto h-14 w-14 text-white/95" />
                     <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TOTAL ACCOUNT BALANCE</p>
-                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(totalAccountBalanceValue)}</p>
-                    <p className="mt-4 text-base text-white/95">Includes deposits and all earned commissions, including premium unfreeze commission.</p>
+                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
+                    <p className="mt-4 text-base text-white/95">Includes premium value and premium commission profit after unfreeze.</p>
                   </div>
                   <div>
                     <Snowflake className="mx-auto h-14 w-14 text-white/95" />
                     <p className="mt-2 text-4xl font-extrabold tracking-wide">Uphold Amount</p>
-                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(holdAmountValue)}</p>
-                    <p className="mt-4 text-base text-white/95">Reflects your negative account deficit while frozen or under premium hold.</p>
+                    <p className="mt-2 text-5xl font-black text-red-200">{formatUsdFigure(upholdAmountValue)}</p>
+                    <p className="mt-4 text-base text-white/95">Negative deficit held during premium freeze.</p>
                   </div>
                 </div>
 
@@ -1569,6 +1599,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <p className="text-4xl font-extrabold tracking-wide">Current Balance</p>
                   <p className="mt-2 text-5xl font-black">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
                   <p className="mt-4 text-base text-white/95">Base balance before premium bundle value and premium commission are applied.</p>
+                  {accountFrozen && premiumProjectedProfitValue > 0 && (
+                    <p className="mt-3 text-base font-semibold text-green-200">
+                      You will earn {formatUsdFigure(premiumProjectedProfitValue)} after unfreezing.
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -380,15 +380,18 @@ export function ProductsView({
 
             {/* Start Button */}
             {accountFrozen && (
-              <div className="mb-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-2 py-1 shadow-lg rounded-md">
+              <div className="mb-4 rounded-md border border-blue-300 bg-gradient-to-r from-blue-500 to-purple-600 px-3 py-2 text-white shadow-lg">
                 <div className="flex items-center gap-1.5">
                   <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                   </svg>
                   <div className="flex-1">
-                    <h3 className="text-[10px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
-                    <p className="text-[9px] opacity-90 leading-tight">
-                      Negative balance: ${balance.toFixed(2)} · Top-Up Required: ${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount ?? 0)).toFixed(2)}
+                    <h3 className="text-[11px] font-bold leading-tight">🔒 ACCOUNT FROZEN</h3>
+                    <p className="text-[10px] leading-tight text-white/95">
+                      Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
+                    </p>
+                    <p className="mt-1 text-[9px] opacity-90 leading-tight">
+                      Uphold Amount: -${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount ?? 0)).toFixed(2)}
                     </p>
                     {activePremiumAssignment?.orderId && (
                       <p className="text-[9px] opacity-90 leading-tight mt-0.5">
@@ -417,6 +420,7 @@ export function ProductsView({
               <button
                 onClick={handleStart}
                 disabled={completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen}
+                title={accountFrozen ? 'Task submission is paused while your account is frozen for premium settlement.' : undefined}
                 className={`
                   w-32 h-32 rounded-full shadow-2xl
                   flex items-center justify-center
@@ -425,9 +429,15 @@ export function ProductsView({
                   ${completedTasksInCurrentSet >= maxProducts || !canStartBasedOnBalance || accountFrozen ? 'bg-gray-400 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600 hover:scale-105 active:scale-95'}
                 `}
               >
-                {completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start'}
+                {accountFrozen ? 'Frozen' : (completedTasksInCurrentSet >= maxProducts ? 'Complete' : 'Start')}
               </button>
             </div>
+
+            {accountFrozen && (
+              <p className="-mt-6 mb-6 text-center text-xs font-medium text-red-700">
+                Task submission is paused while your account is frozen for premium settlement.
+              </p>
+            )}
 
             {(uiMessage || actionNotice) && (
               <motion.div
