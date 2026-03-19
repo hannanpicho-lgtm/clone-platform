@@ -6,6 +6,7 @@ import { getCurrentTenantBranding } from '../branding/tenantBranding';
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
   onCancel: () => void;
+  accountFrozen?: boolean;
   product: {
     name: string;
     image: string;
@@ -16,7 +17,7 @@ interface ProductReviewPageProps {
   };
 }
 
-export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReviewPageProps) {
+export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, product }: ProductReviewPageProps) {
   const branding = getCurrentTenantBranding();
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -24,6 +25,9 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
   const [reviewText, setReviewText] = useState('');
 
   const handleSubmit = () => {
+    if (accountFrozen) {
+      return;
+    }
     onSubmit(rating, reviewText, reviewType);
   };
 
@@ -182,10 +186,17 @@ export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReview
           {/* Submit Button */}
           <button
             onClick={handleSubmit}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
+            disabled={accountFrozen}
+            title={accountFrozen ? 'Task submission is paused while your account is frozen for premium settlement.' : undefined}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
           >
             Submit
           </button>
+          {accountFrozen && (
+            <p className="mt-3 text-center text-xs font-medium text-red-100">
+              Task submission is paused while your account is frozen for premium settlement.
+            </p>
+          )}
         </div>
       </div>
     </div>
