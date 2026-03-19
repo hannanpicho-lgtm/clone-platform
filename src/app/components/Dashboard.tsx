@@ -2424,13 +2424,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </div>
             </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
-                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
+              <div className="btn-container border-t border-gray-200 p-6 pt-4 bg-white">
+                <div className="btn-group">
+                <Button variant="outline" onClick={() => setShowDepositModal(false)}>
                   Cancel
                 </Button>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
+                <Button className="btn-primary-action bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
                   {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
                 </Button>
+                </div>
               </div>
           </div>
         </div>
@@ -2462,13 +2464,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </div>
 
                 {/* Buttons */}
-                <div className="flex space-x-3 pt-4">
+                <div className="btn-container pt-4">
+                  <div className="btn-group">
                   <button
                     onClick={() => {
                       setShowWithdrawalModal(false);
                       setWithdrawalPassword('');
                     }}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                    className="min-w-0 rounded-lg border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
                   >
                     Cancel
                   </button>
@@ -2483,10 +2486,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         setUiNotice({ type: 'error', text: 'Please enter your withdrawal password' });
                       }
                     }}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+                    className="btn-primary-action min-w-0 rounded-lg bg-green-600 px-4 py-2 font-medium text-white transition-colors hover:bg-green-700"
                   >
                     Submit
                   </button>
+                  </div>
                 </div>
               </div>
             </div>

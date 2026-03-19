@@ -262,11 +262,11 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
               />
             </div>
 
-            <div className="flex gap-2">
+            <div className="btn-container">
+              <div className="btn-group">
               <Button
                 type="button"
                 variant="outline"
-                className="w-full"
                 onClick={() => {
                   setPasswordVerified(false);
                   setAmount('');
@@ -279,10 +279,11 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
+                className="btn-primary-action bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
               >
                 {loading ? 'Processing...' : 'Request Withdrawal'}
               </Button>
+              </div>
             </div>
           </form>
         )}

@@ -268,7 +268,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                     </TableCell>
                     <TableCell>{account.usersCreated || 0}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="btn-group sm:w-auto sm:max-w-xl sm:justify-end">
                         <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>
                           Edit
                         </Button>
@@ -278,7 +278,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                         <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>
                           Revoke
                         </Button>
-                        <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>
+                        <Button type="button" size="sm" variant="destructive" className="btn-primary-action" disabled={saving} onClick={() => handleDelete(account)}>
                           Delete
                         </Button>
                       </div>

@@ -474,7 +474,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                   <TableCell>{formatDate(user.createdAt)}</TableCell>
                   <TableCell className="text-right">
                     {canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canResetTasks || canManageTaskLimits || canUpdateVip ? (
-                      <div className="inline-flex items-center gap-2">
+                      <div className="inline-flex max-w-full flex-wrap items-center justify-end gap-2">
                         {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
                           <Button
                             type="button"
@@ -779,7 +779,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                 </ul>
               </div>
 
-              <div className="flex gap-2">
+              <div className="btn-group">
                 <Button
                   type="button"
                   variant="default"
@@ -787,7 +787,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                     const text = `Username: ${credentialResetModal.credentials!.username}\nPassword: ${credentialResetModal.credentials!.password}`;
                     copyToClipboard(text);
                   }}
-                  className="flex-1"
+                  className="btn-primary-action"
                 >
                   Copy Both
                 </Button>
@@ -795,7 +795,6 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                   type="button"
                   variant="secondary"
                   onClick={() => setCredentialResetModal({ open: false, credentials: null, userName: '' })}
-                  className="flex-1"
                 >
                   Close
                 </Button>

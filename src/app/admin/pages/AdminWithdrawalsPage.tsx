@@ -111,9 +111,9 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
                 <div className="text-sm text-slate-600">{item.userEmail || item.userId}</div>
                 <div className="text-xs text-slate-500">Requested: {formatDate(item.requestedAt)}</div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="btn-group md:w-auto md:max-w-[32rem]">
                 <div className="min-w-[110px] text-right font-semibold">${Number(item.amount || 0).toLocaleString()}</div>
-                <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id} onClick={() => handleApprove(item.id)}>
+                <Button type="button" size="sm" className="btn-primary-action bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id} onClick={() => handleApprove(item.id)}>
                   Approve
                 </Button>
                 <Button type="button" size="sm" variant="destructive" disabled={savingId === item.id} onClick={() => handleDeny(item.id)}>
