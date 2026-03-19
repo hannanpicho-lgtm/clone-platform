@@ -8,6 +8,8 @@ import {
   Bell,
   User,
   RefreshCw,
+  Rocket,
+  Snowflake,
   Home,
   BarChart3,
   FileText,
@@ -869,6 +871,28 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     automationCoverage: 78,
   } : metrics!;
 
+  const formatUsdFigure = (value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    const hasDecimals = Math.abs(safeValue % 1) > 0;
+    return `${safeValue.toLocaleString(undefined, {
+      minimumFractionDigits: hasDecimals ? 2 : 0,
+      maximumFractionDigits: 2,
+    })} USD`;
+  };
+
+  const todaysCommissionValue = Number(todaysProfit || 0);
+  const liveBalanceValue = Number(balance || 0);
+  const holdAmountValue = Number(
+    accountFrozen
+      ? Math.max(Number(freezeAmount || 0), Math.abs(Math.min(liveBalanceValue, 0)))
+      : 0,
+  );
+  const specialLuckyBonusValue = Number(
+    (displayProfile as any)?.specialLuckyBonus
+    || (displayProfile as any)?.luckyBonus
+    || 0,
+  );
+
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -1502,43 +1526,68 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </CardContent>
             </Card>
 
-            {/* Balance Display */}
-            <Card className="mb-6 shadow-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm opacity-90 mb-1">Total Earnings</p>
-                    <p className="text-4xl font-bold">${totalEarnings.toFixed(2)}</p>
-                    <p className="text-xs opacity-80 mt-2">{productsSubmitted} products submitted</p>
-                  </div>
-                  <Wallet className="h-16 w-16 opacity-30" />
+            {/* Home Financial Summary */}
+            <Card className="mb-6 overflow-hidden border-0 bg-[#0c5b8e] text-white shadow-lg">
+              <CardContent className="p-0">
+                <div className="px-6 py-5 text-center">
+                  <Rocket className="mx-auto h-14 w-14 text-white/95" />
+                  <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TODAY'S COMMISSION</p>
+                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(todaysCommissionValue)}</p>
+                  <p className="mt-4 text-base text-white/95">The displayed amount reflects today&apos;s earned commissions.</p>
                 </div>
-                <Button 
-                  onClick={() => setActiveNav('analytics')}
-                  className="w-full mt-4 bg-white text-green-600 hover:bg-gray-100"
-                >
-                  Submit Products & Earn
-                </Button>
-                <Button
-                  onClick={() => {
-                    setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
-                    const modalAssets = getDepositCryptoAssets(depositConfig);
-                    const modalDefaultAssetCode = String(
-                      depositConfig?.crypto?.defaultAsset
-                      || modalAssets?.[0]?.asset
-                      || 'BTC'
-                    ).toUpperCase();
-                    const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
-                    setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
-                    setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
-                    setShowDepositModal(true);
-                  }}
-                  className="w-full mt-3 bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Deposit Funds (Bank/Crypto)
-                </Button>
+
+                <div className="mx-5 border-t border-white/80" />
+
+                <div className="grid grid-cols-1 gap-6 px-6 py-6 text-center md:grid-cols-2">
+                  <div>
+                    <Wallet className="mx-auto h-14 w-14 text-white/95" />
+                    <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">BALANCE</p>
+                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(liveBalanceValue)}</p>
+                    <p className="mt-4 text-base text-white/95">The total balance reflects both the deposited amount and earned commissions.</p>
+                  </div>
+                  <div>
+                    <Snowflake className="mx-auto h-14 w-14 text-white/95" />
+                    <p className="mt-2 text-4xl font-extrabold tracking-wide">Hold Amount</p>
+                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(holdAmountValue)}</p>
+                    <p className="mt-4 text-base text-white/95">Contact Support for inquiries</p>
+                  </div>
+                </div>
+
+                <div className="mx-5 border-t border-white/80" />
+
+                <div className="px-6 py-5 text-center">
+                  <p className="text-4xl font-extrabold tracking-wide">Special Lucky Bonus</p>
+                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(specialLuckyBonusValue)}</p>
+                </div>
               </CardContent>
             </Card>
+
+            <div className="mb-6 grid gap-3 sm:grid-cols-2">
+              <Button
+                onClick={() => setActiveNav('analytics')}
+                className="w-full bg-blue-600 text-white hover:bg-blue-700"
+              >
+                Submit Products & Earn
+              </Button>
+              <Button
+                onClick={() => {
+                  setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
+                  const modalAssets = getDepositCryptoAssets(depositConfig);
+                  const modalDefaultAssetCode = String(
+                    depositConfig?.crypto?.defaultAsset
+                    || modalAssets?.[0]?.asset
+                    || 'BTC'
+                  ).toUpperCase();
+                  const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
+                  setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
+                  setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                  setShowDepositModal(true);
+                }}
+                className="w-full bg-slate-800 text-white hover:bg-slate-900"
+              >
+                Deposit Funds (Bank/Crypto)
+              </Button>
+            </div>
 
             {/* VIP Levels Section */}
             <div className="mb-6">
