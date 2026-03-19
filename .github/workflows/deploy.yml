@@ -96,6 +96,10 @@ jobs:
         continue-on-error: true  # temporary: unblock deploy while diagnosing CI smoke test env
 
       - name: Build frontend
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npm run build
 
       - name: Upload build artifact
