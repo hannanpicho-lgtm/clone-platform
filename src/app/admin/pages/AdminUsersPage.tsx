@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ShieldAlert, Copy, Key } from 'lucide-react';
+import { AlertCircle, ShieldAlert, Copy, Key, RefreshCw } from 'lucide-react';
 import {
   adjustUserBalance,
   assignUserPremium,
@@ -357,11 +357,29 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     setTimeout(() => setCredentialsCopied(false), 2000);
   };
 
+  const handleRefreshUsers = async () => {
+    setMessage('');
+    await load();
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
-        <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
+          <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleRefreshUsers}
+          disabled={loading}
+          className="shrink-0"
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

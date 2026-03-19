@@ -7,6 +7,7 @@ import {
   Menu,
   Bell,
   User,
+  RefreshCw,
   Home,
   BarChart3,
   FileText,
@@ -296,6 +297,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showSupportTickets, setShowSupportTickets] = useState(false);
   const [showLiveChat, setShowLiveChat] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
+  const [manualRefreshToken, setManualRefreshToken] = useState(0);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -661,7 +664,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   };
 
   useEffect(() => {
-    setIsLoading(true);
+    if (manualRefreshToken === 0) {
+      setIsLoading(true);
+    } else {
+      setIsManualRefreshing(true);
+    }
 
     const fetchData = async () => {
         try {
@@ -758,9 +765,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         }
     };
     fetchData().finally(() => {
-      setIsLoading(false);
+      if (manualRefreshToken === 0) {
+        setIsLoading(false);
+      }
+      setIsManualRefreshing(false);
     });
-  }, [accessToken]);
+  }, [accessToken, manualRefreshToken]);
 
   useEffect(() => {
     if (depositMethod !== 'crypto') {
@@ -1379,6 +1389,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           </button>
           <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
           <div className="flex items-center space-x-3">
+            <button
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              onClick={() => setManualRefreshToken((prev) => prev + 1)}
+              aria-label="Refresh dashboard"
+              title="Refresh dashboard"
+              disabled={isManualRefreshing}
+            >
+              <RefreshCw className={`h-5 w-5 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+            </button>
             <button
               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
               onClick={() => setShowMenu(true)}
