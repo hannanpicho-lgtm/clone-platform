@@ -3029,21 +3029,62 @@ app.post("/admin/unfreeze", async (c) => {
       return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
     }
 
-    const currentBalance = Number(user?.balance ?? 0);
-    const freezeAmount = Number(user?.freezeAmount ?? 0);
-    const premiumPreviousBalance = Number(user?.premiumAssignment?.previousBalance ?? NaN);
-    const calculatedBalance = user?.accountFrozen
-      ? currentBalance + freezeAmount
+    const currentBalance = roundCurrency(Number(user?.balance ?? 0));
+    const freezeAmount = roundCurrency(Number(user?.freezeAmount ?? 0));
+    const assignmentAmount = roundCurrency(Number(user?.premiumAssignment?.amount ?? user?.premiumAssignment?.enteredAmount ?? 0));
+    const previousBalance = roundCurrency(Number(user?.premiumAssignment?.previousBalance ?? currentBalance));
+    const creditedPremiumAmount = assignmentAmount > 0 ? assignmentAmount : freezeAmount;
+
+    const vipTierForProfit = String(user?.vipTier || 'Normal');
+    const premiumCommissionRate = getVipTaskCommissionRate(vipTierForProfit) * 12;
+    const premiumProfit = creditedPremiumAmount > 0
+      ? roundCurrency(creditedPremiumAmount * premiumCommissionRate)
+      : 0;
+
+    const nextBalance = user?.accountFrozen
+      ? roundCurrency(previousBalance + creditedPremiumAmount + premiumProfit)
       : currentBalance;
-    const nextBalance = Number.isFinite(premiumPreviousBalance)
-      ? Math.max(calculatedBalance, premiumPreviousBalance)
-      : calculatedBalance;
+
+    const unfreezeDate = new Date().toISOString().slice(0, 10);
+    const existingTodayProfit = String(user?.todayProfitDate || '') === unfreezeDate
+      ? roundCurrency(Number(user?.todayProfit || 0))
+      : 0;
+    const newTodayProfit = roundCurrency(existingTodayProfit + premiumProfit);
+
+    if (premiumProfit > 0) {
+      try {
+        const productRows = await getKvRowsByPrefix(`product:${userId}:`);
+        const frozenRow = productRows.find((row: any) => String(row?.value?.status || '').toLowerCase() === 'frozen');
+        if (frozenRow) {
+          await kv.set(frozenRow.key, {
+            ...frozenRow.value,
+            status: 'approved',
+            expectedProfit: premiumProfit,
+            userEarned: premiumProfit,
+            submittedAt: new Date().toISOString(),
+          });
+        }
+
+        const userProfits = await kv.get(`profits:${userId}`) || {
+          totalEarned: 0,
+          fromDirectChildren: 0,
+          fromIndirectReferrals: 0,
+          byLevel: {},
+        };
+        userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + premiumProfit);
+        await kv.set(`profits:${userId}`, userProfits);
+      } catch (_error) {
+        // Non-fatal; unfreeze should still complete even if product/profit log update fails.
+      }
+    }
 
     const updatedUser = {
       ...user,
       accountFrozen: false,
       balance: nextBalance,
       freezeAmount: 0,
+      todayProfit: newTodayProfit,
+      todayProfitDate: unfreezeDate,
       unfrozenAt: new Date().toISOString(),
     };
 
@@ -3711,9 +3752,16 @@ app.post("/submit-product", async (c) => {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
-    const { productName, productValue } = await c.req.json();
+    const { productName, productValue, productImage, ratingNo } = await c.req.json();
+    const normalizedName = String(productName || '').trim();
+    const normalizedValue = Number(productValue || 0);
+    const normalizedImageInput = String(productImage || '').trim();
+    const normalizedImage = isValidTaskProductImageUrl(normalizedImageInput)
+      ? normalizedImageInput
+      : TASK_PRODUCT_IMAGE_POOL[0];
+    const normalizedRatingNo = String(ratingNo || '').trim();
 
-    if (!productName || !productValue || productValue <= 0) {
+    if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: "Product name and positive value are required" }, 400);
     }
 
@@ -3838,9 +3886,10 @@ app.post("/submit-product", async (c) => {
         await kv.set(`product:${userId}:${Date.now()}`, {
           id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           userId,
-          productName: String(productName || '').trim(),
-          productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
-          productValue: Number(productValue || 0),
+          productName: normalizedName,
+          productImage: normalizedImage,
+          productValue: normalizedValue,
+          ratingNo: normalizedRatingNo || null,
           userEarned: 0,
           commissionsCascade: [],
           status: 'frozen',
@@ -3868,7 +3917,12 @@ app.post("/submit-product", async (c) => {
     }
 
     // Calculate profit distribution
-    const profitAmount = productValue * 0.8; // 80% to user
+    const profitAmount = normalizedValue * 0.8; // 80% to user
+    const todayDateForProfit = new Date().toISOString().slice(0, 10);
+    const existingTodayProfit = String(userProfile?.todayProfitDate || '') === todayDateForProfit
+      ? roundCurrency(Number(userProfile?.todayProfit || 0))
+      : 0;
+    const newTodayProfit = roundCurrency(existingTodayProfit + profitAmount);
 
     // Update user balance
     const updatedProfile = {
@@ -3881,6 +3935,8 @@ app.post("/submit-product", async (c) => {
       taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
       currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
       currentSetDate: todayDate,
+      todayProfit: newTodayProfit,
+      todayProfitDate: todayDateForProfit,
       updatedAt: new Date().toISOString(),
     };
     await kv.set(`user:${userId}`, updatedProfile);
@@ -3892,12 +3948,12 @@ app.post("/submit-product", async (c) => {
       fromIndirectReferrals: 0,
       byLevel: {},
     };
-    userProfits.totalEarned = (userProfits.totalEarned || 0) + profitAmount;
+    userProfits.totalEarned = roundCurrency(Number(userProfits.totalEarned || 0) + profitAmount);
     await kv.set(`profits:${userId}`, userProfits);
 
     // Multi-level commission cascade
     let currentParentId = userProfile.parentUserId;
-    let commissionAmount = productValue * 0.2; // Start with 20% for direct parent
+    let commissionAmount = normalizedValue * 0.2; // Start with 20% for direct parent
     let level = 1;
     const commissionLog = [];
 
@@ -3965,18 +4021,21 @@ app.post("/submit-product", async (c) => {
     // Log product submission
     await kv.set(`product:${userId}:${Date.now()}`, {
       userId,
-      productName,
-      productValue,
+      productName: normalizedName,
+      productImage: normalizedImage,
+      productValue: normalizedValue,
+      ratingNo: normalizedRatingNo || null,
       userEarned: profitAmount,
       commissionsCascade: commissionLog,
+      status: 'approved',
       submittedAt: new Date().toISOString(),
     });
 
     return c.json({
       success: true,
       product: {
-        name: productName,
-        value: productValue,
+        name: normalizedName,
+        value: normalizedValue,
         userEarned: profitAmount,
         commissionsCascade: commissionLog,
       },
@@ -4011,10 +4070,15 @@ app.post('/tasks/complete-product', async (c) => {
       return c.json({ error: 'Unauthorized - Invalid token' }, 401);
     }
 
-    const { productName, productValue, profit } = await c.req.json();
+    const { productName, productValue, profit, productImage, ratingNo } = await c.req.json();
     const normalizedName = String(productName || '').trim();
     const normalizedValue = Number(productValue || 0);
     const normalizedProfit = Number(profit || 0);
+    const normalizedImageInput = String(productImage || '').trim();
+    const normalizedImage = isValidTaskProductImageUrl(normalizedImageInput)
+      ? normalizedImageInput
+      : TASK_PRODUCT_IMAGE_POOL[0];
+    const normalizedRatingNo = String(ratingNo || '').trim();
 
     if (!normalizedName || !Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return c.json({ error: 'productName and productValue are required' }, 400);
@@ -4136,6 +4200,45 @@ app.post('/tasks/complete-product', async (c) => {
 
         await kv.set(`user:${userId}`, frozenProfile);
 
+        const productRows = await getKvRowsByPrefix(`product:${userId}:`);
+        const matchingPending = productRows.find((row: any) => {
+          const value = row?.value || {};
+          if (String(value?.status || '').toLowerCase() !== 'pending') return false;
+          if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
+          return String(value?.productName || '') === normalizedName
+            && Number(value?.productValue || 0) === normalizedValue;
+        });
+
+        const frozenSubmittedAt = new Date().toISOString();
+        if (matchingPending) {
+          await kv.set(matchingPending.key, {
+            ...matchingPending.value,
+            productName: normalizedName,
+            productImage: normalizedImage,
+            productValue: normalizedValue,
+            expectedProfit: normalizedProfit > 0 ? roundCurrency(normalizedProfit) : 0,
+            taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
+            userEarned: 0,
+            status: 'frozen',
+            submittedAt: frozenSubmittedAt,
+            updatedAt: frozenSubmittedAt,
+          });
+        } else {
+          await kv.set(`product:${userId}:${Date.now()}`, {
+            id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            userId,
+            productName: normalizedName,
+            productImage: normalizedImage,
+            productValue: normalizedValue,
+            expectedProfit: normalizedProfit > 0 ? roundCurrency(normalizedProfit) : potentialPremiumProfit,
+            userEarned: 0,
+            taskToken: normalizedRatingNo || null,
+            commissionsCascade: [],
+            status: 'frozen',
+            submittedAt: frozenSubmittedAt,
+          });
+        }
+
         return c.json({
           error: 'Account is frozen. Premium product encountered and top-up is required to continue.',
           premiumEncounter: {
@@ -4159,6 +4262,11 @@ app.post('/tasks/complete-product', async (c) => {
     const expectedProfit = roundCurrency(normalizedValue * getVipTaskCommissionRate(String(userProfile?.vipTier || 'Normal')));
     const appliedProfit = Number.isFinite(normalizedProfit) && normalizedProfit > 0 ? roundCurrency(normalizedProfit) : expectedProfit;
 
+    const existingTodayProfit = String(userProfile?.todayProfitDate || '') === todayDate
+      ? roundCurrency(Number(userProfile?.todayProfit || 0))
+      : 0;
+    const newTodayProfit = roundCurrency(existingTodayProfit + appliedProfit);
+
     const updatedProfile = {
       ...userProfile,
       balance: roundCurrency(currentBalanceForProfit + appliedProfit),
@@ -4169,6 +4277,8 @@ app.post('/tasks/complete-product', async (c) => {
       taskSetsCompletedToday: normalizedTaskState.taskSetsCompletedToday,
       currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted + 1,
       currentSetDate: todayDate,
+      todayProfit: newTodayProfit,
+      todayProfitDate: todayDate,
       lastCompletedTaskAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -4186,17 +4296,44 @@ app.post('/tasks/complete-product', async (c) => {
     const totalEarnings = computeTotalEarnings(updatedProfile, Number(userProfits.totalEarned || 0));
 
     const submittedAt = new Date().toISOString();
-    await kv.set(`product:${userId}:${Date.now()}`, {
-      id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      userId,
-      productName: normalizedName,
-      productImage: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400',
-      productValue: normalizedValue,
-      userEarned: appliedProfit,
-      commissionsCascade: [],
-      status: 'approved',
-      submittedAt,
+    const pendingRows = await getKvRowsByPrefix(`product:${userId}:`);
+    const matchingPending = pendingRows.find((row: any) => {
+      const value = row?.value || {};
+      if (String(value?.status || '').toLowerCase() !== 'pending') return false;
+      if (normalizedRatingNo && String(value?.taskToken || '') === normalizedRatingNo) return true;
+      return String(value?.productName || '') === normalizedName
+        && Number(value?.productValue || 0) === normalizedValue;
     });
+
+    if (matchingPending) {
+      await kv.set(matchingPending.key, {
+        ...matchingPending.value,
+        productName: normalizedName,
+        productImage: normalizedImage,
+        productValue: normalizedValue,
+        expectedProfit: appliedProfit,
+        userEarned: appliedProfit,
+        taskToken: normalizedRatingNo || matchingPending.value?.taskToken || null,
+        commissionsCascade: [],
+        status: 'approved',
+        submittedAt,
+        updatedAt: submittedAt,
+      });
+    } else {
+      await kv.set(`product:${userId}:${Date.now()}`, {
+        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        productName: normalizedName,
+        productImage: normalizedImage,
+        productValue: normalizedValue,
+        expectedProfit: appliedProfit,
+        userEarned: appliedProfit,
+        taskToken: normalizedRatingNo || null,
+        commissionsCascade: [],
+        status: 'approved',
+        submittedAt,
+      });
+    }
 
     const currentSetDone = updatedProfile.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet;
     if (currentSetDone) {

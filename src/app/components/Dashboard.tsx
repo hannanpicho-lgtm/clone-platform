@@ -90,6 +90,8 @@ interface UserProfile {
   extraTaskSets?: number;
   taskSetsCompletedToday?: number;
   currentSetTasksCompleted?: number;
+  todayProfit?: number;
+  todayProfitDate?: string | null;
   premiumAssignment?: {
     orderId?: string;
     amount?: number;
@@ -442,6 +444,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         productName: currentProduct.name,
         productValue: currentProduct.totalAmount,
         profit: currentProduct.profit,
+        productImage: currentProduct.image,
+        ratingNo: currentProduct.ratingNo,
       }),
     });
 
@@ -716,6 +720,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           });
 
           setBalance(Number(loadedProfile?.balance ?? 0));
+          const todayDate = new Date().toISOString().slice(0, 10);
+          const loadedTodayProfit = String(loadedProfile?.todayProfitDate || '') === todayDate
+            ? Number(loadedProfile?.todayProfit ?? 0)
+            : 0;
+          setTodaysProfit(loadedTodayProfit);
           setTotalEarnings(Number(loadedProfile?.totalEarnings ?? loadedProfile?.balance ?? 0));
           setProductsSubmitted(Number(loadedProfile?.productsSubmitted ?? 0));
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
@@ -881,16 +890,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   };
 
   const todaysCommissionValue = Number(todaysProfit || 0);
-  const liveBalanceValue = Number(balance || 0);
+  const totalAccountBalanceValue = Number(balance || 0);
   const holdAmountValue = Number(
-    accountFrozen
-      ? Math.max(Number(freezeAmount || 0), Math.abs(Math.min(liveBalanceValue, 0)))
-      : 0,
+    Math.max(
+      Number(freezeAmount || 0),
+      Math.abs(Math.min(totalAccountBalanceValue, 0)),
+    ),
   );
-  const specialLuckyBonusValue = Number(
-    (displayProfile as any)?.specialLuckyBonus
-    || (displayProfile as any)?.luckyBonus
-    || 0,
+  const currentBalanceBeforePremiumValue = Number(
+    (displayProfile as any)?.premiumAssignment?.previousBalance
+    ?? (displayProfile as any)?.principalBalance
+    ?? totalAccountBalanceValue,
   );
 
   const submitDepositRequest = async () => {
@@ -1541,23 +1551,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 <div className="grid grid-cols-1 gap-6 px-6 py-6 text-center md:grid-cols-2">
                   <div>
                     <Wallet className="mx-auto h-14 w-14 text-white/95" />
-                    <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">BALANCE</p>
-                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(liveBalanceValue)}</p>
-                    <p className="mt-4 text-base text-white/95">The total balance reflects both the deposited amount and earned commissions.</p>
+                    <p className="mt-2 text-4xl font-extrabold uppercase tracking-wide">TOTAL ACCOUNT BALANCE</p>
+                    <p className="mt-2 text-5xl font-black">{formatUsdFigure(totalAccountBalanceValue)}</p>
+                    <p className="mt-4 text-base text-white/95">Includes deposits and all earned commissions, including premium unfreeze commission.</p>
                   </div>
                   <div>
                     <Snowflake className="mx-auto h-14 w-14 text-white/95" />
-                    <p className="mt-2 text-4xl font-extrabold tracking-wide">Hold Amount</p>
+                    <p className="mt-2 text-4xl font-extrabold tracking-wide">Uphold Amount</p>
                     <p className="mt-2 text-5xl font-black">{formatUsdFigure(holdAmountValue)}</p>
-                    <p className="mt-4 text-base text-white/95">Contact Support for inquiries</p>
+                    <p className="mt-4 text-base text-white/95">Reflects your negative account deficit while frozen or under premium hold.</p>
                   </div>
                 </div>
 
                 <div className="mx-5 border-t border-white/80" />
 
                 <div className="px-6 py-5 text-center">
-                  <p className="text-4xl font-extrabold tracking-wide">Special Lucky Bonus</p>
-                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(specialLuckyBonusValue)}</p>
+                  <p className="text-4xl font-extrabold tracking-wide">Current Balance</p>
+                  <p className="mt-2 text-5xl font-black">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
+                  <p className="mt-4 text-base text-white/95">Base balance before premium bundle value and premium commission are applied.</p>
                 </div>
               </CardContent>
             </Card>
