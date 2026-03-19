@@ -1116,22 +1116,22 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   {/* Left side - Stats */}
                   <div className="space-y-2.5 flex-1">
                     <div>
-                      <p className="text-blue-200 text-xs uppercase tracking-wide">Today's Commission</p>
-                      <p className="text-emerald-100 font-bold text-[1.1rem] leading-tight">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Today's Commission</p>
+                      <p className="text-emerald-100 font-bold tabular-nums text-[1.08rem] leading-none">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs uppercase tracking-wide">Total Account Balance</p>
-                      <p className="text-white font-bold text-[1.1rem] leading-tight">${balance.toFixed(2)}</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Total Account Balance</p>
+                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${balance.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs uppercase tracking-wide">Current Balance</p>
-                      <p className="text-white font-bold text-[1.1rem] leading-tight">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Current Balance</p>
+                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
                     </div>
                   </div>
 
                   {/* Right side - Credit Score Circle */}
-                  <div className="relative w-[6.25rem] h-[6.25rem]">
-                    <svg className="w-[6.25rem] h-[6.25rem] transform -rotate-90">
+                  <div className="relative w-24 h-24">
+                    <svg className="w-24 h-24 transform -rotate-90">
                       {/* Background circle */}
                       <circle
                         cx="48"
@@ -1594,45 +1594,45 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
                 <div className="px-6 py-6">
                   <div className="mb-4 text-center">
-                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white/80">Financial Summary</p>
-                    <h3 className="mt-2 text-3xl font-black tracking-wide">Clear Account Snapshot</h3>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/80">Financial Summary</p>
+                    <h3 className="mt-2 text-[1.7rem] sm:text-3xl font-black tracking-wide leading-tight">Clear Account Snapshot</h3>
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
                       <div className="flex items-center gap-3">
                         <Rocket className="h-8 w-8 text-emerald-200" />
-                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Today&apos;s Commission</p>
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Today&apos;s Commission</p>
                       </div>
-                      <p className="mt-2 text-3xl font-black text-emerald-100">{formatUsdFigure(todaysCommissionValue)}</p>
-                      <p className="mt-1 text-xs text-white/80">Includes today&apos;s realized earnings.</p>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-emerald-100">{formatUsdFigure(todaysCommissionValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Includes today&apos;s realized earnings.</p>
                     </div>
 
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
                       <div className="flex items-center gap-3">
                         <Wallet className="h-8 w-8 text-white/95" />
-                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Total Account Balance</p>
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Total Account Balance</p>
                       </div>
-                      <p className="mt-2 text-3xl font-black text-white">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
-                      <p className="mt-1 text-xs text-white/80">Current balance plus premium release projection.</p>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Current balance plus premium release projection.</p>
                     </div>
 
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4">
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
                       <div className="flex items-center gap-3">
                         <Wallet className="h-8 w-8 text-white/95" />
-                        <p className="text-xs font-semibold uppercase tracking-wide text-white/80">Current Balance</p>
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Current Balance</p>
                       </div>
-                      <p className="mt-2 text-3xl font-black text-white">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
-                      <p className="mt-1 text-xs text-white/80">Base balance before premium settlement adjustments.</p>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Base balance before premium settlement adjustments.</p>
                     </div>
 
-                    <div className="rounded-2xl border border-red-300/40 bg-red-500/20 p-4">
+                    <div className="rounded-2xl border border-red-300/40 bg-red-500/20 p-4 sm:p-5">
                       <div className="flex items-center gap-3">
                         <Snowflake className="h-8 w-8 text-red-100" />
-                        <p className="text-xs font-semibold uppercase tracking-wide text-red-100">Uphold Amount</p>
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-red-100">Uphold Amount</p>
                       </div>
-                      <p className="mt-2 text-3xl font-black text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
-                      <p className="mt-1 text-xs font-semibold text-red-100">Negative deficit held during premium freeze.</p>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs font-semibold leading-relaxed text-red-100">Negative deficit held during premium freeze.</p>
                     </div>
                   </div>
 

@@ -526,25 +526,25 @@ export function ProductsView({
             {/* Financial Snapshot */}
             <div className="border-t-4 border-cyan-500">
               <div className="grid grid-cols-1 sm:grid-cols-2">
-                <div className="border-b border-slate-200 p-5 sm:border-r">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Current Balance</p>
-                  <p className="mt-1 text-3xl font-black text-slate-900">${currentBalanceValue.toFixed(2)}</p>
-                  <p className="mt-1 text-xs text-slate-600">Base available balance before premium settlement.</p>
+                <div className="border-b border-slate-200 p-4 sm:p-5 sm:border-r">
+                  <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.11em] text-slate-500">Current Balance</p>
+                  <p className="mt-1 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-slate-900">${currentBalanceValue.toFixed(2)}</p>
+                  <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-slate-600">Base available balance before premium settlement.</p>
                 </div>
-                <div className="border-b border-slate-200 p-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total Account Balance</p>
-                  <p className="mt-1 text-3xl font-black text-slate-900">${totalAccountBalanceValue.toFixed(2)}</p>
-                  <p className="mt-1 text-xs text-slate-600">Projected total after premium release and commission.</p>
+                <div className="border-b border-slate-200 p-4 sm:p-5">
+                  <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.11em] text-slate-500">Total Account Balance</p>
+                  <p className="mt-1 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-slate-900">${totalAccountBalanceValue.toFixed(2)}</p>
+                  <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-slate-600">Projected total after premium release and commission.</p>
                 </div>
-                <div className="border-b border-slate-200 p-5 sm:border-b-0 sm:border-r">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today&apos;s Commission</p>
-                  <p className="mt-1 text-3xl font-black text-emerald-600">${todaysCommissionValue.toFixed(2)}</p>
-                  <p className="mt-1 text-xs text-slate-600">Daily commission figure displayed in the financial card.</p>
+                <div className="border-b border-slate-200 p-4 sm:p-5 sm:border-b-0 sm:border-r">
+                  <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.11em] text-slate-500">Today&apos;s Commission</p>
+                  <p className="mt-1 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-emerald-600">${todaysCommissionValue.toFixed(2)}</p>
+                  <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-slate-600">Daily commission figure displayed in the financial card.</p>
                 </div>
-                <div className="p-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Uphold Amount</p>
-                  <p className={`mt-1 text-3xl font-black ${upholdAmountValue < 0 ? 'text-red-600' : 'text-slate-900'}`}>${upholdAmountValue.toFixed(2)}</p>
-                  <p className="mt-1 text-xs text-slate-600">Negative deficit held when premium freeze is active.</p>
+                <div className="p-4 sm:p-5">
+                  <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.11em] text-slate-500">Uphold Amount</p>
+                  <p className={`mt-1 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none ${upholdAmountValue < 0 ? 'text-red-600' : 'text-slate-900'}`}>${upholdAmountValue.toFixed(2)}</p>
+                  <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-slate-600">Negative deficit held when premium freeze is active.</p>
                 </div>
               </div>
             </div>
