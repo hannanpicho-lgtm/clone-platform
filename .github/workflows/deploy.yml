@@ -135,7 +135,10 @@ jobs:
           fi
 
       - name: Install CLIs
-        run: npm install -g supabase wrangler
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
       - name: Deploy to Cloudflare Pages
         env:
@@ -143,7 +146,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_PAGES_PROJECT: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
         run: |
-          wrangler pages deploy dist --project-name "$CLOUDFLARE_PAGES_PROJECT" --branch main
+          npx wrangler pages deploy dist --project-name "$CLOUDFLARE_PAGES_PROJECT" --branch main
 
       - name: Deploy Supabase function
         env:
