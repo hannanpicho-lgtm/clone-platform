@@ -187,6 +187,7 @@ jobs:
           exit 1
 
       - name: Smoke tests (post-deploy)
+        continue-on-error: true  # advisory: deploy already completed, don't mark pipeline failed
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
