@@ -160,6 +160,11 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -x
+          if [ ! -f supabase/schema/kv_store_44a642d3.sql ]; then
+            echo "::error title=Schema File Missing::supabase/schema/kv_store_44a642d3.sql not found"
+            exit 1
+          fi
           supabase db query --db-url "$SUPABASE_DB_URL" --file supabase/schema/kv_store_44a642d3.sql
 
       - name: Health check
