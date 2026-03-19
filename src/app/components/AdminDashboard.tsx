@@ -63,6 +63,11 @@ interface User {
   currentSetTasksCompleted?: number;
   currentSetDate?: string | null;
   createdAt: string;
+  parentUserId?: string | null;
+  invitationCode?: string | null;
+  usedInvitationCode?: string | null;
+  invitedByName?: string | null;
+  invitedByAdminGenerated?: boolean;
 }
 
 interface LimitedAdminAccount {
@@ -3052,9 +3057,69 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               </div>
 
               <div className="p-6 space-y-6">
-                {/* User Info */}
                 {/* Debug: Log selectedUser in modal render */}
                 {console.log('DEBUG: Rendering User Details Modal for', selectedUser)}
+
+                {/* Identity & Referral */}
+                <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400">Identity &amp; Referral</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs text-gray-500 mb-0.5">User ID</p>
+                        <p className="font-mono text-xs text-gray-800 break-all">{selectedUser.id}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
+                        onClick={() => navigator.clipboard.writeText(selectedUser.id)}
+                        title="Copy User ID"
+                      >Copy</button>
+                    </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs text-gray-500 mb-0.5">Invitation Code (their own)</p>
+                        <p className="font-mono text-sm font-bold text-indigo-700">{selectedUser.invitationCode || '—'}</p>
+                      </div>
+                      {selectedUser.invitationCode && (
+                        <button
+                          type="button"
+                          className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
+                          onClick={() => navigator.clipboard.writeText(selectedUser.invitationCode!)}
+                          title="Copy Invitation Code"
+                        >Copy</button>
+                      )}
+                    </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs text-gray-500 mb-0.5">Parent Invitation Code (used at registration)</p>
+                        <p className="font-mono text-sm font-bold text-purple-700">{selectedUser.usedInvitationCode || '—'}</p>
+                      </div>
+                      {selectedUser.usedInvitationCode && (
+                        <button
+                          type="button"
+                          className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
+                          onClick={() => navigator.clipboard.writeText(selectedUser.usedInvitationCode!)}
+                          title="Copy Parent Invitation Code"
+                        >Copy</button>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-0.5">Invited By</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {selectedUser.invitedByName
+                          ? <>{selectedUser.invitedByName}{selectedUser.invitedByAdminGenerated && <span className="ml-2 text-xs font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Admin</span>}</>
+                          : <span className="text-gray-400">Direct / No referral</span>}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-0.5">Account Created</p>
+                      <p className="text-sm font-semibold text-gray-900">{new Date(selectedUser.createdAt).toLocaleString()}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* User Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-500">Name</p>
