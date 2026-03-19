@@ -1066,11 +1066,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showMenu && (
         <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowMenu(false)}>
           <div 
-            className="absolute left-0 top-0 bottom-0 w-[88vw] max-w-[360px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-[90vw] max-w-[390px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with User Info */}
-            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-4 pt-5 pb-4" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
+            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-5 pt-6 pb-5" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
               {/* Close Button */}
               <button 
                 onClick={() => setShowMenu(false)} 
@@ -1082,8 +1082,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </button>
 
               {/* User Avatar and Info */}
-              <div className="flex items-start space-x-3 mb-4 pr-11">
-                <div className="w-12 h-12 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
+              <div className="flex items-start space-x-3 mb-5 pr-11">
+                <div className="w-14 h-14 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
                   {!avatarError ? (
                     <img
                       src={avatarSrc}
@@ -1096,42 +1096,42 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   )}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-bold text-base leading-tight break-words">{displayProfile.name}</h3>
-                  <div className="mt-2 bg-white/10 rounded-lg p-2 space-y-1">
+                  <h3 className="text-white font-bold text-[1.05rem] leading-tight break-words">{displayProfile.name}</h3>
+                  <div className="mt-2 bg-white/10 rounded-lg p-2.5 space-y-1.5">
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Member ID:</span>{' '}
-                      <span className="font-mono tracking-wide">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
+                      <span className="font-mono tracking-[0.06em]">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
                     </p>
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Invite Code:</span>{' '}
-                      <span className="font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</span>
+                      <span className="font-mono tracking-[0.06em]">{displayProfile.invitationCode || 'Not assigned'}</span>
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Stats and Credit Score */}
-              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3.5">
                 <div className="flex justify-between items-start">
                   {/* Left side - Stats */}
-                  <div className="space-y-2 flex-1">
+                  <div className="space-y-2.5 flex-1">
                     <div>
                       <p className="text-blue-200 text-xs uppercase tracking-wide">Today's Commission</p>
-                      <p className="text-emerald-100 font-bold text-lg">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-emerald-100 font-bold text-[1.1rem] leading-tight">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-blue-200 text-xs uppercase tracking-wide">Total Account Balance</p>
-                      <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
+                      <p className="text-white font-bold text-[1.1rem] leading-tight">${balance.toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-blue-200 text-xs uppercase tracking-wide">Current Balance</p>
-                      <p className="text-white font-bold text-lg">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
+                      <p className="text-white font-bold text-[1.1rem] leading-tight">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
                     </div>
                   </div>
 
                   {/* Right side - Credit Score Circle */}
-                  <div className="relative w-24 h-24">
-                    <svg className="w-24 h-24 transform -rotate-90">
+                  <div className="relative w-[6.25rem] h-[6.25rem]">
+                    <svg className="w-[6.25rem] h-[6.25rem] transform -rotate-90">
                       {/* Background circle */}
                       <circle
                         cx="48"

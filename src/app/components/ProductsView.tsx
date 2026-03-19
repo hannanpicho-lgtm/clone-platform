@@ -95,6 +95,25 @@ export function ProductsView({
   const hasMinimumBalance = balance >= minimumBalance;
   const completedTasksInCurrentSet = Math.max(0, Math.min(maxProducts, Number(currentSetTasksCompleted || 0)));
   const canStartBasedOnBalance = hasMinimumBalance;
+  const availableBalanceValue = Number(balance || 0);
+  const projectedPremiumProfitValue = Number(activePremiumAssignment?.potentialProfit ?? 0);
+  const upholdAmountMagnitudeValue = accountFrozen
+    ? Math.max(
+        Number(activePremiumAssignment?.topUpRequired ?? 0),
+        Number(freezeAmount ?? 0),
+        Math.abs(Math.min(availableBalanceValue, 0)),
+      )
+    : 0;
+  const upholdAmountValue = accountFrozen ? -Math.abs(upholdAmountMagnitudeValue) : 0;
+  const currentBalanceValue = accountFrozen
+    ? Math.max(0, availableBalanceValue + upholdAmountMagnitudeValue)
+    : Math.max(0, availableBalanceValue);
+  const totalAccountBalanceValue = accountFrozen
+    ? currentBalanceValue + upholdAmountMagnitudeValue + projectedPremiumProfitValue
+    : availableBalanceValue;
+  const todaysCommissionValue = accountFrozen
+    ? Number(todaysProfit || 0) + projectedPremiumProfitValue
+    : Number(todaysProfit || 0);
   
   // VIP tier product amount ranges based on tier pricing
   const getProductAmountRange = () => {
@@ -343,7 +362,6 @@ export function ProductsView({
                     style={{ width: `${progressPercentage}%` }}
                   ></div>
                 </div>
-                {/* Slider thumb */}
                 <div 
                   className="absolute top-1/2 -translate-y-1/2 w-5 h-5 bg-gray-400 rounded-full border-2 border-white shadow-md transition-all duration-500"
                   style={{ left: `calc(${progressPercentage}% - 10px)` }}
@@ -505,35 +523,29 @@ export function ProductsView({
               </motion.div>
             )}
 
-            {/* Balance Display */}
-            <div className="grid grid-cols-2 border-t-4 border-black">
-              {/* Asset Balance */}
-              <div className="border-r-2 border-black py-6 px-4 text-center">
-                <div className="flex justify-center mb-2">
-                  <div className="w-12 h-12 bg-blue-900 rounded-full flex items-center justify-center">
-                    <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/>
-                      <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd"/>
-                    </svg>
-                  </div>
+            {/* Financial Snapshot */}
+            <div className="border-t-4 border-cyan-500">
+              <div className="grid grid-cols-1 sm:grid-cols-2">
+                <div className="border-b border-slate-200 p-5 sm:border-r">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Current Balance</p>
+                  <p className="mt-1 text-3xl font-black text-slate-900">${currentBalanceValue.toFixed(2)}</p>
+                  <p className="mt-1 text-xs text-slate-600">Base available balance before premium settlement.</p>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">Asset Balance</h3>
-                <p className="text-2xl font-bold text-gray-900 mb-2">${balance.toFixed(2)}</p>
-                <p className="text-xs text-gray-600">Daily profit will be added to Asset</p>
-              </div>
-
-              {/* Today's Profit */}
-              <div className="py-6 px-4 text-center">
-                <div className="flex justify-center mb-2">
-                  <div className="w-12 h-12 bg-white border-2 border-gray-300 rounded-full flex items-center justify-center">
-                    <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
+                <div className="border-b border-slate-200 p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total Account Balance</p>
+                  <p className="mt-1 text-3xl font-black text-slate-900">${totalAccountBalanceValue.toFixed(2)}</p>
+                  <p className="mt-1 text-xs text-slate-600">Projected total after premium release and commission.</p>
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">Today's Profit</h3>
-                <p className="text-2xl font-bold text-gray-900 mb-2">${todaysProfit.toFixed(2)}</p>
-                <p className="text-xs text-gray-600">Today's Profit to be reset daily</p>
+                <div className="border-b border-slate-200 p-5 sm:border-b-0 sm:border-r">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today&apos;s Commission</p>
+                  <p className="mt-1 text-3xl font-black text-emerald-600">${todaysCommissionValue.toFixed(2)}</p>
+                  <p className="mt-1 text-xs text-slate-600">Daily commission figure displayed in the financial card.</p>
+                </div>
+                <div className="p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Uphold Amount</p>
+                  <p className={`mt-1 text-3xl font-black ${upholdAmountValue < 0 ? 'text-red-600' : 'text-slate-900'}`}>${upholdAmountValue.toFixed(2)}</p>
+                  <p className="mt-1 text-xs text-slate-600">Negative deficit held when premium freeze is active.</p>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -542,7 +554,7 @@ export function ProductsView({
         {/* Important Notes */}
         <Card className="shadow-lg bg-white">
           <CardContent className="pt-6">
-            <h3 className="font-bold text-gray-900 mb-3">Important Notes</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-3">Important Notes</h3>
             <ul className="space-y-2 text-sm text-gray-700">
               <li className="flex items-start">
                 <span className="mr-2">•</span>
@@ -551,6 +563,10 @@ export function ProductsView({
               <li className="flex items-start">
                 <span className="mr-2">•</span>
                 <span>For any inquiries please contact Customer Service</span>
+              </li>
+              <li className="flex items-start">
+                <span className="mr-2">•</span>
+                <span>Financial snapshot values mirror the Home financial card and auto-update with account state.</span>
               </li>
             </ul>
           </CardContent>
