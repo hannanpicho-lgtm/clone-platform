@@ -1558,7 +1558,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               <CardContent className="p-0">
                 {accountFrozen && (
                   <div className="border-b border-white/35 bg-[#0a4f7b] px-6 py-4 text-center">
-                    <p className="text-sm font-semibold tracking-wide text-white/95">
+                    <p className="mx-auto inline-flex items-center rounded-full border border-red-300/60 bg-red-500/20 px-3 py-1 text-xs font-bold tracking-wide text-red-100">
+                      ACCOUNT TEMPORARILY FROZEN
+                    </p>
+                    <p className="mt-2 text-sm font-semibold tracking-wide text-white/95">
                       Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
                     </p>
                   </div>
@@ -1570,8 +1573,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <p className="mt-2 text-5xl font-black">{formatUsdFigure(todaysCommissionValue)}</p>
                   <p className="mt-4 text-base text-white/95">The displayed amount reflects today&apos;s earned commissions.</p>
                   {accountFrozen && premiumProjectedProfitValue > 0 && (
-                    <p className="mt-2 text-sm font-semibold text-green-200">
-                      Includes projected premium commission of {formatUsdFigure(premiumProjectedProfitValue)}.
+                    <p className="mt-2 inline-flex items-center rounded-full border border-green-300/60 bg-green-500/20 px-3 py-1 text-sm font-semibold text-green-100">
+                      Includes projected premium commission: +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))}
                     </p>
                   )}
                 </div>
@@ -1588,8 +1591,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <div>
                     <Snowflake className="mx-auto h-14 w-14 text-white/95" />
                     <p className="mt-2 text-4xl font-extrabold tracking-wide">Uphold Amount</p>
-                    <p className="mt-2 text-5xl font-black text-red-200">{formatUsdFigure(upholdAmountValue)}</p>
-                    <p className="mt-4 text-base text-white/95">Negative deficit held during premium freeze.</p>
+                    <p className="mt-2 inline-block rounded-lg border border-red-300/70 bg-red-500/20 px-3 py-2 text-5xl font-black text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
+                    <p className="mt-4 text-base font-semibold text-red-100">Negative deficit held during premium freeze.</p>
                   </div>
                 </div>
 
@@ -1600,8 +1603,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <p className="mt-2 text-5xl font-black">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
                   <p className="mt-4 text-base text-white/95">Base balance before premium bundle value and premium commission are applied.</p>
                   {accountFrozen && premiumProjectedProfitValue > 0 && (
-                    <p className="mt-3 text-base font-semibold text-green-200">
-                      You will earn {formatUsdFigure(premiumProjectedProfitValue)} after unfreezing.
+                    <p className="mt-3 inline-flex items-center rounded-full border border-green-300/60 bg-green-500/20 px-4 py-1 text-base font-semibold text-green-100">
+                      You will earn +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))} after unfreezing.
                     </p>
                   )}
                 </div>

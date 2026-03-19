@@ -18,6 +18,7 @@ interface ProductsViewProps {
   activePremiumAssignment?: {
     orderId?: string;
     topUpRequired?: number;
+    potentialProfit?: number;
     assignedAt?: string;
     encounteredAt?: string | null;
     encounteredTaskNumber?: number | null;
@@ -390,9 +391,14 @@ export function ProductsView({
                     <p className="text-[10px] leading-tight text-white/95">
                       Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
                     </p>
-                    <p className="mt-1 text-[9px] opacity-90 leading-tight">
+                    <p className="mt-1 text-[9px] font-semibold text-red-100 leading-tight">
                       Uphold Amount: -${Math.max(0, Number(activePremiumAssignment?.topUpRequired ?? freezeAmount ?? 0)).toFixed(2)}
                     </p>
+                    {Number(activePremiumAssignment?.potentialProfit ?? 0) > 0 && (
+                      <p className="mt-1 inline-flex items-center rounded-full border border-green-200/70 bg-green-500/20 px-2 py-0.5 text-[9px] font-bold text-green-100">
+                        You will earn +${Number(activePremiumAssignment?.potentialProfit ?? 0).toFixed(2)} after unfreezing
+                      </p>
+                    )}
                     {activePremiumAssignment?.orderId && (
                       <p className="text-[9px] opacity-90 leading-tight mt-0.5">
                         Order: {activePremiumAssignment.orderId}

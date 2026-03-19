@@ -89,7 +89,7 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
             </div>
             <div>
               <p className="text-sm text-gray-700 mb-1">Profit</p>
-              <p className="text-2xl font-bold text-red-600">
+              <p className="text-2xl font-bold text-green-600">
                 ${product.profit.toFixed(2)}
               </p>
             </div>
