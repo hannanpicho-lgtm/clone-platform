@@ -75,6 +75,9 @@ jobs:
         continue-on-error: true
 
       - name: Run regression guards
+        env:
+          FUNCTION_URL: ${{ secrets.FUNCTION_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: npm run test:regression-guards
 
       - name: Run smoke tests (pre-deploy)

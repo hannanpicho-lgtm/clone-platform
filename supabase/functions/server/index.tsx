@@ -7576,7 +7576,7 @@ app.all("*", async (c) => {
 app.options('/*', (c) => {
   return c.text('', 204, {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization, idempotency-key, x-idempotency-key, x-tenant-id, x-super-admin-all-tenants, x-admin-key',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   });
 });
