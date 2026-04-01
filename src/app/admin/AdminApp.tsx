@@ -3,11 +3,8 @@ import { ShieldAlert } from 'lucide-react';
 import { AdminLogin } from '../components/AdminLogin';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
-import { fetchAdminAlerts } from './api';
-import type { AdminAlertItem } from './types';
 import { AdminLayout } from './layout/AdminLayout';
 import { evaluateAdminRouteAccess, resolveAdminRoute } from './middleware';
-import { hasAdminPermission } from './permissions';
 import { clearAdminSession, loadAdminSession, saveAdminSession } from './session';
 import type { AdminSession } from './types';
 import { AdminCustomerServicePage } from './pages/AdminCustomerServicePage';
@@ -33,15 +30,6 @@ export function AdminApp() {
   const [gateError, setGateError] = useState('');
   const [adminGateUnlocked, setAdminGateUnlocked] = useState(false);
   const [session, setSession] = useState<AdminSession | null>(null);
-  const [unreadSupportCount, setUnreadSupportCount] = useState(0);
-  const [notifications, setNotifications] = useState<AdminAlertItem[]>([]);
-  const [readIds, setReadIds] = useState<string[]>(() => {
-    try {
-      return JSON.parse(window.sessionStorage.getItem('admin_notif_read') || '[]');
-    } catch {
-      return [];
-    }
-  });
   const currentPath = useMemo(() => getCurrentPath(), []);
 
   useEffect(() => {
@@ -60,50 +48,6 @@ export function AdminApp() {
       window.location.replace(access.redirectTo);
     }
   }, [access, currentPath]);
-
-  useEffect(() => {
-    if (!session) {
-      setNotifications([]);
-      setUnreadSupportCount(0);
-      return;
-    }
-
-    let alive = true;
-    const syncAlerts = async () => {
-      try {
-        const { alerts, summary } = await fetchAdminAlerts(session);
-        if (!alive) return;
-        setNotifications(alerts);
-        setUnreadSupportCount(summary.openSupportTickets);
-      } catch {
-        // silent — keep previous state on transient errors
-      }
-    };
-
-    syncAlerts();
-    const intervalId = window.setInterval(syncAlerts, 10_000);
-    return () => {
-      alive = false;
-      window.clearInterval(intervalId);
-    };
-  }, [session]);
-
-  const handleMarkRead = (id: string) => {
-    setReadIds((prev) => {
-      if (prev.includes(id)) return prev;
-      const next = [...prev, id];
-      try { window.sessionStorage.setItem('admin_notif_read', JSON.stringify(next)); } catch { /* noop */ }
-      return next;
-    });
-  };
-
-  const handleMarkAllRead = () => {
-    setReadIds((prev) => {
-      const next = [...new Set([...prev, ...notifications.map((n) => n.id)])];
-      try { window.sessionStorage.setItem('admin_notif_read', JSON.stringify(next)); } catch { /* noop */ }
-      return next;
-    });
-  };
 
   const handleAdminLoginSuccess = (auth?: { accessToken?: string; isSuperAdmin: boolean; permissions?: string[] }) => {
     const nextSession: AdminSession = {
@@ -223,7 +167,7 @@ export function AdminApp() {
   }
 
   return (
-    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout} unreadSupportCount={unreadSupportCount} notifications={notifications} readIds={readIds} onMarkRead={handleMarkRead} onMarkAllRead={handleMarkAllRead}>
+    <AdminLayout currentPath={currentPath} session={session} onLogout={handleAdminLogout}>
       {page}
     </AdminLayout>
   );

@@ -1,0 +1,5 @@
+﻿ M PREMIUM_DEFICIT_ASSIGNMENT_RULE.md
+ M src/app/admin/api.ts
+ M src/app/components/AdminDashboard.tsx
+ M src/app/components/PremiumManagementPanel.tsx
+ M supabase/functions/server/index.tsx

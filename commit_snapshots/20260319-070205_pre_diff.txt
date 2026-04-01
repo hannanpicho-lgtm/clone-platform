@@ -1,0 +1,109 @@
+﻿diff --git a/src/app/admin/pages/AdminUsersPage.tsx b/src/app/admin/pages/AdminUsersPage.tsx
+index 89610f5c..3423f0f7 100644
+--- a/src/app/admin/pages/AdminUsersPage.tsx
++++ b/src/app/admin/pages/AdminUsersPage.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useMemo, useState } from 'react';
+-import { AlertCircle, ShieldAlert, Copy, Key } from 'lucide-react';
++import { AlertCircle, ShieldAlert, Copy, Key, RefreshCw } from 'lucide-react';
+ import {
+   adjustUserBalance,
+   assignUserPremium,
+@@ -357,11 +357,29 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
+     setTimeout(() => setCredentialsCopied(false), 2000);
+   };
+ 
++  const handleRefreshUsers = async () => {
++    setMessage('');
++    await load();
++  };
++
+   return (
+     <div className="space-y-6">
+-      <div>
+-        <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
+-        <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
++      <div className="flex items-start justify-between gap-3">
++        <div>
++          <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
++          <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
++        </div>
++        <Button
++          type="button"
++          variant="outline"
++          size="sm"
++          onClick={handleRefreshUsers}
++          disabled={loading}
++          className="shrink-0"
++        >
++          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
++          {loading ? 'Refreshing...' : 'Refresh'}
++        </Button>
+       </div>
+ 
+       <div className="grid gap-4 md:grid-cols-3">
+diff --git a/src/app/components/Dashboard.tsx b/src/app/components/Dashboard.tsx
+index a6fa6c61..4e115285 100644
+--- a/src/app/components/Dashboard.tsx
++++ b/src/app/components/Dashboard.tsx
+@@ -7,6 +7,7 @@ import {
+   Menu,
+   Bell,
+   User,
++  RefreshCw,
+   Home,
+   BarChart3,
+   FileText,
+@@ -296,6 +297,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+   const [showSupportTickets, setShowSupportTickets] = useState(false);
+   const [showLiveChat, setShowLiveChat] = useState(false);
+   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
++  const [manualRefreshToken, setManualRefreshToken] = useState(0);
++  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+   
+   // Withdrawal password modal state
+   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
+@@ -661,7 +664,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+   };
+ 
+   useEffect(() => {
+-    setIsLoading(true);
++    if (manualRefreshToken === 0) {
++      setIsLoading(true);
++    } else {
++      setIsManualRefreshing(true);
++    }
+ 
+     const fetchData = async () => {
+         try {
+@@ -758,9 +765,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+         }
+     };
+     fetchData().finally(() => {
+-      setIsLoading(false);
++      if (manualRefreshToken === 0) {
++        setIsLoading(false);
++      }
++      setIsManualRefreshing(false);
+     });
+-  }, [accessToken]);
++  }, [accessToken, manualRefreshToken]);
+ 
+   useEffect(() => {
+     if (depositMethod !== 'crypto') {
+@@ -1379,6 +1389,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+           </button>
+           <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
+           <div className="flex items-center space-x-3">
++            <button
++              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
++              onClick={() => setManualRefreshToken((prev) => prev + 1)}
++              aria-label="Refresh dashboard"
++              title="Refresh dashboard"
++              disabled={isManualRefreshing}
++            >
++              <RefreshCw className={`h-5 w-5 ${isManualRefreshing ? 'animate-spin' : ''}`} />
++            </button>
+             <button
+               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+               onClick={() => setShowMenu(true)}

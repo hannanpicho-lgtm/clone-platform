@@ -61,7 +61,7 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
               <CardTitle>User Earnings Activity</CardTitle>
               <CardDescription>Live earnings totals and product submission counts per user.</CardDescription>
             </div>
-            <div className="btn-group sm:w-auto sm:max-w-sm">
+            <div className="flex gap-2">
               <Button type="button" size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')}>All</Button>
               <Button type="button" size="sm" variant={filter === 'active' ? 'default' : 'outline'} onClick={() => setFilter('active')}>Active</Button>
               <Button type="button" size="sm" variant={filter === 'frozen' ? 'default' : 'outline'} onClick={() => setFilter('frozen')}>Frozen</Button>

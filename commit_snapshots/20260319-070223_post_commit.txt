@@ -1,0 +1,16 @@
+﻿commit d293d6aa51713bf24ecc419528af0cb9b2af866f
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 07:02:17 2026 +0700
+
+    feat(ui): add refresh buttons for admin users and frontend dashboard
+    
+    - add top-right Refresh action on Admin Users page
+    - wire admin refresh to existing users/metrics load flow
+    - add header refresh icon in frontend dashboard
+    - trigger profile/metrics/records re-fetch without full page reload
+    - show loading spin state while manual refresh is in progress
+    - build verified
+
+ src/app/admin/pages/AdminUsersPage.tsx | 26 ++++++++++++++++++++++----
+ src/app/components/Dashboard.tsx       | 25 ++++++++++++++++++++++---
+ 2 files changed, 44 insertions(+), 7 deletions(-)

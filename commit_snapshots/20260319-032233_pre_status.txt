@@ -1,0 +1,4 @@
+﻿ M deploy.ps1
+ M package.json
+ M scripts/validate-supabase-env.mjs
+?? commit_snapshots/20260319-032233_pre_status.txt

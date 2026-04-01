@@ -1,0 +1,18 @@
+﻿commit fbb83015d3d2845a22142fed99859acd5a24b22f
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 06:33:13 2026 +0700
+
+    feat(admin): replace bottom details card with right slide-over panel
+    
+    - Clicking any user row opens a Sheet slide-over panel (right side, ~40% width)
+    - Panel dismissible via close button, outside click, or Esc key
+    - Full user details rendered in panel: status badges, financial stats,
+      task progress, account info, quick actions, VIP/task controls
+    - Row-level onClick triggers panel; action buttons call stopPropagation
+    - Removed bottom-rendered Card details block, useRef, and scroll useEffect
+    - Removed redundant 'Details' table button (row itself is the trigger)
+    - Mobile responsive: falls back to w-3/4 full-height panel
+    - Build verified clean (0 errors)
+
+ src/app/admin/pages/AdminUsersPage.tsx | 224 +++++++++++++++++++++++----------
+ 1 file changed, 157 insertions(+), 67 deletions(-)

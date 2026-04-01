@@ -7,9 +7,6 @@ import {
   Menu,
   Bell,
   User,
-  RefreshCw,
-  Rocket,
-  Snowflake,
   Home,
   BarChart3,
   FileText,
@@ -20,6 +17,7 @@ import {
 import { ProductsView, ProductData } from './ProductsView';
 import { ProductReviewPage } from './ProductReviewPage';
 import { VIPTiersCarousel } from './VIPTiersCarousel';
+import { FAQPage } from './FAQPage';
 import { EarningsDashboard } from './EarningsDashboard';
 import { ReferralManager } from './ReferralManager';
 import { WithdrawalForm } from './WithdrawalForm';
@@ -85,13 +83,10 @@ interface UserProfile {
   freezeAmount?: number;
   withdrawalLimit?: number;
   productsSubmitted?: number;
-  creditScore?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
   taskSetsCompletedToday?: number;
   currentSetTasksCompleted?: number;
-  todayProfit?: number;
-  todayProfitDate?: string | null;
   premiumAssignment?: {
     orderId?: string;
     amount?: number;
@@ -301,19 +296,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showSupportTickets, setShowSupportTickets] = useState(false);
   const [showLiveChat, setShowLiveChat] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
-  const [manualRefreshToken, setManualRefreshToken] = useState(0);
-  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
   const [uiNotice, setUiNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  
-  // Forced password change modal state
-  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
-  const [passwordChangeForm, setPasswordChangeForm] = useState({ newPassword: '', confirmPassword: '' });
-  const [passwordChangeError, setPasswordChangeError] = useState('');
-  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
@@ -407,7 +394,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setTaskActionNotice(message);
           return;
         }
-        setTaskActionNotice('Unable to load the next task from server. Task order is locked by admin position rules. Please retry.');
+        setCurrentProduct(fallbackProduct);
+        setShowReviewPage(true);
         return;
       }
 
@@ -424,7 +412,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       });
       setShowReviewPage(true);
     } catch {
-      setTaskActionNotice('Network issue while loading the next task. Task order is preserved; please try again.');
+      setCurrentProduct(fallbackProduct);
+      setShowReviewPage(true);
     }
   };
 
@@ -442,8 +431,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         productName: currentProduct.name,
         productValue: currentProduct.totalAmount,
         profit: currentProduct.profit,
-        productImage: currentProduct.image,
-        ratingNo: currentProduct.ratingNo,
       }),
     });
 
@@ -520,7 +507,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       ...prev,
       balance: Number(updatedUser?.balance ?? prev.balance ?? 0),
       productsSubmitted: Number(updatedUser?.productsSubmitted ?? prev.productsSubmitted ?? 0),
-      creditScore: Number.isFinite(Number(updatedUser?.creditScore)) ? Number(updatedUser?.creditScore) : Number(prev.creditScore ?? 100),
       dailyTaskSetLimit: Number(updatedUser?.dailyTaskSetLimit ?? prev.dailyTaskSetLimit ?? 1),
       extraTaskSets: Number(updatedUser?.extraTaskSets ?? prev.extraTaskSets ?? 0),
       taskSetsCompletedToday: Number(updatedUser?.taskSetsCompletedToday ?? prev.taskSetsCompletedToday ?? 0),
@@ -613,67 +599,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     }, 100);
   };
 
-  const handlePasswordChange = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!passwordChangeForm.newPassword.trim()) {
-      setPasswordChangeError('Password is required');
-      return;
-    }
-
-    if (passwordChangeForm.newPassword.length < 6) {
-      setPasswordChangeError('Password must be at least 6 characters');
-      return;
-    }
-
-    if (passwordChangeForm.newPassword !== passwordChangeForm.confirmPassword) {
-      setPasswordChangeError('Passwords do not match');
-      return;
-    }
-
-    try {
-      setPasswordChangeLoading(true);
-      setPasswordChangeError('');
-
-      const { projectId } = await import('~/utils/supabase/info');
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/change-password-on-login`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ newPassword: passwordChangeForm.newPassword }),
-      });
-
-      const data = await response.json().catch(() => ({}));
-      
-      if (!response.ok) {
-        throw new Error(data?.error || 'Failed to change password');
-      }
-
-      // Password changed successfully
-      setShowPasswordChangeModal(false);
-      setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
-      setUiNotice({ type: 'success', text: '✅ Password changed successfully! You can now access your account.' });
-      
-      // Reload profile to update must_change_password flag
-      setTimeout(() => {
-        setUiNotice(null);
-      }, 3000);
-
-    } catch (error: any) {
-      setPasswordChangeError(String(error?.message || 'Failed to change password'));
-    } finally {
-      setPasswordChangeLoading(false);
-    }
-  };
-
   useEffect(() => {
-    if (manualRefreshToken === 0) {
-      setIsLoading(true);
-    } else {
-      setIsManualRefreshing(true);
-    }
+    setIsLoading(true);
 
     const fetchData = async () => {
         try {
@@ -719,24 +646,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           });
 
           setBalance(Number(loadedProfile?.balance ?? 0));
-          const todayDate = new Date().toISOString().slice(0, 10);
-          const loadedTodayProfit = String(loadedProfile?.todayProfitDate || '') === todayDate
-            ? Number(loadedProfile?.todayProfit ?? 0)
-            : 0;
-          setTodaysProfit(loadedTodayProfit);
           setTotalEarnings(Number(loadedProfile?.totalEarnings ?? loadedProfile?.balance ?? 0));
           setProductsSubmitted(Number(loadedProfile?.productsSubmitted ?? 0));
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
           setFreezeAmount(Number(loadedProfile?.freezeAmount ?? 0));
           setActivePremiumAssignment(loadedProfile?.premiumAssignment ?? null);
-          
-          // Check if user must change password (e.g., after credential reset by admin)
-          if (Boolean(loadedProfile?.must_change_password ?? false)) {
-            setShowPasswordChangeModal(true);
-            setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
-            setPasswordChangeError('');
-          }
-          
           setError('');
         } catch (err: any) {
           const message = String(err?.message || 'Please try again in a moment.');
@@ -775,20 +689,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         }
     };
     fetchData().finally(() => {
-      if (manualRefreshToken === 0) {
-        setIsLoading(false);
-      }
-      setIsManualRefreshing(false);
+      setIsLoading(false);
     });
-  }, [accessToken, manualRefreshToken]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setManualRefreshToken((prev) => prev + 1);
-    }, 45000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => {
     if (depositMethod !== 'crypto') {
@@ -833,7 +736,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         invitationCode: 'DEMO1',
         name: 'Demo User',
         vipTier: 'Silver',
-        creditScore: 100,
         createdAt: new Date().toISOString(),
       };
       const demoMetrics: Metrics = {
@@ -878,7 +780,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     invitationCode: 'DEMO1',
     name: 'Demo User',
     vipTier: 'Silver',
-    creditScore: 100,
     createdAt: new Date().toISOString(),
   } : profile!;
 
@@ -888,61 +789,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     mttrImprovement: 23,
     automationCoverage: 78,
   } : metrics!;
-
-  const formatUsdFigure = (value: number) => {
-    const safeValue = Number.isFinite(value) ? value : 0;
-    const hasDecimals = Math.abs(safeValue % 1) > 0;
-    return `${safeValue.toLocaleString(undefined, {
-      minimumFractionDigits: hasDecimals ? 2 : 0,
-      maximumFractionDigits: 2,
-    })} USD`;
-  };
-
-  const totalAccountBalanceValue = Number(balance || 0);
-  const premiumProjectedProfitValue = Number(
-    (activePremiumAssignment as any)?.potentialProfit
-    ?? premiumProfitBeforeFreeze
-    ?? 0,
-  );
-  const currentBalanceBeforePremiumRaw = Number(
-    (displayProfile as any)?.premiumAssignment?.previousBalance
-    ?? (displayProfile as any)?.principalBalance
-    ?? totalAccountBalanceValue,
-  );
-  const currentBalanceBeforePremiumValue = Math.max(0, currentBalanceBeforePremiumRaw);
-  const upholdAmountMagnitudeValue = Number(
-    accountFrozen
-      ? Math.max(
-          Number(freezeAmount || 0),
-          Number((activePremiumAssignment as any)?.topUpRequired || 0),
-          Math.abs(Math.min(totalAccountBalanceValue, 0)),
-        )
-      : 0,
-  );
-  const upholdAmountValue = accountFrozen ? -Math.abs(upholdAmountMagnitudeValue) : 0;
-  const projectedTotalAccountBalanceValue = Number(
-    accountFrozen
-      ? currentBalanceBeforePremiumValue + upholdAmountMagnitudeValue + premiumProjectedProfitValue
-      : totalAccountBalanceValue,
-  );
-  const todaysCommissionValue = Number(
-    accountFrozen
-      ? Number(todaysProfit || 0) + premiumProjectedProfitValue
-      : Number(todaysProfit || 0),
-  );
-  const creditScoreValue = Math.max(0, Math.min(100, Number((displayProfile as any)?.creditScore ?? 100)));
-  const creditScoreOffset = 2 * Math.PI * 40 * (1 - creditScoreValue / 100);
-
-  const openFaqSection = () => {
-    setShowFAQ(true);
-    setActiveNav('home');
-    setTimeout(() => {
-      const faqSection = document.getElementById('faq-knowledge-section');
-      if (faqSection) {
-        faqSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }, 120);
-  };
 
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
@@ -1066,11 +912,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showMenu && (
         <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowMenu(false)}>
           <div 
-            className="absolute left-0 top-0 bottom-0 w-[90vw] max-w-[390px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-2xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-[88vw] max-w-[360px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with User Info */}
-            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-5 pt-6 pb-5" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
+            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-4 pt-5 pb-4" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
               {/* Close Button */}
               <button 
                 onClick={() => setShowMenu(false)} 
@@ -1082,8 +928,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </button>
 
               {/* User Avatar and Info */}
-              <div className="flex items-start space-x-3 mb-5 pr-11">
-                <div className="w-14 h-14 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
+              <div className="flex items-start space-x-3 mb-4 pr-11">
+                <div className="w-12 h-12 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
                   {!avatarError ? (
                     <img
                       src={avatarSrc}
@@ -1096,36 +942,36 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   )}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-bold text-[1.05rem] leading-tight break-words">{displayProfile.name}</h3>
-                  <div className="mt-2 bg-white/10 rounded-lg p-2.5 space-y-1.5">
+                  <h3 className="text-white font-bold text-base leading-tight break-words">{displayProfile.name}</h3>
+                  <div className="mt-2 bg-white/10 rounded-lg p-2 space-y-1">
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Member ID:</span>{' '}
-                      <span className="font-mono tracking-[0.06em]">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
+                      <span className="font-mono tracking-wide">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
                     </p>
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Invite Code:</span>{' '}
-                      <span className="font-mono tracking-[0.06em]">{displayProfile.invitationCode || 'Not assigned'}</span>
+                      <span className="font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</span>
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Stats and Credit Score */}
-              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3.5">
+              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
                 <div className="flex justify-between items-start">
                   {/* Left side - Stats */}
-                  <div className="space-y-2.5 flex-1">
+                  <div className="space-y-2 flex-1">
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Today's Commission</p>
-                      <p className="text-emerald-100 font-bold tabular-nums text-[1.08rem] leading-none">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Today's Profit</p>
+                      <p className="text-white font-bold text-lg">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Total Account Balance</p>
-                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${balance.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Total Asset</p>
+                      <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Current Balance</p>
-                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Assets</p>
+                      <p className="text-white font-bold text-lg">$0</p>
                     </div>
                   </div>
 
@@ -1149,13 +995,12 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         stroke="#22c55e"
                         strokeWidth="8"
                         fill="none"
-                        strokeDasharray={`${2 * Math.PI * 40}`}
-                        strokeDashoffset={creditScoreOffset}
+                        strokeDasharray={`${2 * Math.PI * 40 * 0.6} ${2 * Math.PI * 40}`}
                         strokeLinecap="round"
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-white font-bold text-xl">{Math.round(creditScoreValue)}%</span>
+                      <span className="text-white font-bold text-xl">60%</span>
                       <span className="text-blue-200 text-xs">Credit</span>
                       <span className="text-blue-200 text-xs">Score</span>
                     </div>
@@ -1316,7 +1161,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      openFaqSection();
+                      setShowFAQ(true);
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
@@ -1466,15 +1311,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
           <div className="flex items-center space-x-3">
             <button
-              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-              onClick={() => setManualRefreshToken((prev) => prev + 1)}
-              aria-label="Refresh dashboard"
-              title="Refresh dashboard"
-              disabled={isManualRefreshing}
-            >
-              <RefreshCw className={`h-5 w-5 ${isManualRefreshing ? 'animate-spin' : ''}`} />
-            </button>
-            <button
               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
               onClick={() => setShowMenu(true)}
               aria-label="Open profile"
@@ -1578,101 +1414,43 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </CardContent>
             </Card>
 
-            {/* Home Financial Summary */}
-            <Card className="mb-6 overflow-hidden border-0 bg-[#0c5b8e] text-white shadow-lg">
-              <CardContent className="p-0">
-                {accountFrozen && (
-                  <div className="border-b border-white/35 bg-[#0a4f7b] px-6 py-4 text-center">
-                    <p className="mx-auto inline-flex items-center rounded-full border border-red-300/60 bg-red-500/20 px-3 py-1 text-xs font-bold tracking-wide text-red-100">
-                      ACCOUNT TEMPORARILY FROZEN
-                    </p>
-                    <p className="mt-2 text-sm font-semibold tracking-wide text-white/95">
-                      Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
-                    </p>
+            {/* Balance Display */}
+            <Card className="mb-6 shadow-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm opacity-90 mb-1">Total Earnings</p>
+                    <p className="text-4xl font-bold">${totalEarnings.toFixed(2)}</p>
+                    <p className="text-xs opacity-80 mt-2">{productsSubmitted} products submitted</p>
                   </div>
-                )}
-
-                <div className="px-6 py-6">
-                  <div className="mb-4 text-center">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/80">Financial Summary</p>
-                    <h3 className="mt-2 text-[1.7rem] sm:text-3xl font-black tracking-wide leading-tight">Clear Account Snapshot</h3>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
-                      <div className="flex items-center gap-3">
-                        <Rocket className="h-8 w-8 text-emerald-200" />
-                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Today&apos;s Commission</p>
-                      </div>
-                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-emerald-100">{formatUsdFigure(todaysCommissionValue)}</p>
-                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Includes today&apos;s realized earnings.</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
-                      <div className="flex items-center gap-3">
-                        <Wallet className="h-8 w-8 text-white/95" />
-                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Total Account Balance</p>
-                      </div>
-                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
-                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Current balance plus premium release projection.</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
-                      <div className="flex items-center gap-3">
-                        <Wallet className="h-8 w-8 text-white/95" />
-                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Current Balance</p>
-                      </div>
-                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
-                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Base balance before premium settlement adjustments.</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-red-300/40 bg-red-500/20 p-4 sm:p-5">
-                      <div className="flex items-center gap-3">
-                        <Snowflake className="h-8 w-8 text-red-100" />
-                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-red-100">Uphold Amount</p>
-                      </div>
-                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
-                      <p className="mt-2 text-[11px] sm:text-xs font-semibold leading-relaxed text-red-100">Negative deficit held during premium freeze.</p>
-                    </div>
-                  </div>
-
-                  {accountFrozen && premiumProjectedProfitValue > 0 && (
-                    <div className="mt-4 rounded-xl border border-emerald-300/50 bg-emerald-500/20 px-4 py-3 text-center">
-                      <p className="text-sm font-semibold text-emerald-100">
-                        Expected premium profit after unfreeze: +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))}
-                      </p>
-                    </div>
-                  )}
+                  <Wallet className="h-16 w-16 opacity-30" />
                 </div>
+                <Button 
+                  onClick={() => setActiveNav('analytics')}
+                  className="w-full mt-4 bg-white text-green-600 hover:bg-gray-100"
+                >
+                  Submit Products & Earn
+                </Button>
+                <Button
+                  onClick={() => {
+                    setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
+                    const modalAssets = getDepositCryptoAssets(depositConfig);
+                    const modalDefaultAssetCode = String(
+                      depositConfig?.crypto?.defaultAsset
+                      || modalAssets?.[0]?.asset
+                      || 'BTC'
+                    ).toUpperCase();
+                    const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
+                    setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
+                    setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                    setShowDepositModal(true);
+                  }}
+                  className="w-full mt-3 bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Deposit Funds (Bank/Crypto)
+                </Button>
               </CardContent>
             </Card>
-
-            <div className="mb-6 grid gap-3 sm:grid-cols-2">
-              <Button
-                onClick={() => setActiveNav('analytics')}
-                className="btn-primary-action w-full bg-blue-600 text-white"
-              >
-                Submit Products & Earn
-              </Button>
-              <Button
-                onClick={() => {
-                  setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
-                  const modalAssets = getDepositCryptoAssets(depositConfig);
-                  const modalDefaultAssetCode = String(
-                    depositConfig?.crypto?.defaultAsset
-                    || modalAssets?.[0]?.asset
-                    || 'BTC'
-                  ).toUpperCase();
-                  const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
-                  setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
-                  setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
-                  setShowDepositModal(true);
-                }}
-                className="btn-primary-action w-full bg-slate-800 text-white"
-              >
-                Deposit Funds (Bank/Crypto)
-              </Button>
-            </div>
 
             {/* VIP Levels Section */}
             <div className="mb-6">
@@ -1794,40 +1572,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </CardContent>
               </Card>
             </div>
-
-            {showFAQ && (
-              <section id="faq-knowledge-section" className="mb-6 scroll-mt-24">
-                <Card className="overflow-hidden border border-blue-100 shadow-lg">
-                  <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-4 text-white">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-xl font-bold">FAQ & Knowledge Base</h3>
-                        <p className="text-xs text-white/90">Get quick answers without leaving your dashboard.</p>
-                      </div>
-                      <button
-                        onClick={() => setShowFAQ(false)}
-                        className="rounded-lg border border-white/40 px-3 py-1 text-sm font-semibold text-white hover:bg-white/10"
-                      >
-                        Hide
-                      </button>
-                    </div>
-                  </div>
-                  <CardContent className="px-5 py-5">
-                    <FAQ
-                      accessToken={accessToken}
-                      onCreateSupportTicket={() => {
-                        setShowFAQ(false);
-                        setShowSupportTickets(true);
-                      }}
-                      onStartLiveChat={() => {
-                        setShowFAQ(false);
-                        setShowLiveChat(true);
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-              </section>
-            )}
           </>
         )}
 
@@ -2327,6 +2071,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         />
       )}
 
+      {/* FAQ Page */}
+      {showFAQ && (
+        <FAQPage
+          onClose={() => setShowFAQ(false)}
+        />
+      )}
+
       {/* About Us Page */}
       {showAboutUs && (
         <AboutUsPage
@@ -2536,15 +2287,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </div>
             </div>
 
-              <div className="btn-container border-t border-gray-200 p-6 pt-4 bg-white">
-                <div className="btn-group">
-                <Button variant="outline" onClick={() => setShowDepositModal(false)}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
+                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
                   Cancel
                 </Button>
-                <Button className="btn-primary-action bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
+                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
                   {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
                 </Button>
-                </div>
               </div>
           </div>
         </div>
@@ -2576,14 +2325,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </div>
 
                 {/* Buttons */}
-                <div className="btn-container pt-4">
-                  <div className="btn-group">
+                <div className="flex space-x-3 pt-4">
                   <button
                     onClick={() => {
                       setShowWithdrawalModal(false);
                       setWithdrawalPassword('');
                     }}
-                    className="min-w-0 rounded-lg border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     Cancel
                   </button>
@@ -2598,11 +2346,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         setUiNotice({ type: 'error', text: 'Please enter your withdrawal password' });
                       }
                     }}
-                    className="btn-primary-action min-w-0 rounded-lg bg-green-600 px-4 py-2 font-medium text-white transition-colors hover:bg-green-700"
+                    className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
                   >
                     Submit
                   </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -2700,70 +2447,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 />
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Forced Password Change Modal */}
-      {showPasswordChangeModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4">
-              <h2 className="text-xl font-bold text-white">Change Your Password</h2>
-              <p className="text-sm text-amber-100 mt-1">Your account requires a password change for security reasons</p>
-            </div>
-
-            {/* Content */}
-            <form onSubmit={handlePasswordChange} className="px-6 py-6 space-y-4">
-              {passwordChangeError && (
-                <div className="rounded-lg bg-red-50 border border-red-200 p-3">
-                  <p className="text-sm text-red-700 font-medium">{passwordChangeError}</p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  New Password
-                </label>
-                <input
-                  type="password"
-                  value={passwordChangeForm.newPassword}
-                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, newPassword: e.target.value }))}
-                  placeholder="Enter new password (min. 6 characters)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
-                  disabled={passwordChangeLoading}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Confirm Password
-                </label>
-                <input
-                  type="password"
-                  value={passwordChangeForm.confirmPassword}
-                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                  placeholder="Confirm new password"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
-                  disabled={passwordChangeLoading}
-                />
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="submit"
-                  disabled={passwordChangeLoading || !passwordChangeForm.newPassword}
-                  className="flex-1 px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                >
-                  {passwordChangeLoading ? 'Changing...' : 'Change Password'}
-                </button>
-              </div>
-
-              <p className="text-xs text-gray-500 text-center">
-                ⚠️ You must change your password before access is granted to your account
-              </p>
-            </form>
           </div>
         </div>
       )}
@@ -2930,6 +2613,42 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       )}
 
+      {/* FAQ Modal */}
+      {showFAQ && (
+        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
+          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
+            <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-6 py-6 sticky top-0">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-bold text-white">❓ FAQ & Knowledge Base</h2>
+                  <button
+                    onClick={() => setShowFAQ(false)}
+                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
+                <FAQ
+                  accessToken={accessToken}
+                  onCreateSupportTicket={() => {
+                    setShowFAQ(false);
+                    setShowSupportTickets(true);
+                  }}
+                  onStartLiveChat={() => {
+                    setShowFAQ(false);
+                    setShowLiveChat(true);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

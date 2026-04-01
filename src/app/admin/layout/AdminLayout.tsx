@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react';
 import { BarChart3, DollarSign, Gift, LifeBuoy, Link2, LogOut, Settings, Shield, UserCog, Users, Wallet } from 'lucide-react';
-import { NotificationBell } from '../components/NotificationBell';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Separator } from '../../components/ui/separator';
-import type { AdminAlertItem } from '../types';
 import { isSuperAdmin } from '../permissions';
 import type { AdminSession } from '../types';
 import { getCurrentTenantBranding } from '../../branding/tenantBranding';
@@ -15,11 +13,6 @@ interface AdminLayoutProps {
   currentPath: string;
   session: AdminSession;
   onLogout: () => void;
-  unreadSupportCount?: number;
-  notifications?: AdminAlertItem[];
-  readIds?: string[];
-  onMarkRead?: (id: string) => void;
-  onMarkAllRead?: () => void;
 }
 
 const NAV_ITEMS = [
@@ -35,7 +28,7 @@ const NAV_ITEMS = [
   { path: '/admin/settings', label: 'Settings', icon: Settings, permission: null },
 ] as const;
 
-export function AdminLayout({ children, currentPath, session, onLogout, unreadSupportCount = 0, notifications = [], readIds = [], onMarkRead, onMarkAllRead }: AdminLayoutProps) {
+export function AdminLayout({ children, currentPath, session, onLogout }: AdminLayoutProps) {
   const roleLabel = isSuperAdmin(session) ? 'Super Admin' : 'Sub-admin';
   const branding = getCurrentTenantBranding();
   const visibleItems = NAV_ITEMS.filter((item) => {
@@ -62,18 +55,10 @@ export function AdminLayout({ children, currentPath, session, onLogout, unreadSu
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
               <Shield className="h-5 w-5" />
             </div>
-            <div className="flex-1 min-w-0">
+            <div>
               <div className="font-semibold">Admin Control</div>
               <div className="text-sm text-slate-500">{branding.appName}</div>
             </div>
-            {onMarkRead && onMarkAllRead && (
-              <NotificationBell
-                notifications={notifications}
-                readIds={readIds}
-                onMarkRead={onMarkRead}
-                onMarkAllRead={onMarkAllRead}
-              />
-            )}
           </div>
 
           <div className="mt-4 flex items-center gap-2">
@@ -92,20 +77,13 @@ export function AdminLayout({ children, currentPath, session, onLogout, unreadSu
                   key={item.path}
                   type="button"
                   variant={active ? 'default' : 'ghost'}
-                  className="w-full justify-between gap-2"
+                  className="w-full justify-start gap-2"
                   onClick={() => {
                     window.location.href = item.path;
                   }}
                 >
-                  <span className="flex items-center gap-2">
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </span>
-                  {item.path === '/admin/customer-service' && unreadSupportCount > 0 ? (
-                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold text-white">
-                      {unreadSupportCount > 99 ? '99+' : unreadSupportCount}
-                    </span>
-                  ) : null}
+                  <Icon className="h-4 w-4" />
+                  {item.label}
                 </Button>
               );
             })}
@@ -127,14 +105,6 @@ export function AdminLayout({ children, currentPath, session, onLogout, unreadSu
                 <div className="text-sm text-slate-500">{roleLabel}</div>
               </div>
               <div className="flex flex-wrap gap-2">
-                {onMarkRead && onMarkAllRead && (
-                  <NotificationBell
-                    notifications={notifications}
-                    readIds={readIds}
-                    onMarkRead={onMarkRead}
-                    onMarkAllRead={onMarkAllRead}
-                  />
-                )}
                 {visibleItems.map((item) => {
                   const active = currentPath === item.path;
                   return (
@@ -148,11 +118,6 @@ export function AdminLayout({ children, currentPath, session, onLogout, unreadSu
                       }}
                     >
                       {item.label}
-                      {item.path === '/admin/customer-service' && unreadSupportCount > 0 ? (
-                        <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold text-white">
-                          {unreadSupportCount > 99 ? '99+' : unreadSupportCount}
-                        </span>
-                      ) : null}
                     </Button>
                   );
                 })}

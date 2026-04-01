@@ -1,0 +1,596 @@
+﻿diff --git a/PREMIUM_DEFICIT_ASSIGNMENT_RULE.md b/PREMIUM_DEFICIT_ASSIGNMENT_RULE.md
+index e8e54f29..ff479526 100644
+--- a/PREMIUM_DEFICIT_ASSIGNMENT_RULE.md
++++ b/PREMIUM_DEFICIT_ASSIGNMENT_RULE.md
+@@ -1,6 +1,6 @@
+ # Premium Deficit Assignment Rule
+ 
+-Updated: 2026-03-10
++Updated: 2026-03-19
+ Status: Production rule
+ 
+ ## Purpose
+@@ -18,12 +18,16 @@ Define the current business behavior for admin-driven premium assignment, includ
+ ## Rule Definition
+ 
+ 1. Assignment behavior
+-- Admin assigns a deficit amount and encounter position to a user.
++- Admin assigns a target deficit amount and encounter position to a user.
+ - Assignment is stored under `premiumAssignment` on the user profile.
++- The control field is `targetDeficit`; the final premium amount is not locked until encounter time.
+ 
+ 2. Encounter behavior
+-- When the assigned premium task is encountered, account freeze is enforced.
+-- Top-up required is based on assignment total deficit amount.
++- When the assigned premium task is encountered, the premium amount is computed from the user's live balance:
++  - `premiumAmount = liveBalance + targetDeficit`
++  - `balanceAfterEncounter = liveBalance - premiumAmount = -targetDeficit`
++- Account freeze is then enforced using that computed encounter amount.
++- Top-up required equals the configured target deficit.
+ - User balance is represented as negative while frozen.
+ 
+ 3. Display behavior
+@@ -33,10 +37,11 @@ Define the current business behavior for admin-driven premium assignment, includ
+ 4. Unfreeze behavior
+ - Unfreeze releases the hold and recalculates the active balance using preserved assignment snapshot values.
+ - Task progress is preserved and resumed from the prior checkpoint.
++- Because encounter amount is derived at task time, balance changes before task 11 are respected automatically.
+ 
+ ## Validation Rules
+ 
+-- Deficit amount must be a positive number.
++- Target deficit amount must be a positive number.
+ - Deficit position must be a positive integer.
+ - Selected product must exist if a specific product is provided.
+ 
+@@ -51,5 +56,12 @@ Define the current business behavior for admin-driven premium assignment, includ
+ 1. Assign deficit from admin UI and verify success message.
+ 2. Verify assignment appears in admin list/alerts with new wording.
+ 3. Trigger encounter and verify account is frozen.
+-4. Confirm top-up required and negative balance display logic.
++4. Confirm top-up required equals target deficit and negative balance display logic is exact.
+ 5. Unfreeze user and verify balance/task progression resumes correctly.
++
++## Example
++
++- Live balance `B = 120`
++- Target deficit `D = 100`
++- Encounter amount `P = B + D = 220`
++- Frozen balance shown after encounter: `B - P = -100`
+diff --git a/src/app/admin/api.ts b/src/app/admin/api.ts
+index 3ffac952..3f3bb220 100644
+--- a/src/app/admin/api.ts
++++ b/src/app/admin/api.ts
+@@ -290,7 +290,7 @@ export async function adjustUserBalance(
+ 
+ export async function assignUserPremium(
+   session: AdminSession,
+-  payload: { userId: string; amount: number; position?: number },
++  payload: { userId: string; amount: number; targetDeficit?: number; position?: number },
+ ): Promise<void> {
+   const response = await adminFetch(session, '/admin/users/assign-premium', {
+     method: 'POST',
+diff --git a/src/app/components/AdminDashboard.tsx b/src/app/components/AdminDashboard.tsx
+index 89b2d283..d4d1a16e 100644
+--- a/src/app/components/AdminDashboard.tsx
++++ b/src/app/components/AdminDashboard.tsx
+@@ -930,17 +930,18 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
+     if (!actionTargetUser?.id) return;
+ 
+     if (!premiumAmountInput.trim()) {
+-      alert('ÔØî Premium amount is required');
++      alert('ÔØî Target deficit is required');
+       return;
+     }
+ 
+     const payload: any = { userId: actionTargetUser.id };
+     const parsedAmount = Number(premiumAmountInput);
+     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+-      alert('ÔØî Invalid premium amount');
++      alert('ÔØî Invalid target deficit');
+       return;
+     }
+     payload.amount = parsedAmount;
++    payload.targetDeficit = parsedAmount;
+ 
+     if (premiumPositionInput.trim()) {
+       const parsedPosition = Number(premiumPositionInput);
+@@ -974,9 +975,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
+       await loadAdminData();
+       setShowAssignPremiumModal(false);
+       setActionTargetUser(null);
+-      alert('Ô£à Premium assigned successfully');
++      alert('Ô£à Premium deficit assignment saved successfully');
+     } catch {
+-      alert('ÔØî Failed to assign premium');
++      alert('ÔØî Failed to assign premium deficit');
+     } finally {
+       setSubmittingAction(false);
+     }
+@@ -3431,14 +3432,15 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
+             </div>
+             <div className="p-6 space-y-3">
+               <div>
+-                <label className="block text-sm font-medium text-gray-700 mb-1">Premium Amount</label>
++                <label className="block text-sm font-medium text-gray-700 mb-1">Target Deficit</label>
+                 <Input
+                   type="number"
+                   step="0.01"
+                   value={premiumAmountInput}
+                   onChange={(e) => setPremiumAmountInput(e.target.value)}
+-                  placeholder="Required"
++                  placeholder="Example: 100"
+                 />
++                <p className="text-xs text-gray-500 mt-1">Encounter amount is calculated from the user's live balance plus this deficit.</p>
+               </div>
+               <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-1">Encounter Position (optional)</label>
+diff --git a/src/app/components/PremiumManagementPanel.tsx b/src/app/components/PremiumManagementPanel.tsx
+index 5be778da..378ed887 100644
+--- a/src/app/components/PremiumManagementPanel.tsx
++++ b/src/app/components/PremiumManagementPanel.tsx
+@@ -12,6 +12,7 @@ interface PremiumAssignment {
+   userName: string;
+   assignment: {
+     amount: number;
++    targetDeficit?: number | null;
+     position: number;
+     assignedAt: string;
+   };
+@@ -29,6 +30,7 @@ interface PremiumAnalytics {
+   assignments: Array<{
+     userId: string;
+     amount: number;
++    targetDeficit?: number | null;
+     position: number;
+     assignedAt: string;
+     isFrozen: boolean;
+@@ -60,7 +62,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+   const [message, setMessage] = useState('');
+   const [error, setError] = useState('');
+ 
+-  // Form states for assigning new premium
++  // Form states for assigning new premium deficit
+   const [formUserId, setFormUserId] = useState('');
+   const [formAmount, setFormAmount] = useState('');
+   const [formPosition, setFormPosition] = useState('');
+@@ -161,7 +163,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+     }
+   };
+ 
+-  // Assign premium product
++  // Assign premium deficit
+   const handleAssignPremium = async (e: React.FormEvent) => {
+     e.preventDefault();
+     if (!authToken) {
+@@ -183,6 +185,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+         body: JSON.stringify({
+           userId: formUserId,
+           amount: parseFloat(formAmount),
++          targetDeficit: parseFloat(formAmount),
+           position: parseInt(formPosition),
+           productId: formProductId || null,
+         }),
+@@ -190,7 +193,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+ 
+       const data = await res.json();
+       if (data.success) {
+-        setMessage('Ô£ô Premium product assigned successfully');
++        setMessage('Ô£ô Premium deficit assignment created successfully');
+         setFormUserId('');
+         setFormAmount('');
+         setFormPosition('');
+@@ -601,7 +604,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+ 
+       <Tabs defaultValue="assign" className="w-full">
+         <TabsList>
+-          <TabsTrigger value="assign">Assign Premium</TabsTrigger>
++          <TabsTrigger value="assign">Assign Premium Deficit</TabsTrigger>
+           <TabsTrigger value="products">Task Products</TabsTrigger>
+           {isSuperAdmin && <TabsTrigger value="active">Active Assignments</TabsTrigger>}
+           {isSuperAdmin && <TabsTrigger value="analytics">Analytics</TabsTrigger>}
+@@ -611,8 +614,8 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+         <TabsContent value="assign" className="space-y-4">
+           <Card>
+             <CardHeader>
+-              <CardTitle>Assign New Premium Product</CardTitle>
+-              <CardDescription>Assign a premium product to a user</CardDescription>
++              <CardTitle>Assign Premium Deficit</CardTitle>
++              <CardDescription>Store a target negative deficit and compute the premium encounter amount from the user's live balance.</CardDescription>
+             </CardHeader>
+             <CardContent>
+               <form onSubmit={handleAssignPremium} className="space-y-4">
+@@ -628,15 +631,16 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+ 
+                 <div className="grid grid-cols-2 gap-4">
+                   <div>
+-                    <label className="block text-sm font-medium mb-1">Amount ($)</label>
++                    <label className="block text-sm font-medium mb-1">Target Deficit ($)</label>
+                     <Input
+                       type="number"
+                       step="0.01"
+                       value={formAmount}
+                       onChange={(e) => setFormAmount(e.target.value)}
+-                      placeholder="e.g., 10000"
++                      placeholder="e.g., 100"
+                       required
+                     />
++                    <p className="text-xs text-gray-500 mt-1">Example: if balance is $120 and target deficit is $100, the encounter amount becomes $220.</p>
+                   </div>
+ 
+                   <div>
+@@ -671,7 +675,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                 </div>
+ 
+                 <Button type="submit" disabled={loading} className="w-full">
+-                  {loading ? 'Assigning...' : 'Assign Premium Product'}
++                  {loading ? 'Assigning...' : 'Assign Premium Deficit'}
+                 </Button>
+               </form>
+ 
+@@ -896,7 +900,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                       <TableRow>
+                         <TableHead>User</TableHead>
+                         <TableHead>Email</TableHead>
+-                        <TableHead>Amount</TableHead>
++                        <TableHead>Encounter Amount</TableHead>
+                         <TableHead>Position</TableHead>
+                         <TableHead>Status</TableHead>
+                         <TableHead>Balance</TableHead>
+@@ -909,7 +913,12 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                         <TableRow key={assign.userId}>
+                           <TableCell className="font-medium">{assign.userName}</TableCell>
+                           <TableCell className="text-sm">{assign.userEmail}</TableCell>
+-                          <TableCell className="font-bold">${assign.assignment.amount.toFixed(2)}</TableCell>
++                          <TableCell className="font-bold">
++                            ${assign.assignment.amount.toFixed(2)}
++                            {typeof assign.assignment.targetDeficit === 'number' && assign.assignment.targetDeficit > 0 ? (
++                              <p className="text-xs font-normal text-gray-500">Target deficit: ${assign.assignment.targetDeficit.toFixed(2)}</p>
++                            ) : null}
++                          </TableCell>
+                           <TableCell>#{assign.assignment.position}</TableCell>
+                           <TableCell>
+                             <span
+@@ -977,11 +986,11 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                       <p className="text-3xl font-bold">{analytics.totalAssignments}</p>
+                     </div>
+                     <div>
+-                      <p className="text-sm text-gray-600">Total Value</p>
++                      <p className="text-sm text-gray-600">Total Encounter Value</p>
+                       <p className="text-3xl font-bold">${analytics.totalPremiumValue.toFixed(2)}</p>
+                     </div>
+                     <div>
+-                      <p className="text-sm text-gray-600">Average Value</p>
++                      <p className="text-sm text-gray-600">Average Encounter Value</p>
+                       <p className="text-3xl font-bold">${analytics.averageValue.toFixed(2)}</p>
+                     </div>
+                     <div>
+@@ -999,7 +1008,7 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                         <TableHeader>
+                           <TableRow>
+                             <TableHead>User ID</TableHead>
+-                            <TableHead>Amount</TableHead>
++                            <TableHead>Encounter Amount</TableHead>
+                             <TableHead>Position</TableHead>
+                             <TableHead>Status</TableHead>
+                             <TableHead>Assigned Date</TableHead>
+@@ -1009,7 +1018,12 @@ export function PremiumManagementPanel({ adminToken, isSuperAdmin = false }: Pre
+                           {analytics.assignments.slice(0, 10).map((assign) => (
+                             <TableRow key={assign.userId}>
+                               <TableCell className="font-medium">{assign.userId.slice(0, 8)}...</TableCell>
+-                              <TableCell className="font-bold">${assign.amount.toFixed(2)}</TableCell>
++                              <TableCell className="font-bold">
++                                ${assign.amount.toFixed(2)}
++                                {typeof assign.targetDeficit === 'number' && assign.targetDeficit > 0 ? (
++                                  <p className="text-xs font-normal text-gray-500">Target deficit: ${assign.targetDeficit.toFixed(2)}</p>
++                                ) : null}
++                              </TableCell>
+                               <TableCell>#{assign.position}</TableCell>
+                               <TableCell>
+                                 <span
+diff --git a/supabase/functions/server/index.tsx b/supabase/functions/server/index.tsx
+index db866fe9..2194cc05 100644
+--- a/supabase/functions/server/index.tsx
++++ b/supabase/functions/server/index.tsx
+@@ -793,7 +793,8 @@ const buildNextTaskProduct = async (userProfile: any, nextTaskNumber: number) =>
+       : null;
+     const fallbackPremiumProduct = getRandomTaskProduct(catalog, { premiumOnly: true }) || getRandomTaskProduct(catalog) || null;
+     const premiumProduct = assignedCatalogProduct || fallbackPremiumProduct;
+-    const premiumAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
++    const premiumSnapshot = resolvePremiumAssignmentSnapshot(assignment, Number(userProfile?.balance ?? 0));
++    const premiumAmount = premiumSnapshot.amount;
+     const resolvedAmount = premiumAmount > 0
+       ? premiumAmount
+       : roundCurrency((amountRange.min + amountRange.max) / 2);
+@@ -872,6 +873,52 @@ const buildPremiumBundleDetails = (enteredPremiumAmount: number) => {
+   };
+ };
+ 
++const resolvePremiumAssignmentSnapshot = (assignment: any, currentBalanceInput: number) => {
++  const currentBalance = roundCurrency(Number(currentBalanceInput ?? 0));
++  const configuredTargetDeficit = Number(assignment?.targetDeficit ?? NaN);
++  const hasTargetDeficit = Number.isFinite(configuredTargetDeficit) && configuredTargetDeficit > 0;
++  const targetDeficit = hasTargetDeficit ? roundCurrency(configuredTargetDeficit) : null;
++
++  if (assignment?.encounteredAt) {
++    const encounteredAmount = roundCurrency(Number(assignment?.amount ?? assignment?.projectedEncounterAmount ?? assignment?.enteredAmount ?? 0));
++    const storedBalanceAfterAssignment = Number(assignment?.balanceAfterAssignment ?? NaN);
++    const balanceAfterEncounter = Number.isFinite(storedBalanceAfterAssignment)
++      ? roundCurrency(storedBalanceAfterAssignment)
++      : roundCurrency(currentBalance - encounteredAmount);
++    const storedTopUpRequired = Number(assignment?.topUpRequired ?? NaN);
++    const topUpRequired = Number.isFinite(storedTopUpRequired)
++      ? roundCurrency(storedTopUpRequired)
++      : roundCurrency(Math.max(0, 0 - balanceAfterEncounter));
++
++    return {
++      amount: encounteredAmount,
++      targetDeficit,
++      balanceAfterEncounter,
++      topUpRequired,
++    };
++  }
++
++  if (targetDeficit !== null) {
++    const encounterAmount = roundCurrency(Math.max(0, currentBalance + targetDeficit));
++    const balanceAfterEncounter = roundCurrency(currentBalance - encounterAmount);
++    return {
++      amount: encounterAmount,
++      targetDeficit,
++      balanceAfterEncounter,
++      topUpRequired: roundCurrency(Math.max(0, 0 - balanceAfterEncounter)),
++    };
++  }
++
++  const configuredAmount = roundCurrency(Number(assignment?.amount ?? assignment?.enteredAmount ?? 0));
++  const balanceAfterEncounter = roundCurrency(currentBalance - configuredAmount);
++  return {
++    amount: configuredAmount,
++    targetDeficit: null,
++    balanceAfterEncounter,
++    topUpRequired: roundCurrency(Math.max(0, 0 - balanceAfterEncounter)),
++  };
++};
++
+ const getVipPremiumProfitRate = (vipTier: string): number => {
+   const tier = String(vipTier || 'Normal');
+   if (tier === 'Silver') return 0.075;
+@@ -3022,16 +3069,17 @@ app.post("/admin/premium", async (c) => {
+       return c.json({ error: `Rate limit exceeded for premium assignment. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+     }
+ 
+-    const { userId, amount, position, productId } = await c.req.json();
+-    if (!userId || amount === undefined || position === undefined) {
+-      return c.json({ error: 'userId, amount, and position are required' }, 400);
++    const { userId, amount, targetDeficit, position, productId } = await c.req.json();
++    const requestedTargetDeficit = targetDeficit ?? amount;
++    if (!userId || requestedTargetDeficit === undefined || position === undefined) {
++      return c.json({ error: 'userId, targetDeficit, and position are required' }, 400);
+     }
+ 
+-    const premiumAmount = Number(amount);
++    const premiumAmount = Number(requestedTargetDeficit);
+     const requestedPremiumPosition = Number(position);
+ 
+     if (!Number.isFinite(premiumAmount) || premiumAmount <= 0) {
+-      return c.json({ error: 'amount must be a positive number' }, 400);
++      return c.json({ error: 'targetDeficit must be a positive number' }, 400);
+     }
+ 
+     if (!Number.isInteger(requestedPremiumPosition) || requestedPremiumPosition <= 0) {
+@@ -3072,13 +3120,14 @@ app.post("/admin/premium", async (c) => {
+       return c.json({ error: 'Selected premium product was not found in catalog' }, 400);
+     }
+ 
+-    const currentBalance = Number(user?.balance ?? 0);
+-    const bundleDetails = buildPremiumBundleDetails(premiumAmount);
+-    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
++    const currentBalance = roundCurrency(Number(user?.balance ?? 0));
++    const premiumSnapshot = resolvePremiumAssignmentSnapshot({ targetDeficit: premiumAmount }, currentBalance);
++    const bundleDetails = buildPremiumBundleDetails(premiumSnapshot.amount);
++    const bundleTotal = roundCurrency(Number(bundleDetails.bundleTotal || premiumSnapshot.amount || 0));
+     const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+     const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+     const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
++    const projectedTopUpRequired = roundCurrency(Math.max(0, 0 - balanceAfterAssignment));
+     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+ 
+     const updatedUser = {
+@@ -3087,6 +3136,8 @@ app.post("/admin/premium", async (c) => {
+         orderId: premiumOrderId,
+         amount: bundleTotal,
+         enteredAmount: premiumAmount,
++        targetDeficit: premiumAmount,
++        assignmentMode: 'target_deficit',
+         position: effectivePremiumPosition,
+         productId: assignedProduct?.id || null,
+         productName: assignedProduct?.name || null,
+@@ -3099,6 +3150,7 @@ app.post("/admin/premium", async (c) => {
+         previousBalance: null,
+         balanceAfterAssignment: null,
+         topUpRequired: null,
++        projectedEncounterAmount: bundleTotal,
+         projectedBalanceAfterEncounter: balanceAfterAssignment,
+         projectedTopUpRequired,
+         encounteredAt: null,
+@@ -3122,6 +3174,7 @@ app.post("/admin/premium", async (c) => {
+         willFreezeOnEncounter: projectedTopUpRequired > 0,
+         orderId: premiumOrderId,
+         bundleTotal,
++        targetDeficit: premiumAmount,
+         topUpRequired: projectedTopUpRequired,
+         requestedPosition: requestedPremiumPosition,
+         effectivePosition: effectivePremiumPosition,
+@@ -3191,11 +3244,19 @@ app.get("/admin/premium/list", async (c) => {
+ 
+     for (const user of allUsers) {
+       if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
++        const snapshot = resolvePremiumAssignmentSnapshot(user.premiumAssignment, Number(user?.balance ?? 0));
+         premiumAssignments.push({
+           userId: user.id,
+           userEmail: user.email,
+           userName: user.name,
+-          assignment: user.premiumAssignment,
++          assignment: {
++            ...user.premiumAssignment,
++            amount: snapshot.amount,
++            targetDeficit: snapshot.targetDeficit,
++            projectedEncounterAmount: snapshot.amount,
++            projectedBalanceAfterEncounter: snapshot.balanceAfterEncounter,
++            projectedTopUpRequired: snapshot.topUpRequired,
++          },
+           currentBalance: user.balance,
+           accountFrozen: user.accountFrozen,
+           freezeAmount: user.freezeAmount,
+@@ -3281,11 +3342,13 @@ app.get("/admin/premium/analytics", async (c) => {
+ 
+     for (const user of allUsers) {
+       if (user?.premiumAssignment && isTargetAccessibleForSuperAdminContext(superContext, user)) {
++        const snapshot = resolvePremiumAssignmentSnapshot(user.premiumAssignment, Number(user?.balance ?? 0));
+         totalAssignments++;
+-        totalPremiumValue += user.premiumAssignment.amount;
++        totalPremiumValue += snapshot.amount;
+         assignments.push({
+           userId: user.id,
+-          amount: user.premiumAssignment.amount,
++          amount: snapshot.amount,
++          targetDeficit: snapshot.targetDeficit,
+           position: user.premiumAssignment.position,
+           assignedAt: user.premiumAssignment.assignedAt,
+           isFrozen: user.accountFrozen,
+@@ -3731,18 +3794,30 @@ app.post("/submit-product", async (c) => {
+     );
+ 
+     if (shouldTriggerPremiumEncounter) {
+-      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
+       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
++      const premiumSnapshot = resolvePremiumAssignmentSnapshot(activePremiumAssignment, currentBalance);
++      const bundleTotal = premiumSnapshot.amount;
++      const balanceAfterEncounter = premiumSnapshot.balanceAfterEncounter;
++      const topUpRequired = premiumSnapshot.topUpRequired;
+       const encounteredAt = new Date().toISOString();
++      const bundleDetails = buildPremiumBundleDetails(bundleTotal);
++      const potentialPremiumProfit = roundCurrency(
++        bundleTotal * Number(activePremiumAssignment?.vipRate ?? getVipPremiumProfitRate(String(userProfile?.vipTier || 'Normal')))
++      );
+ 
+       const updatedAssignment = {
+         ...activePremiumAssignment,
+         amount: bundleTotal,
++        targetDeficit: premiumSnapshot.targetDeficit,
++        potentialProfit: potentialPremiumProfit,
++        bundleProductCount: bundleDetails.individualProductCount,
++        bundleItems: bundleDetails.bundleItems,
+         previousBalance: currentBalance,
+         balanceAfterAssignment: balanceAfterEncounter,
+         topUpRequired,
++        projectedEncounterAmount: bundleTotal,
++        projectedBalanceAfterEncounter: balanceAfterEncounter,
++        projectedTopUpRequired: topUpRequired,
+         encounteredAt,
+         encounteredTaskNumber: nextTaskNumber,
+       };
+@@ -4019,18 +4094,30 @@ app.post('/tasks/complete-product', async (c) => {
+     );
+ 
+     if (shouldTriggerPremiumEncounter) {
+-      const bundleTotal = roundCurrency(Number(activePremiumAssignment?.amount ?? activePremiumAssignment?.enteredAmount ?? 0));
+       const currentBalance = roundCurrency(Number(userProfile?.balance ?? 0));
+-      const balanceAfterEncounter = roundCurrency(currentBalance - bundleTotal);
+-      const topUpRequired = balanceAfterEncounter < 0 ? Math.abs(balanceAfterEncounter) : 0;
++      const premiumSnapshot = resolvePremiumAssignmentSnapshot(activePremiumAssignment, currentBalance);
++      const bundleTotal = premiumSnapshot.amount;
++      const balanceAfterEncounter = premiumSnapshot.balanceAfterEncounter;
++      const topUpRequired = premiumSnapshot.topUpRequired;
+       const encounteredAt = new Date().toISOString();
++      const bundleDetails = buildPremiumBundleDetails(bundleTotal);
++      const potentialPremiumProfit = roundCurrency(
++        bundleTotal * Number(activePremiumAssignment?.vipRate ?? getVipPremiumProfitRate(String(userProfile?.vipTier || 'Normal')))
++      );
+ 
+       const updatedAssignment = {
+         ...activePremiumAssignment,
+         amount: bundleTotal,
++        targetDeficit: premiumSnapshot.targetDeficit,
++        potentialProfit: potentialPremiumProfit,
++        bundleProductCount: bundleDetails.individualProductCount,
++        bundleItems: bundleDetails.bundleItems,
+         previousBalance: currentBalance,
+         balanceAfterAssignment: balanceAfterEncounter,
+         topUpRequired,
++        projectedEncounterAmount: bundleTotal,
++        projectedBalanceAfterEncounter: balanceAfterEncounter,
++        projectedTopUpRequired: topUpRequired,
+         encounteredAt,
+         encounteredTaskNumber: nextTaskNumber,
+       };
+@@ -5139,17 +5226,18 @@ app.post('/admin/users/assign-premium', async (c) => {
+ 
+     const normalizedProductId = String(body?.productId || '').trim();
+ 
+-    if (body?.amount === undefined || body?.amount === null || body?.amount === '') {
+-      return c.json({ error: 'amount is required for premium assignment' }, 400);
++    const requestedTargetDeficit = body?.targetDeficit ?? body?.amount;
++    if (requestedTargetDeficit === undefined || requestedTargetDeficit === null || requestedTargetDeficit === '') {
++      return c.json({ error: 'targetDeficit is required for premium assignment' }, 400);
+     }
+     if (body?.position === undefined || body?.position === null || body?.position === '') {
+       return c.json({ error: 'position is required for premium assignment' }, 400);
+     }
+-    const amount = Number(body.amount);
++    const amount = Number(requestedTargetDeficit);
+     const requestedPosition = Number(body.position);
+ 
+     if (!Number.isFinite(amount) || amount <= 0) {
+-      return c.json({ error: 'amount must be a positive number' }, 400);
++      return c.json({ error: 'targetDeficit must be a positive number' }, 400);
+     }
+ 
+     if (!Number.isInteger(requestedPosition) || requestedPosition <= 0) {
+@@ -5192,13 +5280,14 @@ app.post('/admin/users/assign-premium', async (c) => {
+       ? 1
+       : Math.min(tasksPerSet, Math.max(currentProgress + 1, requestedPosition));
+ 
+-    const currentBalance = Number(user?.balance ?? 0);
+-    const bundleDetails = buildPremiumBundleDetails(amount);
+-    const bundleTotal = Number(bundleDetails.bundleTotal || 0);
++    const currentBalance = roundCurrency(Number(user?.balance ?? 0));
++    const premiumSnapshot = resolvePremiumAssignmentSnapshot({ targetDeficit: amount }, currentBalance);
++    const bundleDetails = buildPremiumBundleDetails(premiumSnapshot.amount);
++    const bundleTotal = roundCurrency(Number(bundleDetails.bundleTotal || premiumSnapshot.amount || 0));
+     const vipPremiumRate = getVipPremiumProfitRate(String(user?.vipTier || 'Normal'));
+     const potentialPremiumProfit = roundCurrency(bundleTotal * vipPremiumRate);
+     const balanceAfterAssignment = roundCurrency(currentBalance - bundleTotal);
+-    const projectedTopUpRequired = balanceAfterAssignment < 0 ? Math.abs(balanceAfterAssignment) : 0;
++    const projectedTopUpRequired = roundCurrency(Math.max(0, 0 - balanceAfterAssignment));
+     const premiumOrderId = `PRM-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+     const updatedUser = {
+       ...user,
+@@ -5206,6 +5295,8 @@ app.post('/admin/users/assign-premium', async (c) => {
+         orderId: premiumOrderId,
+         amount: bundleTotal,
+         enteredAmount: amount,
++        targetDeficit: amount,
++        assignmentMode: 'target_deficit',
+         position: effectivePosition,
+         productId: assignedProduct?.id || null,
+         productName: assignedProduct?.name || null,
+@@ -5218,6 +5309,7 @@ app.post('/admin/users/assign-premium', async (c) => {
+         previousBalance: null,
+         balanceAfterAssignment: null,
+         topUpRequired: null,
++        projectedEncounterAmount: bundleTotal,
+         projectedBalanceAfterEncounter: balanceAfterAssignment,
+         projectedTopUpRequired,
+         encounteredAt: null,
+@@ -5242,6 +5334,7 @@ app.post('/admin/users/assign-premium', async (c) => {
+         willFreezeOnEncounter: projectedTopUpRequired > 0,
+         orderId: premiumOrderId,
+         bundleTotal,
++        targetDeficit: amount,
+         topUpRequired: projectedTopUpRequired,
+         requestedPosition,
+         effectivePosition,

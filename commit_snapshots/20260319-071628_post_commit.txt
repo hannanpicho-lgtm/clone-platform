@@ -1,0 +1,19 @@
+﻿commit 5c5452ffff7b3d95777698a457c7b8043584cdf7
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 07:16:10 2026 +0700
+
+    feat(home): match financial summary card style and wording
+    
+    - replace home financial card with required blue panel style
+    - apply exact wording for Today's Commission, Balance, Hold Amount,
+      and Special Lucky Bonus sections
+    - bind figures to live values:
+      * today's commission -> todaysProfit
+      * balance -> balance
+      * hold amount -> freezeAmount/deficit when frozen
+      * special lucky bonus -> profile lucky bonus field fallback
+    - keep action buttons below summary panel
+    - build verified
+
+ src/app/components/Dashboard.tsx | 113 ++++++++++++++++++++++++++++-----------
+ 1 file changed, 81 insertions(+), 32 deletions(-)

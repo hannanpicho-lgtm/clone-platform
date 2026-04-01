@@ -1,0 +1,18 @@
+﻿commit bbb029b8e532305a5f0419539b8ff1ce4bc97f76
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 05:52:01 2026 +0700
+
+    feat(premium): compute premium encounter amount from target deficit
+    
+    - store targetDeficit for premium assignments
+    - derive encounter amount from live balance at trigger time
+    - preserve legacy fixed-amount assignments for compatibility
+    - update admin premium UI wording to target deficit
+    - update premium assignment docs
+
+ PREMIUM_DEFICIT_ASSIGNMENT_RULE.md            |  24 +++--
+ src/app/admin/api.ts                          |   2 +-
+ src/app/components/AdminDashboard.tsx         |  14 +--
+ src/app/components/PremiumManagementPanel.tsx |  44 +++++---
+ supabase/functions/server/index.tsx           | 147 +++++++++++++++++++++-----
+ 5 files changed, 176 insertions(+), 55 deletions(-)

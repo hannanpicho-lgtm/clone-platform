@@ -55,7 +55,6 @@ interface User {
   accountDisabled?: boolean;
   accountFrozen: boolean;
   freezeAmount?: number;
-  creditScore?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
   withdrawalLimit?: number;
@@ -63,11 +62,6 @@ interface User {
   currentSetTasksCompleted?: number;
   currentSetDate?: string | null;
   createdAt: string;
-  parentUserId?: string | null;
-  invitationCode?: string | null;
-  usedInvitationCode?: string | null;
-  invitedByName?: string | null;
-  invitedByAdminGenerated?: boolean;
 }
 
 interface LimitedAdminAccount {
@@ -263,7 +257,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
   const [taskLimitDailyInput, setTaskLimitDailyInput] = useState('3');
   const [taskLimitExtraInput, setTaskLimitExtraInput] = useState('0');
   const [withdrawalLimitInput, setWithdrawalLimitInput] = useState('0');
-  const [creditScoreInput, setCreditScoreInput] = useState('100');
   const [permissionsInput, setPermissionsInput] = useState('');
   const [denyWithdrawalId, setDenyWithdrawalId] = useState('');
   const [denyReasonInput, setDenyReasonInput] = useState('Insufficient verification details');
@@ -937,18 +930,17 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     if (!actionTargetUser?.id) return;
 
     if (!premiumAmountInput.trim()) {
-      alert('❌ Target deficit is required');
+      alert('❌ Premium amount is required');
       return;
     }
 
     const payload: any = { userId: actionTargetUser.id };
     const parsedAmount = Number(premiumAmountInput);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      alert('❌ Invalid target deficit');
+      alert('❌ Invalid premium amount');
       return;
     }
     payload.amount = parsedAmount;
-    payload.targetDeficit = parsedAmount;
 
     if (premiumPositionInput.trim()) {
       const parsedPosition = Number(premiumPositionInput);
@@ -982,9 +974,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       await loadAdminData();
       setShowAssignPremiumModal(false);
       setActionTargetUser(null);
-      alert('✅ Premium deficit assignment saved successfully');
+      alert('✅ Premium assigned successfully');
     } catch {
-      alert('❌ Failed to assign premium deficit');
+      alert('❌ Failed to assign premium');
     } finally {
       setSubmittingAction(false);
     }
@@ -1023,7 +1015,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     setTaskLimitDailyInput(String(user.dailyTaskSetLimit ?? 3));
     setTaskLimitExtraInput(String(user.extraTaskSets ?? 0));
     setWithdrawalLimitInput(String(user.withdrawalLimit ?? 0));
-    setCreditScoreInput(String(user.creditScore ?? 100));
     setShowTaskLimitsModal(true);
   };
 
@@ -1033,7 +1024,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
     const dailyTaskSetLimit = Number(taskLimitDailyInput);
     const extraTaskSets = Number(taskLimitExtraInput);
     const withdrawalLimit = Number(withdrawalLimitInput);
-    const creditScore = Number(creditScoreInput);
 
     if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
       alert('❌ Daily task set limit must be at least 1');
@@ -1050,11 +1040,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
       return;
     }
 
-    if (!Number.isFinite(creditScore) || creditScore < 0 || creditScore > 100) {
-      alert('❌ Credit score must be between 0 and 100');
-      return;
-    }
-
     try {
       setSubmittingAction(true);
       const response = await safeFetch(
@@ -1065,7 +1050,7 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             Authorization: `Bearer ${getAdminAuthToken()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit, creditScore }),
+          body: JSON.stringify({ userId: taskLimitsTargetUser.id, dailyTaskSetLimit, extraTaskSets, withdrawalLimit }),
         }
       );
 
@@ -3057,69 +3042,9 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
               </div>
 
               <div className="p-6 space-y-6">
+                {/* User Info */}
                 {/* Debug: Log selectedUser in modal render */}
                 {console.log('DEBUG: Rendering User Details Modal for', selectedUser)}
-
-                {/* Identity & Referral */}
-                <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400">Identity &amp; Referral</h4>
-                  <div className="grid grid-cols-1 gap-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-500 mb-0.5">User ID</p>
-                        <p className="font-mono text-xs text-gray-800 break-all">{selectedUser.id}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
-                        onClick={() => navigator.clipboard.writeText(selectedUser.id)}
-                        title="Copy User ID"
-                      >Copy</button>
-                    </div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-500 mb-0.5">Invitation Code (their own)</p>
-                        <p className="font-mono text-sm font-bold text-indigo-700">{selectedUser.invitationCode || '—'}</p>
-                      </div>
-                      {selectedUser.invitationCode && (
-                        <button
-                          type="button"
-                          className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
-                          onClick={() => navigator.clipboard.writeText(selectedUser.invitationCode!)}
-                          title="Copy Invitation Code"
-                        >Copy</button>
-                      )}
-                    </div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-500 mb-0.5">Parent Invitation Code (used at registration)</p>
-                        <p className="font-mono text-sm font-bold text-purple-700">{selectedUser.usedInvitationCode || '—'}</p>
-                      </div>
-                      {selectedUser.usedInvitationCode && (
-                        <button
-                          type="button"
-                          className="shrink-0 text-xs text-blue-600 hover:text-blue-800 mt-4"
-                          onClick={() => navigator.clipboard.writeText(selectedUser.usedInvitationCode!)}
-                          title="Copy Parent Invitation Code"
-                        >Copy</button>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Invited By</p>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {selectedUser.invitedByName
-                          ? <>{selectedUser.invitedByName}{selectedUser.invitedByAdminGenerated && <span className="ml-2 text-xs font-bold uppercase tracking-wide text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Admin</span>}</>
-                          : <span className="text-gray-400">Direct / No referral</span>}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-0.5">Account Created</p>
-                      <p className="text-sm font-semibold text-gray-900">{new Date(selectedUser.createdAt).toLocaleString()}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* User Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-500">Name</p>
@@ -3320,18 +3245,6 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
                   placeholder="e.g. 500"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Credit Score (0 - 100)</label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={creditScoreInput}
-                  onChange={(e) => setCreditScoreInput(e.target.value)}
-                  placeholder="e.g. 100"
-                />
-              </div>
               <div className="flex gap-2 pt-2">
                 <Button
                   variant="outline"
@@ -3518,15 +3431,14 @@ export function AdminDashboard({ onLogout, adminAccessToken, adminIsSuperAdmin =
             </div>
             <div className="p-6 space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Target Deficit</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Premium Amount</label>
                 <Input
                   type="number"
                   step="0.01"
                   value={premiumAmountInput}
                   onChange={(e) => setPremiumAmountInput(e.target.value)}
-                  placeholder="Example: 100"
+                  placeholder="Required"
                 />
-                <p className="text-xs text-gray-500 mt-1">Encounter amount is calculated from the user's live balance plus this deficit.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Encounter Position (optional)</label>

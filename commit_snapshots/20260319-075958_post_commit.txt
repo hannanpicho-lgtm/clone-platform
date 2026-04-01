@@ -1,0 +1,19 @@
+﻿commit e7269a65863d3bb2062bc99574b9809dd8d5e29e
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 07:59:36 2026 +0700
+
+    ci(deploy): unify production pipeline and remove duplicate trigger
+    
+    - consolidate to single deploy.yml workflow on main
+    - remove duplicate supabase-deploy.yml workflow
+    - standardize Supabase secret key to SUPABASE_PROJECT_REF
+    - add required secret validation with explicit error output
+    - build frontend artifact then deploy to Cloudflare Pages
+    - deploy Supabase function and apply DB schema
+    - run health check + post-deploy smoke tests
+    - add concurrency guard to prevent overlapping production runs
+
+ .github/workflows/deploy.yml          | 279 +++++++++++++++-------------------
+ .github/workflows/supabase-deploy.yml |  42 -----
+ 2 files changed, 121 insertions(+), 200 deletions(-)
+ delete mode 100644 .github/workflows/supabase-deploy.yml

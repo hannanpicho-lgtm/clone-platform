@@ -16,25 +16,12 @@ import type {
 
 const ADMIN_FUNCTION_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
 
-function resolveTenantIdFromHost(): 'tank' | 'steadfast' {
-  if (typeof window === 'undefined') {
-    return 'tank';
-  }
-
-  const host = String(window.location.hostname || '').toLowerCase();
-  if (host.includes('steadfast')) {
-    return 'steadfast';
-  }
-  return 'tank';
-}
-
 async function adminFetch(session: AdminSession, path: string, init?: RequestInit) {
   return safeFetch(`${ADMIN_FUNCTION_BASE}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${session.accessToken || publicAnonKey}`,
       'Content-Type': 'application/json',
-      'x-tenant-id': resolveTenantIdFromHost(),
       ...(init?.headers || {}),
     },
   });
@@ -109,33 +96,11 @@ export async function fetchAdminSupportTickets(session: AdminSession): Promise<A
     userName: String(ticket?.userName || ticket?.user || 'Unknown User'),
     subject: String(ticket?.subject || ticket?.category || 'Support request'),
     category: String(ticket?.category || 'general'),
-    message: String(ticket?.message || ''),
     priority: (ticket?.priority === 'high' ? 'high' : ticket?.priority === 'low' ? 'low' : 'medium') as 'high' | 'medium' | 'low',
     status: (ticket?.status === 'resolved' ? 'resolved' : ticket?.status === 'in_progress' || ticket?.status === 'in-progress' ? 'in_progress' : 'open') as 'open' | 'in_progress' | 'resolved',
-    createdAt: String(ticket?.createdAt || ticket?.updatedAt || new Date().toISOString()),
     updatedAt: String(ticket?.updatedAt || ticket?.createdAt || new Date().toISOString()),
     repliesCount: Array.isArray(ticket?.replies) ? ticket.replies.length : 0,
-    unreadByAdmin: Boolean(ticket?.unreadByAdmin),
-    unreadCount: Number(ticket?.unreadCount || 0),
-    replies: (Array.isArray(ticket?.replies) ? ticket.replies : []).map((reply: any) => ({
-      id: String(reply?.id || ''),
-      userId: reply?.userId ? String(reply.userId) : undefined,
-      userName: String(reply?.userName || 'Unknown User'),
-      message: String(reply?.message || ''),
-      createdAt: String(reply?.createdAt || ticket?.updatedAt || new Date().toISOString()),
-      role: reply?.role === 'admin' ? 'admin' : 'user',
-    })),
   }));
-}
-
-export async function markSupportTicketRead(session: AdminSession, ticketId: string): Promise<void> {
-  const response = await adminFetch(session, `/admin/support-tickets/${ticketId}/mark-read`, {
-    method: 'POST',
-  });
-  if (!response || !response.ok) {
-    const data = response ? await response.json().catch(() => ({})) : {};
-    throw new Error(data?.error || 'Failed to mark support ticket as read');
-  }
 }
 
 export async function fetchAdminAuditLog(session: AdminSession, limit = 25): Promise<AdminAuditLogItem[]> {
@@ -290,7 +255,7 @@ export async function adjustUserBalance(
 
 export async function assignUserPremium(
   session: AdminSession,
-  payload: { userId: string; amount: number; targetDeficit?: number; position?: number },
+  payload: { userId: string; amount: number; position?: number },
 ): Promise<void> {
   const response = await adminFetch(session, '/admin/users/assign-premium', {
     method: 'POST',
@@ -325,56 +290,6 @@ export async function updateUserTaskLimits(
     const data = response ? await response.json().catch(() => ({})) : {};
     throw new Error(data?.error || 'Failed to update task limits');
   }
-}
-
-export interface CredentialResetResult {
-  username: string;
-  password: string;
-  expiresInMinutes: number;
-  requiresPasswordChange: boolean;
-  note: string;
-}
-
-export async function resetUserCredentials(
-  session: AdminSession,
-  userId: string,
-  options?: { resetUsername?: boolean }
-): Promise<CredentialResetResult> {
-  const response = await adminFetch(session, `/admin/users/${userId}/reset-credentials`, {
-    method: 'POST',
-    body: JSON.stringify({ resetUsername: options?.resetUsername || false }),
-  });
-  if (!response || !response.ok) {
-    const data = response ? await response.json().catch(() => ({})) : {};
-    throw new Error(data?.error || 'Failed to reset user credentials');
-  }
-  const result = await response.json().catch(() => ({}));
-  return result?.credentials || {
-    username: '',
-    password: '',
-    expiresInMinutes: 30,
-    requiresPasswordChange: true,
-    note: 'User must change password on next login',
-  };
-}
-
-export async function changePasswordOnLogin(session: AdminSession, newPassword: string): Promise<void> {
-  const response = await adminFetch(session, '/change-password-on-login', {
-    method: 'POST',
-    body: JSON.stringify({ newPassword }),
-  });
-  if (!response || !response.ok) {
-    const data = response ? await response.json().catch(() => ({})) : {};
-    throw new Error(data?.error || 'Failed to change password');
-  }
-}
-
-export async function fetchCredentialResetLogs(session: AdminSession, userId: string): Promise<any> {
-  const response = await adminFetch(session, `/admin/users/${userId}/credential-reset-logs`);
-  if (!response || !response.ok) {
-    throw new Error('Failed to fetch credential reset logs');
-  }
-  return response.json().catch(() => ({}));
 }
 
 export async function fetchAdminWithdrawals(session: AdminSession): Promise<AdminWithdrawalRequest[]> {

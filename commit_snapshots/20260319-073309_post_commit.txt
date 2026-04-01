@@ -1,0 +1,25 @@
+﻿commit 3e5c09803919e37b4819d501b349035579a7ae1f
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 07:32:54 2026 +0700
+
+    fix(layout): global responsive button system and overflow protection
+    
+    - add shared .btn-container/.btn-group/.btn-primary-action utilities
+    - enforce border-box + root max-width/overflow-x protection globally
+    - harden shared Button primitive to wrap text and avoid clipping
+    - apply responsive button groups to withdrawal, deposit, and withdrawal-password flows
+    - apply responsive button groups across admin action panels and filters
+    - ensure critical submit/approve actions remain visible and prioritized
+    - improve button visual feel with refined hover/active states
+    - build verified
+
+ src/app/admin/pages/AdminSubAdminsPage.tsx    |  4 +--
+ src/app/admin/pages/AdminSupportLinksPage.tsx |  4 +--
+ src/app/admin/pages/AdminTransactionsPage.tsx |  2 +-
+ src/app/admin/pages/AdminUsersPage.tsx        |  7 ++--
+ src/app/admin/pages/AdminWithdrawalsPage.tsx  |  4 +--
+ src/app/components/Dashboard.tsx              | 16 +++++----
+ src/app/components/WithdrawalForm.tsx         |  7 ++--
+ src/app/components/ui/button.tsx              |  2 +-
+ src/styles/theme.css                          | 50 +++++++++++++++++++++++++++
+ 9 files changed, 75 insertions(+), 21 deletions(-)

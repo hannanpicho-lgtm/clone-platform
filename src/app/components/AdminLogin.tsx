@@ -70,12 +70,7 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
 
       if (!superAdminResponse || !superAdminResponse.ok) {
         const errorData = superAdminResponse ? await superAdminResponse.json().catch(() => ({})) : {};
-        const backendError = String(errorData?.error || 'Invalid super admin key');
-        if (backendError.toLowerCase().includes('super admin key required')) {
-          setError('Invalid super admin key. Use the ADMIN_API_KEY value (not SUPABASE_SERVICE_ROLE_KEY), leave username empty, and paste the key exactly.');
-        } else {
-          setError(backendError);
-        }
+        setError(errorData?.error || 'Invalid super admin key');
         setIsLoading(false);
         return;
       }

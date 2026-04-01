@@ -135,9 +135,9 @@ export function AdminSupportLinksPage({ session }: AdminSupportLinksPageProps) {
             />
           </div>
 
-          <div className="btn-group">
+          <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={load} disabled={saving}>Refresh</Button>
-            <Button type="button" className="btn-primary-action" onClick={handleSave} disabled={!canManageSupport || saving}>{saving ? 'Saving...' : 'Save Links'}</Button>
+            <Button type="button" onClick={handleSave} disabled={!canManageSupport || saving}>{saving ? 'Saving...' : 'Save Links'}</Button>
             <Button type="button" variant="outline" className="text-red-600" onClick={handleClear} disabled={!canManageSupport || saving}>
               {isRootAdmin ? 'Delete Links' : 'Clear WA2/TG2'}
             </Button>

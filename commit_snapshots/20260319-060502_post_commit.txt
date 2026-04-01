@@ -1,0 +1,12 @@
+﻿commit 90ea6c065c0b9f9dcaa82f7f18e9f1fbdeb3bee0
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 06:04:47 2026 +0700
+
+    fix(premium): repair freeze submit path for target deficit rule
+    
+    - use request product fields in premium freeze branch
+    - eliminate 500 error during submit-product freeze flow
+    - keep deployed target deficit encounter behavior consistent
+
+ supabase/functions/server/index.tsx | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)

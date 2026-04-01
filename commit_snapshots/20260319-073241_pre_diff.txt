@@ -1,0 +1,272 @@
+﻿diff --git a/src/app/admin/pages/AdminSubAdminsPage.tsx b/src/app/admin/pages/AdminSubAdminsPage.tsx
+index ddf0ea3c..a6b565bf 100644
+--- a/src/app/admin/pages/AdminSubAdminsPage.tsx
++++ b/src/app/admin/pages/AdminSubAdminsPage.tsx
+@@ -268,7 +268,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
+                     </TableCell>
+                     <TableCell>{account.usersCreated || 0}</TableCell>
+                     <TableCell className="text-right">
+-                      <div className="flex justify-end gap-2">
++                      <div className="btn-group sm:w-auto sm:max-w-xl sm:justify-end">
+                         <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>
+                           Edit
+                         </Button>
+@@ -278,7 +278,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
+                         <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>
+                           Revoke
+                         </Button>
+-                        <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>
++                        <Button type="button" size="sm" variant="destructive" className="btn-primary-action" disabled={saving} onClick={() => handleDelete(account)}>
+                           Delete
+                         </Button>
+                       </div>
+diff --git a/src/app/admin/pages/AdminSupportLinksPage.tsx b/src/app/admin/pages/AdminSupportLinksPage.tsx
+index 8dc72427..879d09f5 100644
+--- a/src/app/admin/pages/AdminSupportLinksPage.tsx
++++ b/src/app/admin/pages/AdminSupportLinksPage.tsx
+@@ -135,9 +135,9 @@ export function AdminSupportLinksPage({ session }: AdminSupportLinksPageProps) {
+             />
+           </div>
+ 
+-          <div className="flex gap-2">
++          <div className="btn-group">
+             <Button type="button" variant="outline" onClick={load} disabled={saving}>Refresh</Button>
+-            <Button type="button" onClick={handleSave} disabled={!canManageSupport || saving}>{saving ? 'Saving...' : 'Save Links'}</Button>
++            <Button type="button" className="btn-primary-action" onClick={handleSave} disabled={!canManageSupport || saving}>{saving ? 'Saving...' : 'Save Links'}</Button>
+             <Button type="button" variant="outline" className="text-red-600" onClick={handleClear} disabled={!canManageSupport || saving}>
+               {isRootAdmin ? 'Delete Links' : 'Clear WA2/TG2'}
+             </Button>
+diff --git a/src/app/admin/pages/AdminTransactionsPage.tsx b/src/app/admin/pages/AdminTransactionsPage.tsx
+index 80a551db..cc078776 100644
+--- a/src/app/admin/pages/AdminTransactionsPage.tsx
++++ b/src/app/admin/pages/AdminTransactionsPage.tsx
+@@ -61,7 +61,7 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
+               <CardTitle>User Earnings Activity</CardTitle>
+               <CardDescription>Live earnings totals and product submission counts per user.</CardDescription>
+             </div>
+-            <div className="flex gap-2">
++            <div className="btn-group sm:w-auto sm:max-w-sm">
+               <Button type="button" size="sm" variant={filter === 'all' ? 'default' : 'outline'} onClick={() => setFilter('all')}>All</Button>
+               <Button type="button" size="sm" variant={filter === 'active' ? 'default' : 'outline'} onClick={() => setFilter('active')}>Active</Button>
+               <Button type="button" size="sm" variant={filter === 'frozen' ? 'default' : 'outline'} onClick={() => setFilter('frozen')}>Frozen</Button>
+diff --git a/src/app/admin/pages/AdminUsersPage.tsx b/src/app/admin/pages/AdminUsersPage.tsx
+index 3423f0f7..21b3c5c4 100644
+--- a/src/app/admin/pages/AdminUsersPage.tsx
++++ b/src/app/admin/pages/AdminUsersPage.tsx
+@@ -474,7 +474,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
+                   <TableCell>{formatDate(user.createdAt)}</TableCell>
+                   <TableCell className="text-right">
+                     {canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canResetTasks || canManageTaskLimits || canUpdateVip ? (
+-                      <div className="inline-flex items-center gap-2">
++                      <div className="inline-flex max-w-full flex-wrap items-center justify-end gap-2">
+                         {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
+                           <Button
+                             type="button"
+@@ -779,7 +779,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
+                 </ul>
+               </div>
+ 
+-              <div className="flex gap-2">
++              <div className="btn-group">
+                 <Button
+                   type="button"
+                   variant="default"
+@@ -787,7 +787,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
+                     const text = `Username: ${credentialResetModal.credentials!.username}\nPassword: ${credentialResetModal.credentials!.password}`;
+                     copyToClipboard(text);
+                   }}
+-                  className="flex-1"
++                  className="btn-primary-action"
+                 >
+                   Copy Both
+                 </Button>
+@@ -795,7 +795,6 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
+                   type="button"
+                   variant="secondary"
+                   onClick={() => setCredentialResetModal({ open: false, credentials: null, userName: '' })}
+-                  className="flex-1"
+                 >
+                   Close
+                 </Button>
+diff --git a/src/app/admin/pages/AdminWithdrawalsPage.tsx b/src/app/admin/pages/AdminWithdrawalsPage.tsx
+index d55c8e20..e9071830 100644
+--- a/src/app/admin/pages/AdminWithdrawalsPage.tsx
++++ b/src/app/admin/pages/AdminWithdrawalsPage.tsx
+@@ -111,9 +111,9 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
+                 <div className="text-sm text-slate-600">{item.userEmail || item.userId}</div>
+                 <div className="text-xs text-slate-500">Requested: {formatDate(item.requestedAt)}</div>
+               </div>
+-              <div className="flex items-center gap-2">
++              <div className="btn-group md:w-auto md:max-w-[32rem]">
+                 <div className="min-w-[110px] text-right font-semibold">${Number(item.amount || 0).toLocaleString()}</div>
+-                <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id} onClick={() => handleApprove(item.id)}>
++                <Button type="button" size="sm" className="btn-primary-action bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id} onClick={() => handleApprove(item.id)}>
+                   Approve
+                 </Button>
+                 <Button type="button" size="sm" variant="destructive" disabled={savingId === item.id} onClick={() => handleDeny(item.id)}>
+diff --git a/src/app/components/Dashboard.tsx b/src/app/components/Dashboard.tsx
+index bef47521..6eed6ee3 100644
+--- a/src/app/components/Dashboard.tsx
++++ b/src/app/components/Dashboard.tsx
+@@ -2424,13 +2424,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+               </div>
+             </div>
+ 
+-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
+-                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
++              <div className="btn-container border-t border-gray-200 p-6 pt-4 bg-white">
++                <div className="btn-group">
++                <Button variant="outline" onClick={() => setShowDepositModal(false)}>
+                   Cancel
+                 </Button>
+-                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
++                <Button className="btn-primary-action bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
+                   {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
+                 </Button>
++                </div>
+               </div>
+           </div>
+         </div>
+@@ -2462,13 +2464,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+                 </div>
+ 
+                 {/* Buttons */}
+-                <div className="flex space-x-3 pt-4">
++                <div className="btn-container pt-4">
++                  <div className="btn-group">
+                   <button
+                     onClick={() => {
+                       setShowWithdrawalModal(false);
+                       setWithdrawalPassword('');
+                     }}
+-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
++                    className="min-w-0 rounded-lg border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                   >
+                     Cancel
+                   </button>
+@@ -2483,10 +2486,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
+                         setUiNotice({ type: 'error', text: 'Please enter your withdrawal password' });
+                       }
+                     }}
+-                    className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
++                    className="btn-primary-action min-w-0 rounded-lg bg-green-600 px-4 py-2 font-medium text-white transition-colors hover:bg-green-700"
+                   >
+                     Submit
+                   </button>
++                  </div>
+                 </div>
+               </div>
+             </div>
+diff --git a/src/app/components/WithdrawalForm.tsx b/src/app/components/WithdrawalForm.tsx
+index dc082b40..c22c8e23 100644
+--- a/src/app/components/WithdrawalForm.tsx
++++ b/src/app/components/WithdrawalForm.tsx
+@@ -262,11 +262,11 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
+               />
+             </div>
+ 
+-            <div className="flex gap-2">
++            <div className="btn-container">
++              <div className="btn-group">
+               <Button
+                 type="button"
+                 variant="outline"
+-                className="w-full"
+                 onClick={() => {
+                   setPasswordVerified(false);
+                   setAmount('');
+@@ -279,10 +279,11 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
+               <Button
+                 type="submit"
+                 disabled={loading}
+-                className="w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
++                className="btn-primary-action bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-medium"
+               >
+                 {loading ? 'Processing...' : 'Request Withdrawal'}
+               </Button>
++              </div>
+             </div>
+           </form>
+         )}
+diff --git a/src/app/components/ui/button.tsx b/src/app/components/ui/button.tsx
+index 94504476..54b5ac95 100644
+--- a/src/app/components/ui/button.tsx
++++ b/src/app/components/ui/button.tsx
+@@ -5,7 +5,7 @@ import { cva, type VariantProps } from "class-variance-authority";
+ import { cn } from "./utils";
+ 
+ const buttonVariants = cva(
+-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
++  "inline-flex min-w-0 max-w-full items-center justify-center gap-2 whitespace-normal break-words rounded-md text-center text-sm font-medium shadow-sm transition-[transform,box-shadow,background-color,color,border-color] duration-200 hover:shadow-md active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+   {
+     variants: {
+       variant: {
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index f1dc7bba..9f75ea8a 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -124,10 +124,23 @@
+     @apply border-border outline-ring/50;
+   }
+ 
++  *,
++  *::before,
++  *::after {
++    box-sizing: border-box;
++  }
++
+   body {
+     @apply bg-background text-foreground;
+   }
+ 
++  html,
++  body,
++  #root {
++    max-width: 100%;
++    overflow-x: hidden;
++  }
++
+   /**
+   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
+   * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
+@@ -194,3 +207,40 @@
+   }
+ }
+ 
++@layer components {
++  .btn-container {
++    width: 100%;
++    max-width: 100%;
++  }
++
++  .btn-group {
++    display: flex;
++    width: 100%;
++    max-width: 100%;
++    flex-wrap: wrap;
++    align-items: stretch;
++    gap: 0.75rem;
++  }
++
++  .btn-group > [data-slot='button'],
++  .btn-group > button,
++  .btn-group > a {
++    min-width: 0;
++    max-width: 100%;
++    flex: 1 1 11rem;
++  }
++
++  .btn-primary-action {
++    order: 20;
++  }
++
++  @media (max-width: 640px) {
++    .btn-group > [data-slot='button'],
++    .btn-group > button,
++    .btn-group > a {
++      width: 100%;
++      flex-basis: 100%;
++    }
++  }
++}
++

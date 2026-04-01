@@ -1,0 +1,36 @@
+﻿commit a8d2496641f115c65937434f8cfd067821de8cf0
+Author: Administrator (automated commit) <admin@example.com>
+Date:   Thu Mar 19 06:51:25 2026 +0700
+
+    feat(admin): real-time notification bell in admin header
+    
+    - New NotificationBell component (src/app/admin/components/NotificationBell.tsx)
+      * Bell icon with live unread badge (red counter)
+      * Popover dropdown listing recent alerts: support tickets, pending
+        withdrawals, frozen accounts, premium assignments, referrals
+      * Per-item unread highlight (blue tint) and severity border stripe
+      * Click navigates directly to the relevant admin section
+      * 'Mark all read' and per-item read tracking via sessionStorage
+      * 'View all in Dashboard' footer link
+      * Smooth Radix Popover open/close animation
+    
+    - AdminApp.tsx
+      * Replaced fetchAdminSupportTickets (support-only 8s poll) with
+        fetchAdminAlerts (10s poll covering all event types)
+      * Derives unreadSupportCount from summary.openSupportTickets (no
+        extra API call needed)
+      * Manages readIds array in sessionStorage across refreshes
+      * Exposes handleMarkRead / handleMarkAllRead handlers
+    
+    - AdminLayout.tsx
+      * Added notifications, readIds, onMarkRead, onMarkAllRead props
+      * NotificationBell rendered in desktop sidebar header (right side)
+      * NotificationBell rendered in mobile header bar (left of nav buttons)
+      * Fully backward-compatible (all new props are optional)
+    
+    Build: clean 0 errors
+
+ src/app/admin/AdminApp.tsx                    |  52 +++++---
+ src/app/admin/components/NotificationBell.tsx | 181 ++++++++++++++++++++++++++
+ src/app/admin/layout/AdminLayout.tsx          |  26 +++-
+ 3 files changed, 242 insertions(+), 17 deletions(-)

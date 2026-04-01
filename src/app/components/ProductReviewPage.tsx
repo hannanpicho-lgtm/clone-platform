@@ -1,11 +1,11 @@
 import { useState } from 'react';
+import { Button } from './ui/button';
 import { Menu, Bell, Star } from 'lucide-react';
 import { getCurrentTenantBranding } from '../branding/tenantBranding';
 
 interface ProductReviewPageProps {
   onSubmit: (rating: number, review: string, reviewType: string) => void;
   onCancel: () => void;
-  accountFrozen?: boolean;
   product: {
     name: string;
     image: string;
@@ -16,7 +16,7 @@ interface ProductReviewPageProps {
   };
 }
 
-export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, product }: ProductReviewPageProps) {
+export function ProductReviewPage({ onSubmit, onCancel, product }: ProductReviewPageProps) {
   const branding = getCurrentTenantBranding();
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -24,9 +24,6 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
   const [reviewText, setReviewText] = useState('');
 
   const handleSubmit = () => {
-    if (accountFrozen) {
-      return;
-    }
     onSubmit(rating, reviewText, reviewType);
   };
 
@@ -52,14 +49,6 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
 
       {/* Content */}
       <div className="max-w-2xl mx-auto px-4 py-8">
-        {accountFrozen && (
-          <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-center">
-            <p className="text-sm font-semibold text-red-700">
-              Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
-            </p>
-          </div>
-        )}
-
         {/* Product Info */}
         <div className="text-center mb-6">
           {/* Product Image */}
@@ -88,7 +77,7 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
             </div>
             <div>
               <p className="text-sm text-gray-700 mb-1">Profit</p>
-              <p className="text-2xl font-bold text-green-600">
+              <p className="text-2xl font-bold text-red-600">
                 ${product.profit.toFixed(2)}
               </p>
             </div>
@@ -193,17 +182,10 @@ export function ProductReviewPage({ onSubmit, onCancel, accountFrozen = false, p
           {/* Submit Button */}
           <button
             onClick={handleSubmit}
-            disabled={accountFrozen}
-            title={accountFrozen ? 'Task submission is paused while your account is frozen for premium settlement.' : undefined}
-            className="btn-primary-action w-full rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold py-4 shadow-lg hover:from-blue-500 hover:to-cyan-400 active:scale-[0.98] disabled:bg-slate-400 disabled:cursor-not-allowed disabled:shadow-none"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg transition-colors active:scale-95"
           >
             Submit
           </button>
-          {accountFrozen && (
-            <p className="mt-3 text-center text-xs font-medium text-red-100">
-              Task submission is paused while your account is frozen for premium settlement.
-            </p>
-          )}
         </div>
       </div>
     </div>
