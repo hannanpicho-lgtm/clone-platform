@@ -5,6 +5,8 @@ import { AlertTriangle, KeyRound, ShieldCheck } from 'lucide-react';
 
 export function SteadfastAdminLoginPresentation({
   branding,
+  loginMode,
+  setLoginMode,
   username,
   setUsername,
   password,
@@ -34,22 +36,42 @@ export function SteadfastAdminLoginPresentation({
           <h2 className="text-2xl font-semibold text-slate-900">Admin Sign-In</h2>
           <p className="mt-2 text-sm text-slate-500">Authenticate with limited-admin credentials or a super-admin key.</p>
 
+          <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
+            <button
+              type="button"
+              onClick={() => setLoginMode('super-admin')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${loginMode === 'super-admin' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-white'}`}
+            >
+              Super Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMode('sub-admin')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${loginMode === 'sub-admin' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-white'}`}
+            >
+              Limited Admin
+            </button>
+          </div>
+
           <form onSubmit={handleLogin} className="mt-8 space-y-5">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Admin Username</label>
-              <Input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="limited-admin username (optional)"
-                className="h-11 border-slate-300"
-                disabled={isLoading}
-              />
-            </div>
+            {loginMode === 'sub-admin' && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Admin Username</label>
+                <Input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="limited-admin username"
+                  className="h-11 border-slate-300"
+                  disabled={isLoading}
+                  required
+                />
+              </div>
+            )}
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
-                {username.trim() ? 'Admin Password' : 'Super Admin Key'}
+                {loginMode === 'sub-admin' ? 'Admin Password' : 'Super Admin Key'}
               </label>
               <div className="relative">
                 <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400" />
@@ -57,9 +79,10 @@ export function SteadfastAdminLoginPresentation({
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={username.trim() ? 'Enter admin password' : 'Enter super-admin key'}
+                  placeholder={loginMode === 'sub-admin' ? 'Enter admin password' : 'Enter super-admin key'}
                   className="h-11 border-slate-300 pl-10"
                   disabled={isLoading}
+                  required
                 />
               </div>
             </div>

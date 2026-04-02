@@ -9,6 +9,7 @@ interface AdminLoginProps {
 }
 
 export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
+  const [loginMode, setLoginMode] = useState<'super-admin' | 'sub-admin'>('super-admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -26,7 +27,13 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
       const normalizedUsername = username.trim();
       const normalizedSecret = password.trim();
 
-      if (normalizedUsername) {
+      if (loginMode === 'sub-admin') {
+        if (!normalizedUsername) {
+          setError('Admin username is required for limited-admin sign-in');
+          setIsLoading(false);
+          return;
+        }
+
         const response = await safeFetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/admin/signin`,
           {
@@ -54,6 +61,12 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
           isSuperAdmin: false,
           permissions: Array.isArray(loginData?.admin?.permissions) ? loginData.admin.permissions : [],
         });
+        return;
+      }
+
+      if (!normalizedSecret) {
+        setError('Super admin key is required');
+        setIsLoading(false);
         return;
       }
 
@@ -89,6 +102,14 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
   return (
     <TenantAdminLoginPresentation
       branding={branding}
+      loginMode={loginMode}
+      setLoginMode={(value) => {
+        setLoginMode(value);
+        setError('');
+        if (value === 'super-admin') {
+          setUsername('');
+        }
+      }}
       username={username}
       setUsername={setUsername}
       password={password}

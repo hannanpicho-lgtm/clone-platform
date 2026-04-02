@@ -6,6 +6,8 @@ import { Input } from '../../components/ui/input';
 
 export function TankAdminLoginPresentation({
   branding,
+  loginMode,
+  setLoginMode,
   username,
   setUsername,
   password,
@@ -41,22 +43,42 @@ export function TankAdminLoginPresentation({
           transition={{ delay: 0.3 }}
           className="bg-white/10 backdrop-blur-xl rounded-2xl p-8 shadow-2xl border border-white/20"
         >
+          <div className="mb-6 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-white/5 p-1">
+            <button
+              type="button"
+              onClick={() => setLoginMode('super-admin')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${loginMode === 'super-admin' ? 'bg-white text-slate-900 shadow' : 'text-purple-200 hover:bg-white/10'}`}
+            >
+              Super Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMode('sub-admin')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${loginMode === 'sub-admin' ? 'bg-white text-slate-900 shadow' : 'text-purple-200 hover:bg-white/10'}`}
+            >
+              Limited Admin
+            </button>
+          </div>
+
           <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-purple-200 mb-2">Admin Username</label>
-              <Input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter limited-admin username (optional)"
-                className="bg-white/5 border-white/20 text-white placeholder:text-purple-300/50 focus:border-purple-400 focus:ring-purple-400"
-                disabled={isLoading}
-              />
-            </div>
+            {loginMode === 'sub-admin' && (
+              <div>
+                <label className="block text-sm font-medium text-purple-200 mb-2">Admin Username</label>
+                <Input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter limited-admin username"
+                  className="bg-white/5 border-white/20 text-white placeholder:text-purple-300/50 focus:border-purple-400 focus:ring-purple-400"
+                  disabled={isLoading}
+                  required
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-purple-200 mb-2">
-                {username.trim() ? 'Admin Password' : 'Super Admin Key'}
+                {loginMode === 'sub-admin' ? 'Admin Password' : 'Super Admin Key'}
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-purple-300" />
@@ -64,9 +86,10 @@ export function TankAdminLoginPresentation({
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={username.trim() ? 'Enter admin password' : 'Enter super admin key'}
+                  placeholder={loginMode === 'sub-admin' ? 'Enter admin password' : 'Enter super admin key'}
                   className="pl-10 bg-white/5 border-white/20 text-white placeholder:text-purple-300/50 focus:border-purple-400 focus:ring-purple-400"
                   disabled={isLoading}
+                  required
                 />
               </div>
             </div>

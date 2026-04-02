@@ -30,6 +30,8 @@ export interface TenantAuthPresentationProps {
 
 export interface TenantAdminLoginPresentationProps {
   branding: TenantBranding;
+  loginMode: 'super-admin' | 'sub-admin';
+  setLoginMode: (value: 'super-admin' | 'sub-admin') => void;
   username: string;
   setUsername: (value: string) => void;
   password: string;
