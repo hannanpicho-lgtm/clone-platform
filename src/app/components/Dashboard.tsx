@@ -1754,36 +1754,57 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                               if (!demoMode) {
                                 try {
                                   const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
-                                  const saveResponse = await fetch(
-                                    `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile/contact-email`,
-                                    {
-                                      method: 'PUT',
-                                      headers: {
-                                        'Content-Type': 'application/json',
-                                        'Authorization': `Bearer ${accessToken}`,
-                                        'apikey': publicAnonKey,
-                                      },
-                                      body: JSON.stringify({
-                                        contactEmail: normalizedContactEmail || null,
-                                      }),
-                                    }
-                                  );
+                                  const baseHeaders = {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${accessToken}`,
+                                    'apikey': publicAnonKey,
+                                  };
+                                  const fnBase = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
 
+                                  // Save contact email
+                                  const saveResponse = await fetch(`${fnBase}/profile/contact-email`, {
+                                    method: 'PUT',
+                                    headers: baseHeaders,
+                                    body: JSON.stringify({ contactEmail: normalizedContactEmail || null }),
+                                  });
                                   const saveData = await saveResponse.json().catch(() => ({}));
                                   if (!saveResponse.ok) {
                                     throw new Error(saveData?.error || 'Failed to update contact email');
                                   }
+                                  setProfile((prev) => prev ? { ...prev, contactEmail: normalizedContactEmail || null } : prev);
 
-                                  setProfile((prev) => prev ? {
-                                    ...prev,
-                                    contactEmail: normalizedContactEmail || null,
-                                  } : prev);
+                                  // Change login password if provided
+                                  if (settingsForm.loginPassword) {
+                                    const pwResp = await fetch(`${fnBase}/profile/change-password`, {
+                                      method: 'PUT',
+                                      headers: baseHeaders,
+                                      body: JSON.stringify({ newPassword: settingsForm.loginPassword }),
+                                    });
+                                    const pwData = await pwResp.json().catch(() => ({}));
+                                    if (!pwResp.ok) {
+                                      throw new Error(pwData?.error || 'Failed to update login password');
+                                    }
+                                  }
+
+                                  // Change withdrawal password if provided
+                                  if (settingsForm.withdrawalPassword) {
+                                    const wpResp = await fetch(`${fnBase}/profile/change-withdrawal-password`, {
+                                      method: 'PUT',
+                                      headers: baseHeaders,
+                                      body: JSON.stringify({ newPin: settingsForm.withdrawalPassword }),
+                                    });
+                                    const wpData = await wpResp.json().catch(() => ({}));
+                                    if (!wpResp.ok) {
+                                      throw new Error(wpData?.error || 'Failed to update withdrawal password');
+                                    }
+                                  }
                                 } catch (saveErr: any) {
-                                  setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save contact email'}` });
+                                  setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save settings'}` });
                                   return;
                                 }
                               }
 
+                              setSettingsForm((prev) => ({ ...prev, loginPassword: '', confirmLoginPassword: '', withdrawalPassword: '', confirmWithdrawalPassword: '' }));
                               setUiNotice({ type: 'success', text: 'Account settings updated successfully' });
                               setEditingSettings(false);
                             }}

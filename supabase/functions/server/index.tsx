@@ -2669,6 +2669,82 @@ app.get("/profile", async (c) => {
   }
 });
 
+// User: change own login password
+app.put("/profile/change-password", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const newPassword = String(body?.newPassword || '').trim();
+    if (newPassword.length < 6) {
+      return c.json({ error: 'Password must be at least 6 characters' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const existingProfile = await kv.get(profileKey);
+    if (!existingProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const supabase = getServiceClient();
+    const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
+      password: newPassword,
+    });
+
+    if (authError) {
+      return c.json({ error: authError.message || 'Failed to update password' }, 400);
+    }
+
+    return c.json({ success: true, message: 'Login password updated successfully' });
+  } catch (error) {
+    console.error(`Error changing login password: ${error}`);
+    return c.json({ error: 'Internal server error while changing password' }, 500);
+  }
+});
+
+// User: change own withdrawal password
+app.put("/profile/change-withdrawal-password", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const newPin = String(body?.newPin || '').trim();
+    if (newPin.length < 4) {
+      return c.json({ error: 'Withdrawal password must be at least 4 characters' }, 400);
+    }
+
+    const profileKey = `user:${userId}`;
+    const existingProfile = await kv.get(profileKey);
+    if (!existingProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const hashedPin = await hashWithdrawalPassword(newPin);
+    await kv.set(profileKey, { ...existingProfile, withdrawalPassword: hashedPin, updatedAt: new Date().toISOString() });
+
+    return c.json({ success: true, message: 'Withdrawal password updated successfully' });
+  } catch (error) {
+    console.error(`Error changing withdrawal password: ${error}`);
+    return c.json({ error: 'Internal server error while changing withdrawal password' }, 500);
+  }
+});
+
 app.put("/profile/contact-email", async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
