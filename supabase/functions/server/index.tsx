@@ -139,6 +139,51 @@ const getKvRowsByPrefix = async (prefix: string): Promise<Array<{ key: string; v
   return (data ?? []).map((row: any) => ({ key: row.key, value: row.value }));
 };
 
+const getIdFromPrefixedKey = (key: string, prefix: string): string => {
+  const normalizedKey = String(key || '').trim();
+  const normalizedPrefix = String(prefix || '').trim();
+  if (!normalizedKey || !normalizedPrefix) {
+    return '';
+  }
+  if (!normalizedKey.startsWith(normalizedPrefix)) {
+    return '';
+  }
+  return normalizedKey.slice(normalizedPrefix.length).trim();
+};
+
+const normalizeUserFromKvRow = (row: { key: string; value: any }): any => {
+  const inferredId = getIdFromPrefixedKey(row?.key || '', 'user:');
+  const payload = row?.value && typeof row.value === 'object' ? row.value : {};
+  return {
+    ...payload,
+    id: String(payload?.id || inferredId || '').trim(),
+  };
+};
+
+const isLikelyUserProfileRecord = (user: any): boolean => {
+  if (!user || typeof user !== 'object') {
+    return false;
+  }
+
+  const userId = String(user?.id || '').trim();
+  if (!userId || userId.includes(':')) {
+    return false;
+  }
+
+  const profileSignals = [
+    'email',
+    'username',
+    'name',
+    'vipTier',
+    'balance',
+    'productsSubmitted',
+    'withdrawalPassword',
+    'createdAt',
+  ];
+
+  return profileSignals.some((key) => user?.[key] !== undefined && user?.[key] !== null);
+};
+
 const getProjectRefFromUrl = (): string | null => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const match = supabaseUrl.match(/https?:\/\/([^.]+)\.supabase\.co/i);
@@ -1181,7 +1226,11 @@ const getAdminScopeConfig = async (adminAccess: { isSuperAdmin: boolean; userId:
     return { mode: 'none' };
   }
 
-  const allUsers = (await kv.getByPrefix('user:') || []).filter((user: any) => isRecordVisibleForTenant(user, adminAccess.tenantId));
+  const userRows = await getKvRowsByPrefix('user:');
+  const allUsers = (userRows || [])
+    .map((row: any) => normalizeUserFromKvRow(row))
+    .filter((user: any) => isLikelyUserProfileRecord(user))
+    .filter((user: any) => isRecordVisibleForTenant(user, adminAccess.tenantId));
   const scopedIds = collectAdminScopedUserIds(adminAccess.userId, adminAccount, allUsers);
   if (scopedIds.size > 0) {
     return { mode: 'users', userIds: scopedIds };
@@ -3161,8 +3210,10 @@ app.get("/admin/users", async (c) => {
     const limit = Math.min(200, Math.max(1, Number.isFinite(limitParam) ? limitParam : 50));
 
     const todayDate = new Date().toISOString().slice(0, 10);
-    const rawUsers = await kv.getByPrefix('user:');
-    const users = (rawUsers ?? [])
+    const userRows = await getKvRowsByPrefix('user:');
+    const users = (userRows ?? [])
+      .map((row: any) => normalizeUserFromKvRow(row))
+      .filter((user: any) => isLikelyUserProfileRecord(user))
       .filter((user: any) => !isDeletedRecord(user))
       .filter((user: any) => isRecordVisibleForTenant(user, requestTenantId))
       .map((user: any) => {
@@ -6032,7 +6083,10 @@ app.get('/admin/accounts', async (c) => {
     }
 
     const rows = await kv.getByPrefix('admin:account:');
-    const allUsers = await kv.getByPrefix('user:');
+    const userRows = await getKvRowsByPrefix('user:');
+    const allUsers = (userRows || [])
+      .map((row: any) => normalizeUserFromKvRow(row))
+      .filter((user: any) => isLikelyUserProfileRecord(user));
     const requestTenantId = resolveRequestTenantId(c);
 
     const usersWithEarnings = await Promise.all((allUsers || []).map(async (user: any) => {
@@ -6147,7 +6201,10 @@ app.get('/admin/reports/sub-admin/:adminUserId', async (c) => {
       return c.json({ error: 'Forbidden - Tenant mismatch for sub-admin account' }, 403);
     }
 
-    const allUsers = (await kv.getByPrefix('user:') || [])
+    const userRows = await getKvRowsByPrefix('user:');
+    const allUsers = (userRows || [])
+      .map((row: any) => normalizeUserFromKvRow(row))
+      .filter((user: any) => isLikelyUserProfileRecord(user))
       .filter((user: any) => !isDeletedRecord(user))
       .filter((user: any) => isRecordVisibleForTenant(user, adminAccess.tenantId));
 
