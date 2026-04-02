@@ -635,8 +635,8 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
 
             <div className="space-y-3 pt-4 border-t">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Financial Audit</p>
-              {auditLoading && <p className="text-sm text-slate-500">Loading audit report...</p>}
-              {auditError && <p className="text-sm text-red-600">{auditError}</p>}
+              {auditLoading && <AdminEmptyState message="Loading audit report…" />}
+              {!!auditError && <AdminFeedback error={auditError} />}
               {auditReport && (
                 <>
                   <div className="grid grid-cols-3 gap-2 text-sm">

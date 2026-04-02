@@ -392,8 +392,8 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            {reportLoading && <p className="text-sm text-slate-500">Loading report...</p>}
-            <AdminFeedback error={reportError} />
+            {reportLoading && <AdminEmptyState message="Loading report…" />}
+            {!reportLoading && <AdminFeedback error={reportError} />}
 
             {reportData && (
               <>

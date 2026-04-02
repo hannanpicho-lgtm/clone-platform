@@ -302,7 +302,9 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
           <CardDescription>Action required: {alertsSummary.actionRequired}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
-          {alerts.length === 0 ? (
+          {loading ? (
+            <AdminEmptyState message="Loading alerts…" />
+          ) : alerts.length === 0 ? (
             <AdminEmptyState message="No active alerts." />
           ) : (
             alerts.slice(0, 8).map((item) => (
