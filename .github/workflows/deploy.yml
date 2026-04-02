@@ -158,7 +158,7 @@ jobs:
             });
       
       - name: Notify Slack (Success)
-        if: success() && secrets.SLACK_WEBHOOK != ''
+        if: success()
         uses: rtCamp/action-slack-notify@v2
         continue-on-error: true
         env:
@@ -167,7 +167,7 @@ jobs:
           SLACK_COLOR: good
 
       - name: Notify Slack (Failure)
-        if: failure() && secrets.SLACK_WEBHOOK != ''
+        if: failure()
         uses: rtCamp/action-slack-notify@v2
         continue-on-error: true
         env:
@@ -208,7 +208,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ace9c6d99601858832a09e3e6c62c61b
       
       - name: Notify Slack (Rollback)
-        if: secrets.SLACK_WEBHOOK != ''
         uses: rtCamp/action-slack-notify@v2
         continue-on-error: true
         env:
