@@ -4557,33 +4557,6 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: 'Account is disabled. Contact support to reactivate your account.' }, 403);
     }
 
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const taskState = buildTaskState(userProfile);
-    const normalizedTaskState = taskState.currentSetDate === todayDate
-      ? taskState
-      : {
-          ...taskState,
-          taskSetsCompletedToday: 0,
-          currentSetTasksCompleted: 0,
-          currentSetDate: todayDate,
-        };
-
-    const completedSetsToday = normalizedTaskState.taskSetsCompletedToday
-      + (normalizedTaskState.currentSetTasksCompleted >= normalizedTaskState.tasksPerSet ? 1 : 0);
-    const requiredSetsForWithdrawal = normalizedTaskState.dailyTaskSetLimit;
-
-    if (completedSetsToday < requiredSetsForWithdrawal) {
-      return c.json({
-        error: `Complete ${requiredSetsForWithdrawal} task set(s) before requesting withdrawal`,
-        taskRequirement: {
-          requiredSets: requiredSetsForWithdrawal,
-          completedSets: completedSetsToday,
-          tasksPerSet: normalizedTaskState.tasksPerSet,
-          currentSetTasksCompleted: normalizedTaskState.currentSetTasksCompleted,
-        },
-      }, 403);
-    }
-
     const passwordCheck = await verifyWithdrawalPassword(
       String(withdrawalPassword || ''),
       String(userProfile.withdrawalPassword || ''),
