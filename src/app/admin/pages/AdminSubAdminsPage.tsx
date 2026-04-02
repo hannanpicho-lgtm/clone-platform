@@ -282,6 +282,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                   </div>
                 </div>
               ))}
+              {loading && <AdminEmptyState message="Loading sub-admins…" />}
               {!loading && accounts.length === 0 && <AdminEmptyState message="No sub-admin accounts found." />}
             </div>
 
@@ -324,6 +325,11 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {loading && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-slate-500">Loading sub-admins…</TableCell>
+                    </TableRow>
+                  )}
                   {!loading && accounts.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center text-slate-500">No sub-admin accounts found.</TableCell>

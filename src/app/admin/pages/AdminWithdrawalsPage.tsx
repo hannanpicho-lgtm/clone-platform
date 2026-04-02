@@ -103,6 +103,7 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
         <CardContent className="space-y-3">
           <AdminFeedback success={message} error={error} />
 
+          {loading && <AdminEmptyState message="Loading withdrawals…" />}
           {pending.length === 0 && !loading && <AdminEmptyState message="No pending withdrawals." />}
 
           {pending.map((item) => (

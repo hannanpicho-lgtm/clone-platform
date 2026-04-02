@@ -468,6 +468,10 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
 
           <AdminFeedback success={message} error={error} />
 
+          {loading && <AdminEmptyState message="Loading users…" />}
+
+          {!loading && (
+          <>
           <div className="space-y-3 md:hidden">
             {filteredUsers.map((user) => (
               <button
@@ -599,6 +603,8 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
               </TableBody>
             </Table>
           </div>
+          </>
+          )}
 
         </CardContent>
       </Card>

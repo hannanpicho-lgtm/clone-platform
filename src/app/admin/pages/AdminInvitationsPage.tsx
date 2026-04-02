@@ -106,6 +106,7 @@ export function AdminInvitationsPage({ session }: AdminInvitationsPageProps) {
           <AdminFeedback success={message} error={error} />
           {!canManageInvitations && <div className="text-sm text-amber-700">Permission required: invitations.manage</div>}
 
+          {loading && <AdminEmptyState message="Loading codes…" />}
           {codes.length === 0 && !loading && <AdminEmptyState message="No invitation codes available." />}
 
           {codes.map((item) => (

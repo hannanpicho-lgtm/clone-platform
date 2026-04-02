@@ -107,6 +107,7 @@ export function AdminCustomerServicePage({ session }: AdminCustomerServicePagePr
           {!canManageSupport && <div className="text-sm text-amber-700">Permission required: support.manage</div>}
           <AdminFeedback success={message} error={error} />
 
+          {loading && <AdminEmptyState message="Loading tickets…" />}
           {!loading && filtered.length === 0 && <AdminEmptyState message="No tickets in this filter." />}
 
           {filtered.map((ticket) => (
