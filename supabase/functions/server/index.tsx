@@ -45,6 +45,11 @@ const getAnonClient = () => {
 
 const getAdminApiKey = () => Deno.env.get('SUPABASE_ADMIN_API_KEY') ?? Deno.env.get('ADMIN_API_KEY') ?? '';
 
+// Platform-wide ceiling on a single withdrawal request.
+// Prevents runaway approvals if an admin account is ever compromised.
+// Override at deploy time via SUPABASE_MAX_WITHDRAWAL_AMOUNT env var.
+const MAX_SINGLE_WITHDRAWAL_AMOUNT = Number(Deno.env.get('SUPABASE_MAX_WITHDRAWAL_AMOUNT') || 0) || 50_000;
+
 const DEFAULT_TENANT_ID: TenantId = 'tank';
 type TenantId = 'tank' | 'steadfast';
 
@@ -1559,6 +1564,17 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
   }
 }
 
+// Escape user-supplied strings before embedding them in HTML email bodies.
+// Prevents HTML injection if a user sets their name/reason to a string containing tags.
+const htmlEscape = (s: string): string =>
+  String(s || '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  } as Record<string, string>)[c]);
+
 // Email templates
 const emailTemplates = {
   withdrawalRequested: (userName: string, amount: number) => ({
@@ -1566,7 +1582,7 @@ const emailTemplates = {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #2563eb;">Withdrawal Request Submitted</h2>
-        <p>Hi ${userName},</p>
+        <p>Hi ${htmlEscape(userName)},</p>
         <p>Your withdrawal request has been received and is pending admin approval.</p>
         <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Amount:</strong> $${amount.toFixed(2)}</p>
@@ -1583,7 +1599,7 @@ const emailTemplates = {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #10b981;">Withdrawal Approved!</h2>
-        <p>Hi ${userName},</p>
+        <p>Hi ${htmlEscape(userName)},</p>
         <p>Great news! Your withdrawal request has been approved.</p>
         <div style="background: #ecfdf5; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Amount:</strong> $${amount.toFixed(2)}</p>
@@ -1600,12 +1616,12 @@ const emailTemplates = {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #ef4444;">Withdrawal Request Denied</h2>
-        <p>Hi ${userName},</p>
+        <p>Hi ${htmlEscape(userName)},</p>
         <p>Unfortunately, your withdrawal request has been denied.</p>
         <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Amount:</strong> $${amount.toFixed(2)}</p>
           <p><strong>Status:</strong> <span style="color: #ef4444;">Denied</span></p>
-          <p><strong>Reason:</strong> ${reason}</p>
+          <p><strong>Reason:</strong> ${htmlEscape(reason)}</p>
         </div>
         <p>Your account balance remains unchanged. You can contact support for more information.</p>
         <p style="color: #666; font-size: 12px; margin-top: 30px;">This is an automated message. Please do not reply.</p>
@@ -1618,11 +1634,11 @@ const emailTemplates = {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #2563eb;">New Referral Signup!</h2>
-        <p>Hi ${userName},</p>
+        <p>Hi ${htmlEscape(userName)},</p>
         <p>Congratulations! Someone signed up using your referral code.</p>
         <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>New Member:</strong> ${referralName}</p>
-          <p><strong>Email:</strong> ${referralEmail}</p>
+          <p><strong>New Member:</strong> ${htmlEscape(referralName)}</p>
+          <p><strong>Email:</strong> ${htmlEscape(referralEmail)}</p>
         </div>
         <p>You'll now earn 20% commission on every product they submit! The more they earn, the more you earn. 💰</p>
         <p style="color: #666; font-size: 12px; margin-top: 30px;">This is an automated message. Please do not reply.</p>
@@ -1635,11 +1651,11 @@ const emailTemplates = {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #10b981;">Commission Earned!</h2>
-        <p>Hi ${userName},</p>
+        <p>Hi ${htmlEscape(userName)},</p>
         <p>You've earned a commission from your network!</p>
         <div style="background: #ecfdf5; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Amount:</strong> $${amount.toFixed(2)}</p>
-          <p><strong>Source:</strong> ${source}</p>
+          <p><strong>Source:</strong> ${htmlEscape(source)}</p>
         </div>
         <p>This has been added to your account balance. Keep building your network to earn more! 📈</p>
         <p style="color: #666; font-size: 12px; margin-top: 30px;">This is an automated message. Please do not reply.</p>
@@ -1651,7 +1667,7 @@ const emailTemplates = {
     subject: '👋 Welcome! Start Earning Today',
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">Welcome, ${userName}!</h2>
+        <h2 style="color: #2563eb;">Welcome, ${htmlEscape(userName)}!</h2>
         <p>Your account has been created successfully. You're now ready to start earning!</p>
         <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <p><strong>Your Referral Code:</strong></p>
@@ -4511,6 +4527,10 @@ app.post("/request-withdrawal", async (c) => {
       return c.json({ error: "Withdrawal amount must be positive" }, 400);
     }
 
+    if (amount > MAX_SINGLE_WITHDRAWAL_AMOUNT) {
+      return c.json({ error: `Amount exceeds the platform maximum of $${MAX_SINGLE_WITHDRAWAL_AMOUNT.toLocaleString()} per request` }, 400);
+    }
+
     // Get user profile
     const userProfile = await kv.get(`user:${userId}`);
     if (!userProfile) {
@@ -6077,33 +6097,46 @@ app.get("/analytics/leaderboard", async (c) => {
 
     const accessToken = authHeader.replace('Bearer ', '');
     const { userId, error } = await verifyJWT(accessToken);
-    
+
     if (error) {
       return c.json({ error: "Unauthorized - Invalid token" }, 401);
     }
 
     // Get all users
     const allUsers = await kv.getByPrefix('user:');
-    
-    const leaderboard = (allUsers || [])
-      .filter((u): u is any => u && u.totalProfitFromChildren !== undefined)
-      .map((user) => ({
-        userId: user.id,
-        name: user.name,
-        totalProfitFromChildren: user.totalProfitFromChildren || 0,
-        childCount: user.childCount || 0,
-        vipTier: user.vipTier || 'Normal',
-      }))
-      .sort((a, b) => b.totalProfitFromChildren - a.totalProfitFromChildren)
-      .slice(0, 50); // Top 50
 
-    // Find user's position
-    const userRank = leaderboard.findIndex(u => u.userId === userId) + 1;
+    // Build ranked list using profit as the sort key, but strip financial details
+    // from the public response — users must not see each other's earnings or network size.
+    const ranked = (allUsers || [])
+      .filter((u): u is any => u && typeof u.totalProfitFromChildren === 'number')
+      .map((u) => ({
+        userId: u.id,
+        name: String(u.name || 'Member'),
+        vipTier: String(u.vipTier || 'Normal'),
+        // Used only for sorting; NOT returned in the public payload
+        _sortKey: u.totalProfitFromChildren || 0,
+      }))
+      .sort((a, b) => b._sortKey - a._sortKey)
+      .slice(0, 50);
+
+    // Find requesting user's rank before stripping the sort key
+    const userRankIndex = ranked.findIndex(u => u.userId === userId);
+    const userRank = userRankIndex >= 0 ? userRankIndex + 1 : null;
+
+    // Build public leaderboard — only expose: rank, anonymized name, vipTier
+    // Financial amounts (totalProfitFromChildren, childCount) are intentionally omitted.
+    const leaderboard = ranked.map((u, index) => ({
+      rank: index + 1,
+      // Show full name only for the requesting user; others get first-name only for privacy
+      name: u.userId === userId ? u.name : u.name.split(' ')[0],
+      vipTier: u.vipTier,
+      isCurrentUser: u.userId === userId,
+    }));
 
     return c.json({
       success: true,
       leaderboard,
-      userRank: userRank > 0 ? userRank : null,
+      userRank,
     });
   } catch (error) {
     console.error(`Error fetching leaderboard: ${error}`);
