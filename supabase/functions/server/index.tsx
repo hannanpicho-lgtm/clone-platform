@@ -2532,19 +2532,11 @@ app.post('/admin/signin', async (c) => {
 app.get("/profile", async (c) => {
   try {
     const authHeader = c.req.header('Authorization');
-    
-    console.log('=== Profile Request Debug ===');
-    console.log('Auth header present:', !!authHeader);
-    
     if (!authHeader) {
       return c.json({ error: "Unauthorized - No token provided" }, 401);
     }
 
     const accessToken = authHeader.replace('Bearer ', '');
-    console.log('Token length:', accessToken.length);
-    console.log('Token first 20 chars:', accessToken.substring(0, 20));
-    
-    // Verify JWT token
     const { userId, error } = await verifyJWT(accessToken);
     const requestTenantId = resolveRequestTenantId(c);
     
@@ -2653,7 +2645,6 @@ app.get("/profile", async (c) => {
       await kv.set(`user:${userId}`, effectiveProfile);
     }
 
-    console.log('Profile found for user:', userId);
     const { withdrawalPassword: _withdrawalPassword, ...safeProfile } = effectiveProfile;
     return c.json({
       success: true,
@@ -2666,6 +2657,58 @@ app.get("/profile", async (c) => {
   } catch (error) {
     console.error(`Error fetching profile: ${error}`);
     return c.json({ error: "Internal server error while fetching profile" }, 500);
+  }
+});
+
+// User: save own banking and crypto wallet payout details
+app.put("/profile/payment-details", async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized - No token provided' }, 401);
+    }
+    const accessToken = authHeader.replace('Bearer ', '');
+    const { userId, error } = await verifyJWT(accessToken);
+    if (error || !userId) {
+      return c.json({ error: 'Unauthorized - Invalid token' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+
+    const profileKey = `user:${userId}`;
+    const existingProfile = await kv.get(profileKey);
+    if (!existingProfile) {
+      return c.json({ error: 'User profile not found' }, 404);
+    }
+
+    const updatedProfile: any = { ...existingProfile, updatedAt: new Date().toISOString() };
+
+    if (body?.banking !== undefined) {
+      updatedProfile.bankingDetails = {
+        bankName: String(body.banking?.bankName || '').trim(),
+        accountName: String(body.banking?.accountName || '').trim(),
+        accountNumber: String(body.banking?.accountNumber || '').trim(),
+        routingNumber: String(body.banking?.routingNumber || '').trim(),
+      };
+    }
+
+    if (body?.crypto !== undefined) {
+      updatedProfile.cryptoWallet = {
+        walletType: String(body.crypto?.walletType || '').trim(),
+        walletAddress: String(body.crypto?.walletAddress || '').trim(),
+      };
+    }
+
+    await kv.set(profileKey, updatedProfile);
+
+    return c.json({
+      success: true,
+      bankingDetails: updatedProfile.bankingDetails ?? null,
+      cryptoWallet: updatedProfile.cryptoWallet ?? null,
+    });
+  } catch (error) {
+    console.error(`Error saving payment details: ${error}`);
+    return c.json({ error: 'Internal server error while saving payment details' }, 500);
   }
 });
 

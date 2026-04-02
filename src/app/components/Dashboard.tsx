@@ -651,6 +651,23 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
           setFreezeAmount(Number(loadedProfile?.freezeAmount ?? 0));
           setActivePremiumAssignment(loadedProfile?.premiumAssignment ?? null);
+
+          // Hydrate payment details from profile
+          if (loadedProfile?.bankingDetails?.accountName) {
+            setBankingDetails({
+              accountName: String(loadedProfile.bankingDetails.accountName || ''),
+              accountNumber: String(loadedProfile.bankingDetails.accountNumber || ''),
+              routingNumber: String(loadedProfile.bankingDetails.routingNumber || ''),
+              bankName: String(loadedProfile.bankingDetails.bankName || ''),
+            });
+          }
+          if (loadedProfile?.cryptoWallet?.walletAddress) {
+            setCryptoWallet({
+              walletType: String(loadedProfile.cryptoWallet.walletType || 'Bitcoin'),
+              walletAddress: String(loadedProfile.cryptoWallet.walletAddress || ''),
+            });
+          }
+
           setError('');
         } catch (err: any) {
           const message = String(err?.message || 'Please try again in a moment.');
@@ -1901,8 +1918,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                 setUiNotice({ type: 'error', text: 'Please fill in all banking details' });
                                 return;
                               }
-                              setUiNotice({ type: 'success', text: 'Banking details saved securely' });
-                              setShowBankingForm(false);
+                              (async () => {
+                                try {
+                                  const { projectId } = await import('~/utils/supabase/info');
+                                  const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile/payment-details`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                                    body: JSON.stringify({ banking: bankingDetails }),
+                                  });
+                                  if (!resp.ok) {
+                                    const d = await resp.json().catch(() => ({}));
+                                    throw new Error(d?.error || 'Failed to save banking details');
+                                  }
+                                  setUiNotice({ type: 'success', text: 'Banking details saved securely' });
+                                  setShowBankingForm(false);
+                                } catch (e: any) {
+                                  setUiNotice({ type: 'error', text: e?.message || 'Failed to save banking details' });
+                                }
+                              })();
                             }}
                             className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
                           >
@@ -1983,8 +2016,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                 setUiNotice({ type: 'error', text: 'Please enter a valid wallet address' });
                                 return;
                               }
-                              setUiNotice({ type: 'success', text: 'Crypto wallet saved securely' });
-                              setShowCryptoForm(false);
+                              (async () => {
+                                try {
+                                  const { projectId } = await import('~/utils/supabase/info');
+                                  const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/profile/payment-details`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+                                    body: JSON.stringify({ crypto: cryptoWallet }),
+                                  });
+                                  if (!resp.ok) {
+                                    const d = await resp.json().catch(() => ({}));
+                                    throw new Error(d?.error || 'Failed to save wallet');
+                                  }
+                                  setUiNotice({ type: 'success', text: 'Crypto wallet saved securely' });
+                                  setShowCryptoForm(false);
+                                } catch (e: any) {
+                                  setUiNotice({ type: 'error', text: e?.message || 'Failed to save wallet' });
+                                }
+                              })();
                             }}
                             className="flex-1 px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700"
                           >

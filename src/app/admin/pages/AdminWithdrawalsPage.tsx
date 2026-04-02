@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { approveWithdrawal, denyWithdrawal, fetchAdminWithdrawals } from '../api';
 import type { AdminSession, AdminWithdrawalRequest } from '../types';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 
 interface AdminWithdrawalsPageProps {
   session: AdminSession;
@@ -20,6 +22,9 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [denyingId, setDenyingId] = useState<string | null>(null);
+  const [denyReason, setDenyReason] = useState('Insufficient verification details');
+  const reasonInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     setLoading(true);
@@ -55,16 +60,21 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
     }
   };
 
-  const handleDeny = async (id: string) => {
-    const reason = window.prompt('Enter denial reason:', 'Insufficient verification details');
-    if (!reason || !reason.trim()) return;
+  const openDenyForm = (id: string) => {
+    setDenyReason('Insufficient verification details');
+    setDenyingId(id);
+    setTimeout(() => reasonInputRef.current?.focus(), 50);
+  };
 
+  const handleDenyConfirm = async (id: string) => {
+    if (!denyReason.trim()) return;
     try {
       setSavingId(id);
       setError('');
       setMessage('');
-      await denyWithdrawal(session, id, reason.trim());
+      await denyWithdrawal(session, id, denyReason.trim());
       setMessage('Withdrawal denied successfully.');
+      setDenyingId(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to deny withdrawal');
@@ -105,21 +115,42 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
           )}
 
           {pending.map((item) => (
-            <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div>
-                <div className="font-semibold text-slate-900">{item.userName}</div>
-                <div className="text-sm text-slate-600">{item.userEmail || item.userId}</div>
-                <div className="text-xs text-slate-500">Requested: {formatDate(item.requestedAt)}</div>
+            <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-slate-900">{item.userName}</div>
+                  <div className="text-sm text-slate-600">{item.userEmail || item.userId}</div>
+                  <div className="text-xs text-slate-500">Requested: {formatDate(item.requestedAt)}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="min-w-[110px] text-right font-semibold">${Number(item.amount || 0).toLocaleString()}</div>
+                  <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id || denyingId === item.id} onClick={() => handleApprove(item.id)}>
+                    Approve
+                  </Button>
+                  <Button type="button" size="sm" variant="destructive" disabled={savingId === item.id} onClick={() => denyingId === item.id ? setDenyingId(null) : openDenyForm(item.id)}>
+                    {denyingId === item.id ? 'Cancel' : 'Deny'}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="min-w-[110px] text-right font-semibold">${Number(item.amount || 0).toLocaleString()}</div>
-                <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={savingId === item.id} onClick={() => handleApprove(item.id)}>
-                  Approve
-                </Button>
-                <Button type="button" size="sm" variant="destructive" disabled={savingId === item.id} onClick={() => handleDeny(item.id)}>
-                  Deny
-                </Button>
-              </div>
+
+              {denyingId === item.id && (
+                <div className="flex items-end gap-2 pt-1 border-t border-slate-200">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-xs text-slate-600">Denial reason</Label>
+                    <Input
+                      ref={reasonInputRef}
+                      value={denyReason}
+                      onChange={(e) => setDenyReason(e.target.value)}
+                      placeholder="Enter reason for denial"
+                      className="h-8 text-sm"
+                      onKeyDown={(e) => e.key === 'Enter' && handleDenyConfirm(item.id)}
+                    />
+                  </div>
+                  <Button type="button" size="sm" variant="destructive" disabled={!denyReason.trim() || savingId === item.id} onClick={() => handleDenyConfirm(item.id)}>
+                    Confirm Denial
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
         </CardContent>
