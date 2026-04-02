@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Bell, DollarSign, LifeBuoy, Link2, TrendingUp, UserPlus, Users, Zap } from 'lucide-react';
+import { Bell, DollarSign, LifeBuoy, Link2, TrendingUp, UserPlus, Users, Zap } from 'lucide-react';
 import { fetchAdminAlerts, fetchAdminAuditLog, fetchAdminSupportTickets, fetchAdminUsers, fetchInvitationCodes } from '../api';
 import { hasAdminPermission, isSuperAdmin } from '../permissions';
 import type { AdminAlertItem, AdminAlertsSummary, AdminAuditLogItem, AdminMetrics, AdminSession, AdminSupportTicket, AdminUserRecord } from '../types';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -256,19 +259,9 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Admin Dashboard</h1>
-        <p className="text-sm text-slate-500">Protected with admin route middleware and backend RBAC checks.</p>
-      </div>
+      <AdminPageHeader title="Admin Dashboard" description="Protected with admin route middleware and backend RBAC checks." />
 
-      {error && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="flex items-center gap-3 p-4 text-red-700">
-            <AlertCircle className="h-4 w-4" />
-            <span>{error}</span>
-          </CardContent>
-        </Card>
-      )}
+      {error && <AdminFeedback error={error} />}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {stats.map((stat) => {
@@ -310,7 +303,7 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
         </CardHeader>
         <CardContent className="space-y-2">
           {alerts.length === 0 ? (
-            <div className="text-sm text-slate-500">No active alerts.</div>
+            <AdminEmptyState message="No active alerts." />
           ) : (
             alerts.slice(0, 8).map((item) => (
               <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -335,6 +328,25 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
             <CardDescription>Sub-admins can access this view; billing actions remain hidden.</CardDescription>
           </CardHeader>
           <CardContent>
+          {/* Mobile card list: shown on < md */}
+          <div className="space-y-2 md:hidden">
+            {tickets.slice(0, 6).map((ticket) => (
+              <div key={ticket.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{ticket.userName}</div>
+                  <Badge variant={ticket.status === 'resolved' ? 'secondary' : 'default'}>
+                    {ticket.status.replace('_', ' ')}
+                  </Badge>
+                </div>
+                <div className="mt-0.5 text-sm text-slate-600 line-clamp-1">{ticket.subject}</div>
+                <div className="mt-0.5 text-xs text-slate-500">{formatDate(ticket.updatedAt)}</div>
+              </div>
+            ))}
+            {!loading && tickets.length === 0 && <AdminEmptyState message="No support tickets available." />}
+          </div>
+
+          {/* Desktop table: hidden on < md */}
+          <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -366,6 +378,7 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
                 )}
               </TableBody>
             </Table>
+          </div>
           </CardContent>
         </Card>
 
@@ -387,7 +400,7 @@ export function AdminDashboardPage({ session }: AdminDashboardPageProps) {
                 <div className="text-xs text-slate-500">{formatDate(item.createdAt)}</div>
               </div>
             ))}
-            {!loading && auditLog.length === 0 && <div className="text-sm text-slate-500">No audit entries yet.</div>}
+            {!loading && auditLog.length === 0 && <AdminEmptyState message="No audit entries yet." />}
           </CardContent>
         </Card>
       </div>

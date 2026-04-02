@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Copy } from 'lucide-react';
+import { Copy } from 'lucide-react';
 import { fetchAdminUsers, fetchInvitationCodes, generateInvitationCode, updateInvitationCodeStatus } from '../api';
 import type { AdminInvitationCode, AdminSession } from '../types';
 import { hasAdminPermission } from '../permissions';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -77,10 +80,10 @@ export function AdminInvitationsPage({ session }: AdminInvitationsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Invitation Codes</h1>
-        <p className="text-sm text-slate-500">Generate, copy, and enable/disable invitation codes.</p>
-      </div>
+      <AdminPageHeader
+        title="Invitation Codes"
+        description="Generate, copy, and enable/disable invitation codes."
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Total Codes</CardDescription><CardTitle>{loading ? '...' : codes.length}</CardTitle></CardHeader></Card>
@@ -100,18 +103,10 @@ export function AdminInvitationsPage({ session }: AdminInvitationsPageProps) {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {message && <div className="text-sm text-green-600">{message}</div>}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
+          <AdminFeedback success={message} error={error} />
           {!canManageInvitations && <div className="text-sm text-amber-700">Permission required: invitations.manage</div>}
 
-          {codes.length === 0 && !loading && (
-            <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No invitation codes available.</div>
-          )}
+          {codes.length === 0 && !loading && <AdminEmptyState message="No invitation codes available." />}
 
           {codes.map((item) => (
             <div key={item.code} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">

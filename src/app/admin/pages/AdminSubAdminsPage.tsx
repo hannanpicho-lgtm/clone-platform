@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
 import { createSubAdmin, deleteSubAdmin, fetchSubAdminComprehensiveReport, fetchSubAdmins, revokeSubAdmin, updateSubAdmin } from '../api';
 import { SUB_ADMIN_DEFAULT_PERMISSIONS, SUB_ADMIN_PERMISSION_OPTIONS } from '../permissions';
 import type { AdminSession, LimitedAdminAccount, SubAdminComprehensiveReport } from '../types';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
+import { AdminStatusBadge } from '../components/AdminStatusBadge';
 import { Badge } from '../../components/ui/badge';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { Button } from '../../components/ui/button';
@@ -194,10 +197,10 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Sub-admin Management</h1>
-        <p className="text-sm text-slate-500">Super-admin only. Invite, permission, and revoke workflows are protected before render and again on the backend.</p>
-      </div>
+      <AdminPageHeader
+        title="Sub-admin Management"
+        description="Super-admin only. Invite, permission, and revoke workflows are protected before render and again on the backend."
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Total</CardDescription><CardTitle>{totals.total}</CardTitle></CardHeader></Card>
@@ -237,13 +240,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
               ))}
             </div>
 
-            {message && <div className="text-sm text-green-600">{message}</div>}
-            {error && (
-              <div className="flex items-center gap-2 text-sm text-red-600">
-                <AlertCircle className="h-4 w-4" />
-                {error}
-              </div>
-            )}
+            <AdminFeedback success={message} error={error} />
 
             <Button type="button" className="w-full" disabled={saving} onClick={handleCreate}>
               {saving ? 'Saving...' : 'Invite Sub-admin'}
@@ -257,68 +254,88 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
             <CardDescription>Super-admin only list of provisioned admin accounts and their scoped permissions.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Permissions</TableHead>
-                  <TableHead>Managed Users</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {accounts.map((account) => (
-                  <TableRow key={account.userId}>
-                    <TableCell>
-                      <div className="font-medium">{account.displayName || account.username}</div>
+            {/* Mobile card list */}
+            <div className="space-y-3 md:hidden">
+              {accounts.map((account) => (
+                <div key={account.userId} className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-slate-900">{account.displayName || account.username}</div>
                       <div className="text-xs text-slate-500">{account.authEmail || account.username}</div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={account.status === 'active' ? 'default' : account.status === 'disabled' ? 'secondary' : 'destructive'}>
-                        {account.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {account.permissions.map((permission) => (
-                          <Badge key={permission} variant="outline">{permission}</Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>{account.usersCreated || 0}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>
-                          Edit
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => handleViewReport(account)}>
-                          Report
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => handleToggleActive(account)}>
-                          {account.active ? 'Disable' : 'Enable'}
-                        </Button>
-                        <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>
-                          Revoke
-                        </Button>
-                        <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!loading && accounts.length === 0 && (
+                    </div>
+                    <AdminStatusBadge status={account.status} />
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    Managed users: <span className="font-medium text-slate-800">{account.usersCreated || 0}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {account.permissions.map((permission) => (
+                      <Badge key={permission} variant="outline" className="text-xs">{permission}</Badge>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>Edit</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => handleViewReport(account)}>Report</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => handleToggleActive(account)}>{account.active ? 'Disable' : 'Enable'}</Button>
+                    <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>Revoke</Button>
+                    <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>Delete</Button>
+                  </div>
+                </div>
+              ))}
+              {!loading && accounts.length === 0 && <AdminEmptyState message="No sub-admin accounts found." />}
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden md:block">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-slate-500">No sub-admin accounts found.</TableCell>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Permissions</TableHead>
+                    <TableHead>Users</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {accounts.map((account) => (
+                    <TableRow key={account.userId}>
+                      <TableCell>
+                        <div className="font-medium">{account.displayName || account.username}</div>
+                        <div className="text-xs text-slate-500">{account.authEmail || account.username}</div>
+                      </TableCell>
+                      <TableCell><AdminStatusBadge status={account.status} /></TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {account.permissions.map((permission) => (
+                            <Badge key={permission} variant="outline" className="text-xs">{permission}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>{account.usersCreated || 0}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1.5">
+                          <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>Edit</Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => handleViewReport(account)}>Report</Button>
+                          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => handleToggleActive(account)}>{account.active ? 'Disable' : 'Enable'}</Button>
+                          <Button type="button" size="sm" variant="destructive" disabled={saving || account.status === 'revoked'} onClick={() => handleRevoke(account)}>Revoke</Button>
+                          <Button type="button" size="sm" variant="destructive" disabled={saving} onClick={() => handleDelete(account)}>Delete</Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!loading && accounts.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-slate-500">No sub-admin accounts found.</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
 
             {editingAccount && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                Editing <strong>{editingAccount.displayName || editingAccount.username}</strong> — use the panel on the right.
+                Editing <strong>{editingAccount.displayName || editingAccount.username}</strong> — select Edit on any row to open the details panel.
               </div>
             )}
           </CardContent>
@@ -349,12 +366,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                 Created: {formatDate(editingAccount.createdAt)} · Updated: {formatDate(editingAccount.updatedAt)}
               </div>
             )}
-            {message && <p className="text-sm text-green-600">{message}</p>}
-            {error && (
-              <div className="flex items-center gap-2 text-sm text-red-600">
-                <AlertCircle className="h-4 w-4" />{error}
-              </div>
-            )}
+            <AdminFeedback success={message} error={error} />
           </div>
 
           <div className="px-6 py-4 border-t flex gap-2 shrink-0">
@@ -375,11 +387,7 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             {reportLoading && <p className="text-sm text-slate-500">Loading report...</p>}
-            {reportError && (
-              <div className="flex items-center gap-2 text-sm text-red-600">
-                <AlertCircle className="h-4 w-4" />{reportError}
-              </div>
-            )}
+            <AdminFeedback error={reportError} />
 
             {reportData && (
               <>

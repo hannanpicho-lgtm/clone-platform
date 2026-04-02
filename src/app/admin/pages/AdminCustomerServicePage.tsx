@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
 import { fetchAdminSupportTickets, replySupportTicket, updateSupportTicketStatus } from '../api';
 import { hasAdminPermission } from '../permissions';
 import type { AdminSession, AdminSupportTicket } from '../types';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -83,10 +85,7 @@ export function AdminCustomerServicePage({ session }: AdminCustomerServicePagePr
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Customer Service</h1>
-        <p className="text-sm text-slate-500">Manage ticket statuses and send direct replies.</p>
-      </div>
+      <AdminPageHeader title="Customer Service" description="Manage ticket statuses and send direct replies." />
 
       <Card className="border-slate-200 bg-white">
         <CardHeader>
@@ -106,17 +105,9 @@ export function AdminCustomerServicePage({ session }: AdminCustomerServicePagePr
         </CardHeader>
         <CardContent className="space-y-3">
           {!canManageSupport && <div className="text-sm text-amber-700">Permission required: support.manage</div>}
-          {message && <div className="text-sm text-green-600">{message}</div>}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
+          <AdminFeedback success={message} error={error} />
 
-          {!loading && filtered.length === 0 && (
-            <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No tickets in this filter.</div>
-          )}
+          {!loading && filtered.length === 0 && <AdminEmptyState message="No tickets in this filter." />}
 
           {filtered.map((ticket) => (
             <div key={ticket.id} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">

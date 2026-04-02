@@ -2,6 +2,8 @@ import type { AdminSession } from '../types';
 import { useEffect, useState } from 'react';
 import { isSuperAdmin } from '../permissions';
 import { projectId } from '/utils/supabase/info';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -130,10 +132,7 @@ export function AdminSettingsPage({ session }: AdminSettingsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-slate-500">Live VIP tier configuration from backend.</p>
-      </div>
+      <AdminPageHeader title="Settings" description="Live VIP tier configuration from backend." />
 
       <Card className="border-slate-200 bg-white">
         <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -186,7 +185,7 @@ export function AdminSettingsPage({ session }: AdminSettingsPageProps) {
                   </div>
                 </div>
               ))}
-              {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+              <AdminFeedback error={saveError} />
               <div className="flex gap-2 pt-2">
                 <Button size="sm" onClick={handleSave} disabled={saving}>
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -198,9 +197,7 @@ export function AdminSettingsPage({ session }: AdminSettingsPageProps) {
             </div>
           ) : (
             <div className="space-y-2 text-sm text-slate-700">
-              {saveSuccess && (
-                <p className="text-sm text-green-600 mb-2">{saveSuccess}</p>
-              )}
+              <AdminFeedback success={saveSuccess} />
               {VIP_TIERS.map((tier) => (
                 <p key={tier}>
                   <span className="font-medium">{tier}:</span>{' '}

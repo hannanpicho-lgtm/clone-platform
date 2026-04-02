@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 import {
   adjustUserBalance,
   assignUserPremium,
@@ -16,6 +16,10 @@ import {
 } from '../api';
 import { hasAdminPermission } from '../permissions';
 import type { AdminMetrics, AdminSession, AdminUserRecord, UserComprehensiveAuditReport } from '../types';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
+import { UserAccountStatusBadge } from '../components/AdminStatusBadge';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -41,16 +45,6 @@ const EMPTY_METRICS: AdminMetrics = {
 function formatDate(value: string) {
   if (!value) return 'N/A';
   return new Date(value).toLocaleDateString();
-}
-
-function getAccountBadge(user: AdminUserRecord) {
-  if (user.accountDisabled) {
-    return <Badge variant="destructive">Suspended</Badge>;
-  }
-  if (user.accountFrozen) {
-    return <Badge variant="secondary">Frozen</Badge>;
-  }
-  return <Badge variant="default">Active</Badge>;
 }
 
 function getSubscriptionStatus(user: AdminUserRecord) {
@@ -419,10 +413,10 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Admin Users</h1>
-        <p className="text-sm text-slate-500">Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls.</p>
-      </div>
+      <AdminPageHeader
+        title="Admin Users"
+        description="Full user operations parity: status, delete, unfreeze, VIP updates, premium assignment, balance and task controls."
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-slate-200">
@@ -472,13 +466,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             </Select>
           </div>
 
-          {message && <div className="text-sm text-green-600">{message}</div>}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
+          <AdminFeedback success={message} error={error} />
 
           <div className="space-y-3 md:hidden">
             {filteredUsers.map((user) => (
@@ -493,7 +481,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                     <div className="font-medium text-slate-900">{user.name}</div>
                     <div className="text-xs text-slate-500">{user.email || user.id}</div>
                   </div>
-                  {getAccountBadge(user)}
+                  <UserAccountStatusBadge accountDisabled={user.accountDisabled} accountFrozen={user.accountFrozen} />
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
@@ -534,9 +522,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             ))}
 
             {!loading && filteredUsers.length === 0 && (
-              <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-                No users match the current filters.
-              </div>
+              <AdminEmptyState message="No users match the current filters." />
             )}
           </div>
 
@@ -567,7 +553,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                       <div className="text-xs text-slate-500">Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'N/A'}</div>
                       {isResetRequired(user) && <div className="text-xs font-semibold text-amber-700">Reset required</div>}
                     </TableCell>
-                    <TableCell>{getAccountBadge(user)}</TableCell>
+                    <TableCell><UserAccountStatusBadge accountDisabled={user.accountDisabled} accountFrozen={user.accountFrozen} /></TableCell>
                     <TableCell>{user.vipTier}</TableCell>
                     <TableCell className={user.balance < 0 ? 'text-red-600' : 'text-green-700'}>${Number(user.balance || 0).toLocaleString()}</TableCell>
                     <TableCell>{Number(user.productsSubmitted || 0)}</TableCell>
@@ -821,8 +807,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
               )}
             </div>
 
-            {message && <p className="text-sm text-green-600">{message}</p>}
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            <AdminFeedback success={message} error={error} />
           </div>
         </SheetContent>
       </Sheet>

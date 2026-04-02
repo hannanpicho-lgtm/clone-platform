@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
 import { approveWithdrawal, denyWithdrawal, fetchAdminWithdrawals } from '../api';
 import type { AdminSession, AdminWithdrawalRequest } from '../types';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -85,10 +87,7 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Withdrawals</h1>
-        <p className="text-sm text-slate-500">Review pending requests and approve or deny with a reason.</p>
-      </div>
+      <AdminPageHeader title="Withdrawals" description="Review pending requests and approve or deny with a reason." />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Pending Requests</CardDescription><CardTitle>{loading ? '...' : pending.length}</CardTitle></CardHeader></Card>
@@ -102,17 +101,9 @@ export function AdminWithdrawalsPage({ session }: AdminWithdrawalsPageProps) {
           <CardDescription>Actions are persisted to backend and reflected after refresh.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {message && <div className="text-sm text-green-600">{message}</div>}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
+          <AdminFeedback success={message} error={error} />
 
-          {pending.length === 0 && !loading && (
-            <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No pending withdrawals.</div>
-          )}
+          {pending.length === 0 && !loading && <AdminEmptyState message="No pending withdrawals." />}
 
           {pending.map((item) => (
             <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">

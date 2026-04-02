@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import type { AdminSession, AdminUserRecord } from '../types';
 import { fetchAdminUsers } from '../api';
 import { useEffect } from 'react';
+import { AdminEmptyState } from '../components/AdminEmptyState';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -49,10 +51,7 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Transactions</h1>
-        <p className="text-sm text-slate-500">User earnings activity — real data from backend user accounts.</p>
-      </div>
+      <AdminPageHeader title="Transactions" description="User earnings activity — real data from backend user accounts." />
 
       <Card className="border-slate-200 bg-white">
         <CardHeader>
@@ -69,10 +68,8 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {loading && <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Loading…</div>}
-          {!loading && filteredUsers.length === 0 && (
-            <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No transactions found.</div>
-          )}
+          {loading && <AdminEmptyState message="Loading…" />}
+          {!loading && filteredUsers.length === 0 && <AdminEmptyState message="No transactions found." />}
 
           {filteredUsers.map((user) => (
             <div key={user.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">

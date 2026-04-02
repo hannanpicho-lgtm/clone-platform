@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
 import { fetchContactLinks, updateContactLinks } from '../api';
 import { hasAdminPermission, isSuperAdmin } from '../permissions';
 import type { AdminSession, AdminSupportLinks } from '../types';
+import { AdminFeedback } from '../components/AdminFeedback';
+import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
@@ -86,10 +87,7 @@ export function AdminSupportLinksPage({ session }: AdminSupportLinksPageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Support Links</h1>
-        <p className="text-sm text-slate-500">Configure WhatsApp and Telegram links used by customer support entry points.</p>
-      </div>
+      <AdminPageHeader title="Support Links" description="Configure WhatsApp and Telegram links used by customer support entry points." />
 
       <Card className="border-slate-200 bg-white">
         <CardHeader>
@@ -100,13 +98,7 @@ export function AdminSupportLinksPage({ session }: AdminSupportLinksPageProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {!canManageSupport && <div className="text-sm text-amber-700">Permission required: support.manage</div>}
-          {message && <div className="text-sm text-green-600">{message}</div>}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
+          <AdminFeedback success={message} error={error} />
 
           <div className="grid gap-3 md:grid-cols-2">
             <Input
