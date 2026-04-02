@@ -126,3 +126,92 @@ export interface AdminAlertsSummary {
   critical: number;
   high: number;
 }
+
+export interface SubAdminReportUserRow {
+  userId: string;
+  name: string;
+  email: string;
+  accountStatus: 'active' | 'frozen' | 'disabled' | string;
+  balance: number;
+  depositCount: number;
+  withdrawalCount: number;
+  totalDeposits: number;
+  totalWithdrawals: number;
+  netFlow: number;
+  lastDepositAt?: string | null;
+  lastWithdrawalAt?: string | null;
+}
+
+export interface SubAdminReportEvent {
+  id: string;
+  userId: string;
+  userName: string;
+  type: string;
+  status?: string | null;
+  amount?: number;
+  createdAt: string;
+}
+
+export interface SubAdminComprehensiveReport {
+  admin: {
+    userId: string;
+    username: string;
+    displayName: string;
+    status: string;
+    permissions: string[];
+  };
+  range: {
+    from: string;
+    to: string;
+  };
+  metrics: {
+    managedUsers: number;
+    usersWithDeposits: number;
+    usersWithWithdrawals: number;
+    totalDepositAmount: number;
+    totalWithdrawalAmount: number;
+    netFlow: number;
+  };
+  users: SubAdminReportUserRow[];
+  events: SubAdminReportEvent[];
+}
+
+export interface UserAuditEvent {
+  id: string;
+  type: string;
+  status?: string | null;
+  amount?: number;
+  actorUserId?: string | null;
+  actorRole?: string | null;
+  source?: string | null;
+  sourceId?: string | null;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UserComprehensiveAuditReport {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    username: string;
+    accountStatus: string;
+    balance: number;
+    vipTier: string;
+    createdAt: string;
+  };
+  range: {
+    from: string;
+    to: string;
+  };
+  metrics: {
+    totalEvents: number;
+    depositCount: number;
+    withdrawalCount: number;
+    adjustmentCount: number;
+    totalDeposits: number;
+    totalWithdrawals: number;
+    netFlow: number;
+  };
+  events: UserAuditEvent[];
+}

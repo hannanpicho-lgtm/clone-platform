@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { createSubAdmin, deleteSubAdmin, fetchSubAdmins, revokeSubAdmin, updateSubAdmin } from '../api';
+import { createSubAdmin, deleteSubAdmin, fetchSubAdminComprehensiveReport, fetchSubAdmins, revokeSubAdmin, updateSubAdmin } from '../api';
 import { SUB_ADMIN_DEFAULT_PERMISSIONS, SUB_ADMIN_PERMISSION_OPTIONS } from '../permissions';
-import type { AdminSession, LimitedAdminAccount } from '../types';
+import type { AdminSession, LimitedAdminAccount, SubAdminComprehensiveReport } from '../types';
 import { Badge } from '../../components/ui/badge';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { Button } from '../../components/ui/button';
@@ -33,6 +33,10 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
   const [permissions, setPermissions] = useState<string[]>([...SUB_ADMIN_DEFAULT_PERMISSIONS]);
   const [editingAccount, setEditingAccount] = useState<LimitedAdminAccount | null>(null);
   const [editingPermissions, setEditingPermissions] = useState<string[]>([]);
+  const [reportAccount, setReportAccount] = useState<LimitedAdminAccount | null>(null);
+  const [reportData, setReportData] = useState<SubAdminComprehensiveReport | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -173,6 +177,21 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
     }
   };
 
+  const handleViewReport = async (account: LimitedAdminAccount) => {
+    setReportAccount(account);
+    setReportData(null);
+    setReportError('');
+    setReportLoading(true);
+    try {
+      const report = await fetchSubAdminComprehensiveReport(session, account.userId);
+      setReportData(report);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Failed to load sub-admin report');
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -273,6 +292,9 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
                         <Button type="button" size="sm" variant="outline" onClick={() => { setEditingAccount(account); setEditingPermissions(account.permissions); }}>
                           Edit
                         </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => handleViewReport(account)}>
+                          Report
+                        </Button>
                         <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => handleToggleActive(account)}>
                           {account.active ? 'Disable' : 'Enable'}
                         </Button>
@@ -340,6 +362,73 @@ export function AdminSubAdminsPage({ session }: AdminSubAdminsPageProps) {
               {saving ? 'Saving…' : 'Save permissions'}
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditingAccount(null)}>Cancel</Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={!!reportAccount} onOpenChange={(open) => { if (!open) { setReportAccount(null); setReportData(null); setReportError(''); } }}>
+        <SheetContent className="sm:max-w-3xl flex flex-col gap-0 p-0">
+          <SheetHeader className="px-6 py-4 border-b shrink-0">
+            <SheetTitle>Sub-admin Comprehensive Report</SheetTitle>
+            <SheetDescription>{reportAccount?.displayName || reportAccount?.username}</SheetDescription>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {reportLoading && <p className="text-sm text-slate-500">Loading report...</p>}
+            {reportError && (
+              <div className="flex items-center gap-2 text-sm text-red-600">
+                <AlertCircle className="h-4 w-4" />{reportError}
+              </div>
+            )}
+
+            {reportData && (
+              <>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Managed users</CardDescription><CardTitle>{reportData.metrics.managedUsers}</CardTitle></CardHeader></Card>
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Users deposited</CardDescription><CardTitle>{reportData.metrics.usersWithDeposits}</CardTitle></CardHeader></Card>
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Users withdrew</CardDescription><CardTitle>{reportData.metrics.usersWithWithdrawals}</CardTitle></CardHeader></Card>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Total deposits</CardDescription><CardTitle>${reportData.metrics.totalDepositAmount.toFixed(2)}</CardTitle></CardHeader></Card>
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Total withdrawals</CardDescription><CardTitle>${reportData.metrics.totalWithdrawalAmount.toFixed(2)}</CardTitle></CardHeader></Card>
+                  <Card className="border-slate-200"><CardHeader className="pb-2"><CardDescription>Net flow</CardDescription><CardTitle>${reportData.metrics.netFlow.toFixed(2)}</CardTitle></CardHeader></Card>
+                </div>
+
+                <div className="rounded-lg border border-slate-200">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>User</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Deposits</TableHead>
+                        <TableHead>Withdrawals</TableHead>
+                        <TableHead>Net</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {reportData.users.map((row) => (
+                        <TableRow key={row.userId}>
+                          <TableCell>
+                            <div className="font-medium">{row.name}</div>
+                            <div className="text-xs text-slate-500">{row.email || row.userId}</div>
+                          </TableCell>
+                          <TableCell><Badge variant={row.accountStatus === 'active' ? 'default' : 'secondary'}>{row.accountStatus}</Badge></TableCell>
+                          <TableCell>${row.totalDeposits.toFixed(2)} ({row.depositCount})</TableCell>
+                          <TableCell>${row.totalWithdrawals.toFixed(2)} ({row.withdrawalCount})</TableCell>
+                          <TableCell>${row.netFlow.toFixed(2)}</TableCell>
+                        </TableRow>
+                      ))}
+                      {reportData.users.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-slate-500">No managed user financial activity in the selected period.</TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
           </div>
         </SheetContent>
       </Sheet>

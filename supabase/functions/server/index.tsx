@@ -1274,6 +1274,198 @@ const resolveUserTotalEarnings = async (user: any): Promise<number> => {
   return computeTotalEarnings(user, totalEarned);
 };
 
+const toFiniteAmount = (value: unknown): number => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? roundCurrency(parsed) : 0;
+};
+
+const toIsoDate = (value: unknown, fallback: string): string => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return fallback;
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return fallback;
+  }
+  return parsed.toISOString();
+};
+
+const buildEventId = (prefix: string): string => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const appendUserAuditEvent = async (
+  userId: string,
+  event: {
+    type: string;
+    status?: string | null;
+    amount?: number;
+    actorUserId?: string | null;
+    actorRole?: string | null;
+    source?: string | null;
+    sourceId?: string | null;
+    tenantId?: TenantId;
+    metadata?: Record<string, any>;
+    createdAt?: string;
+  },
+) => {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return;
+  }
+
+  const nowIso = new Date().toISOString();
+  const key = `audit:user:${normalizedUserId}`;
+  const events = await kv.get(key) || [];
+  const nextEvent = {
+    id: buildEventId('user_audit'),
+    userId: normalizedUserId,
+    type: String(event.type || 'event'),
+    status: event.status ? String(event.status) : null,
+    amount: toFiniteAmount(event.amount),
+    actorUserId: event.actorUserId ? String(event.actorUserId) : null,
+    actorRole: event.actorRole ? String(event.actorRole) : null,
+    source: event.source ? String(event.source) : null,
+    sourceId: event.sourceId ? String(event.sourceId) : null,
+    tenantId: normalizeTenantId(event.tenantId, DEFAULT_TENANT_ID),
+    metadata: event.metadata && typeof event.metadata === 'object' ? event.metadata : {},
+    createdAt: toIsoDate(event.createdAt, nowIso),
+  };
+
+  events.push(nextEvent);
+  await kv.set(key, events.slice(-1000));
+};
+
+const appendReportAuditEvent = async (
+  payload: {
+    tenantId: TenantId;
+    viewerUserId: string | null;
+    viewerRole: 'super_admin' | 'limited_admin';
+    reportType: string;
+    targetType: 'sub_admin' | 'user';
+    targetId: string;
+    filters?: Record<string, any>;
+  },
+) => {
+  const key = `admin:report-audit:${payload.tenantId}`;
+  const logs = await kv.get(key) || [];
+  logs.push({
+    id: buildEventId('report_audit'),
+    viewerUserId: payload.viewerUserId,
+    viewerRole: payload.viewerRole,
+    reportType: payload.reportType,
+    targetType: payload.targetType,
+    targetId: payload.targetId,
+    filters: payload.filters && typeof payload.filters === 'object' ? payload.filters : {},
+    createdAt: new Date().toISOString(),
+  });
+  await kv.set(key, logs.slice(-2000));
+};
+
+const buildLegacyFinancialEventsForUser = async (userId: string): Promise<any[]> => {
+  const nowIso = new Date().toISOString();
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const events: any[] = [];
+
+  const depositRequestIds = await kv.get(`deposit:requests:user:${normalizedUserId}`) || [];
+  for (const requestId of Array.isArray(depositRequestIds) ? depositRequestIds : []) {
+    const request = await kv.get(`deposit:request:${String(requestId || '').trim()}`);
+    if (!request) {
+      continue;
+    }
+    events.push({
+      id: `legacy_deposit_${request.id || requestId}`,
+      userId: normalizedUserId,
+      type: 'deposit_request',
+      status: String(request?.status || 'pending'),
+      amount: toFiniteAmount(request?.amount),
+      source: 'deposit_request',
+      sourceId: String(request?.id || requestId || ''),
+      createdAt: toIsoDate(request?.createdAt || request?.updatedAt, nowIso),
+      metadata: {
+        method: request?.method || null,
+        reference: request?.reference || null,
+        transactionHash: request?.transactionHash || null,
+      },
+    });
+  }
+
+  const withdrawalIds = await kv.get(`withdrawal-index:${normalizedUserId}`) || [];
+  for (const withdrawalId of Array.isArray(withdrawalIds) ? withdrawalIds : []) {
+    const withdrawal = await kv.get(`withdrawal:${String(withdrawalId || '').trim()}`);
+    if (!withdrawal) {
+      continue;
+    }
+    events.push({
+      id: `legacy_withdrawal_${withdrawal.id || withdrawalId}`,
+      userId: normalizedUserId,
+      type: 'withdrawal',
+      status: String(withdrawal?.status || 'pending'),
+      amount: toFiniteAmount(withdrawal?.amount),
+      source: 'withdrawal_request',
+      sourceId: String(withdrawal?.id || withdrawalId || ''),
+      createdAt: toIsoDate(withdrawal?.requestedAt || withdrawal?.approvedAt || withdrawal?.deniedAt, nowIso),
+      metadata: {
+        approvedAt: withdrawal?.approvedAt || null,
+        deniedAt: withdrawal?.deniedAt || null,
+        denialReason: withdrawal?.denialReason || null,
+      },
+    });
+  }
+
+  const adjustmentLog = await kv.get(`admin:adjustments:${normalizedUserId}`) || [];
+  for (const item of Array.isArray(adjustmentLog) ? adjustmentLog : []) {
+    const category = String(item?.category || 'adjustment').toLowerCase();
+    events.push({
+      id: `legacy_adjustment_${item?.id || buildEventId('adj')}`,
+      userId: normalizedUserId,
+      type: category === 'topup' ? 'deposit_adjustment' : 'balance_adjustment',
+      status: 'applied',
+      amount: toFiniteAmount(item?.amount),
+      actorUserId: item?.performedBy ? String(item.performedBy) : null,
+      actorRole: item?.performedBy ? 'admin' : null,
+      source: 'admin_adjustment',
+      sourceId: item?.id ? String(item.id) : null,
+      createdAt: toIsoDate(item?.createdAt, nowIso),
+      metadata: {
+        category,
+        note: item?.note || null,
+        previousBalance: toFiniteAmount(item?.previousBalance),
+        newBalance: toFiniteAmount(item?.newBalance),
+      },
+    });
+  }
+
+  return events;
+};
+
+const getUserAuditTimeline = async (userId: string): Promise<any[]> => {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return [];
+  }
+
+  const recordedEvents = await kv.get(`audit:user:${normalizedUserId}`) || [];
+  const legacyEvents = await buildLegacyFinancialEventsForUser(normalizedUserId);
+  const merged = new Map<string, any>();
+
+  for (const entry of [...legacyEvents, ...(Array.isArray(recordedEvents) ? recordedEvents : [])]) {
+    const id = String(entry?.id || '').trim() || `${entry?.source || 'evt'}:${entry?.sourceId || buildEventId('evt')}`;
+    if (!merged.has(id)) {
+      merged.set(id, entry);
+    }
+  }
+
+  return Array.from(merged.values()).sort((a: any, b: any) => {
+    const left = new Date(String(a?.createdAt || '')).getTime() || 0;
+    const right = new Date(String(b?.createdAt || '')).getTime() || 0;
+    return right - left;
+  });
+};
+
 const getRequesterIp = (c: any): string => {
   const forwardedFor = String(c.req.header('x-forwarded-for') || '').trim();
   if (forwardedFor) {
@@ -2342,6 +2534,22 @@ app.post('/deposits/request', async (c) => {
     const queue = await kv.get('deposit:requests:queue') || [];
     queue.push(requestId);
     await kv.set('deposit:requests:queue', queue.slice(-1000));
+
+    await appendUserAuditEvent(userId, {
+      type: 'deposit_request',
+      status: 'pending',
+      amount: normalizedAmount,
+      source: 'deposit_request',
+      sourceId: requestId,
+      tenantId: requestTenantId,
+      metadata: {
+        method: normalizedMethod,
+        reference: normalizedReference,
+        transactionHash: normalizedTransactionHash,
+        cryptoAsset: resolvedCryptoAsset,
+        cryptoNetwork: resolvedCryptoNetwork,
+      },
+    });
 
     return c.json({ success: true, request });
   } catch (error) {
@@ -4730,6 +4938,18 @@ app.post("/request-withdrawal", async (c) => {
     pendingWithdrawals.push(withdrawalId);
     await kv.set('withdrawals:pending', pendingWithdrawals);
 
+    await appendUserAuditEvent(String(userId || ''), {
+      type: 'withdrawal_request',
+      status: 'pending',
+      amount,
+      source: 'withdrawal_request',
+      sourceId: withdrawalId,
+      tenantId: getRecordTenantId(userProfile, DEFAULT_TENANT_ID),
+      metadata: {
+        approvedWithdrawalLimit,
+      },
+    });
+
     // Send email notification
     if (userProfile.email && userProfile.emailNotifications !== false) {
       const template = emailTemplates.withdrawalRequested(userProfile.name, amount);
@@ -4905,6 +5125,17 @@ app.post("/admin/approve-withdrawal", async (c) => {
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
 
+    await appendUserAuditEvent(String(withdrawal.userId || ''), {
+      type: 'withdrawal_approved',
+      status: 'approved',
+      amount: Number(withdrawal.amount || 0),
+      actorUserId: adminAccess.userId,
+      actorRole: adminAccess.isSuperAdmin ? 'super_admin' : 'limited_admin',
+      source: 'withdrawal_request',
+      sourceId: String(withdrawalId),
+      tenantId: adminAccess.tenantId,
+    });
+
     return c.json({
       success: true,
       withdrawal,
@@ -4973,6 +5204,20 @@ app.post("/admin/deny-withdrawal", async (c) => {
       const template = emailTemplates.withdrawalDenied(withdrawal.userName, withdrawal.amount, withdrawal.denialReason);
       await sendEmail(withdrawal.userEmail, template.subject, template.html);
     }
+
+    await appendUserAuditEvent(String(withdrawal.userId || ''), {
+      type: 'withdrawal_denied',
+      status: 'denied',
+      amount: Number(withdrawal.amount || 0),
+      actorUserId: adminAccess.userId,
+      actorRole: adminAccess.isSuperAdmin ? 'super_admin' : 'limited_admin',
+      source: 'withdrawal_request',
+      sourceId: String(withdrawalId),
+      tenantId: adminAccess.tenantId,
+      metadata: {
+        denialReason: withdrawal.denialReason || null,
+      },
+    });
 
     return c.json({
       success: true,
@@ -5057,6 +5302,23 @@ app.post('/admin/users/adjust-balance', async (c) => {
       performedBy: adminAccess.userId || 'super_admin',
     });
     await kv.set(`admin:adjustments:${userId}`, adjustmentLog.slice(-200));
+
+    await appendUserAuditEvent(String(userId || ''), {
+      type: adjustmentCategory === 'topup' && adjustmentAmount > 0 ? 'deposit_adjustment' : 'balance_adjustment',
+      status: 'applied',
+      amount: adjustmentAmount,
+      actorUserId: adminAccess.userId,
+      actorRole: adminAccess.isSuperAdmin ? 'super_admin' : 'limited_admin',
+      source: 'admin_adjustment',
+      sourceId: `${userId}-${Date.now()}`,
+      tenantId: adminAccess.tenantId,
+      metadata: {
+        category: adjustmentCategory,
+        note: normalizedNote || null,
+        previousBalance,
+        newBalance: nextBalance,
+      },
+    });
 
     return c.json({
       success: true,
@@ -5848,6 +6110,249 @@ app.get('/admin/accounts', async (c) => {
   } catch (error) {
     console.error(`Error listing admin accounts: ${error}`);
     return c.json({ error: 'Internal server error while listing admin accounts' }, 500);
+  }
+});
+
+// Admin: comprehensive report for one sub-admin account
+app.get('/admin/reports/sub-admin/:adminUserId', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.view');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const adminUserId = String(c.req.param('adminUserId') || '').trim();
+    if (!adminUserId) {
+      return c.json({ error: 'adminUserId is required' }, 400);
+    }
+
+    if (!adminAccess.isSuperAdmin && adminAccess.userId !== adminUserId) {
+      return c.json({ error: 'Forbidden - You can only view your own account report' }, 403);
+    }
+
+    const fromParam = String(c.req.query('from') || '').trim();
+    const toParam = String(c.req.query('to') || '').trim();
+    const now = Date.now();
+    const defaultFrom = now - (30 * 24 * 60 * 60 * 1000);
+    const fromMs = fromParam ? new Date(fromParam).getTime() : defaultFrom;
+    const toMs = toParam ? new Date(toParam).getTime() : now;
+    const safeFromMs = Number.isFinite(fromMs) ? fromMs : defaultFrom;
+    const safeToMs = Number.isFinite(toMs) ? toMs : now;
+
+    const adminAccount = await kv.get(`admin:account:${adminUserId}`);
+    if (!adminAccount || isDeletedRecord(adminAccount)) {
+      return c.json({ error: 'Sub-admin account not found' }, 404);
+    }
+    if (!isRecordVisibleForTenant(adminAccount, adminAccess.tenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for sub-admin account' }, 403);
+    }
+
+    const allUsers = (await kv.getByPrefix('user:') || [])
+      .filter((user: any) => !isDeletedRecord(user))
+      .filter((user: any) => isRecordVisibleForTenant(user, adminAccess.tenantId));
+
+    const scopedIds = collectAdminScopedUserIds(adminUserId, adminAccount, allUsers);
+    const scope = scopedIds.size > 0
+      ? { mode: 'users' as const, userIds: scopedIds }
+      : getAdminScopeFromAccount(adminAccount);
+    const managedUsers = allUsers.filter((user: any) => isUserInTenantAdminScope(adminAccess, scope, user));
+
+    const userActivity = [];
+    const recentEvents = [];
+
+    for (const user of managedUsers) {
+      const timeline = await getUserAuditTimeline(String(user?.id || ''));
+      const filteredTimeline = timeline.filter((event: any) => {
+        const ts = new Date(String(event?.createdAt || '')).getTime();
+        if (!Number.isFinite(ts)) return false;
+        return ts >= safeFromMs && ts <= safeToMs;
+      });
+
+      const depositEvents = filteredTimeline.filter((event: any) => String(event?.type || '').startsWith('deposit'));
+      const withdrawalEvents = filteredTimeline.filter((event: any) => String(event?.type || '').startsWith('withdrawal'));
+
+      const totalDeposits = roundCurrency(
+        depositEvents.reduce((sum: number, event: any) => sum + toFiniteAmount(event?.amount), 0),
+      );
+      const totalWithdrawals = roundCurrency(
+        withdrawalEvents.reduce((sum: number, event: any) => sum + toFiniteAmount(event?.amount), 0),
+      );
+
+      const lastDepositAt = depositEvents.length > 0 ? depositEvents[0]?.createdAt || null : null;
+      const lastWithdrawalAt = withdrawalEvents.length > 0 ? withdrawalEvents[0]?.createdAt || null : null;
+
+      userActivity.push({
+        userId: String(user?.id || ''),
+        name: String(user?.name || 'User'),
+        email: String(user?.email || user?.contactEmail || ''),
+        accountStatus: user?.accountDisabled ? 'disabled' : (user?.accountFrozen ? 'frozen' : 'active'),
+        balance: toFiniteAmount(user?.balance),
+        depositCount: depositEvents.length,
+        withdrawalCount: withdrawalEvents.length,
+        totalDeposits,
+        totalWithdrawals,
+        netFlow: roundCurrency(totalDeposits - totalWithdrawals),
+        lastDepositAt,
+        lastWithdrawalAt,
+      });
+
+      filteredTimeline.slice(0, 50).forEach((event: any) => {
+        recentEvents.push({
+          ...event,
+          userId: String(user?.id || ''),
+          userName: String(user?.name || 'User'),
+        });
+      });
+    }
+
+    const usersWithDeposits = userActivity.filter((entry: any) => Number(entry.depositCount || 0) > 0).length;
+    const usersWithWithdrawals = userActivity.filter((entry: any) => Number(entry.withdrawalCount || 0) > 0).length;
+    const totalDepositAmount = roundCurrency(userActivity.reduce((sum: number, entry: any) => sum + Number(entry.totalDeposits || 0), 0));
+    const totalWithdrawalAmount = roundCurrency(userActivity.reduce((sum: number, entry: any) => sum + Number(entry.totalWithdrawals || 0), 0));
+
+    const sortedEvents = recentEvents
+      .sort((a: any, b: any) => new Date(String(b?.createdAt || '')).getTime() - new Date(String(a?.createdAt || '')).getTime())
+      .slice(0, 300);
+
+    await appendReportAuditEvent({
+      tenantId: adminAccess.tenantId,
+      viewerUserId: adminAccess.userId,
+      viewerRole: adminAccess.isSuperAdmin ? 'super_admin' : 'limited_admin',
+      reportType: 'sub_admin_comprehensive',
+      targetType: 'sub_admin',
+      targetId: adminUserId,
+      filters: {
+        from: new Date(safeFromMs).toISOString(),
+        to: new Date(safeToMs).toISOString(),
+      },
+    });
+
+    return c.json({
+      success: true,
+      report: {
+        admin: {
+          userId: String(adminAccount?.userId || adminUserId),
+          username: String(adminAccount?.username || ''),
+          displayName: String(adminAccount?.displayName || adminAccount?.username || ''),
+          status: adminAccount?.revokedAt ? 'revoked' : (adminAccount?.active === false ? 'disabled' : 'active'),
+          permissions: sanitizeAdminPermissions(adminAccount?.permissions),
+        },
+        range: {
+          from: new Date(safeFromMs).toISOString(),
+          to: new Date(safeToMs).toISOString(),
+        },
+        metrics: {
+          managedUsers: managedUsers.length,
+          usersWithDeposits,
+          usersWithWithdrawals,
+          totalDepositAmount,
+          totalWithdrawalAmount,
+          netFlow: roundCurrency(totalDepositAmount - totalWithdrawalAmount),
+        },
+        users: userActivity.sort((a: any, b: any) => Number(b.netFlow || 0) - Number(a.netFlow || 0)),
+        events: sortedEvents,
+      },
+    });
+  } catch (error) {
+    console.error(`Error generating sub-admin report: ${error}`);
+    return c.json({ error: 'Internal server error while generating sub-admin report' }, 500);
+  }
+});
+
+// Admin: comprehensive per-user audit report
+app.get('/admin/reports/users/:userId', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.view');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const userId = String(c.req.param('userId') || '').trim();
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+
+    const profile = await kv.get(`user:${userId}`);
+    if (!profile || isDeletedRecord(profile)) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+    if (!isRecordVisibleForTenant(profile, adminAccess.tenantId)) {
+      return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInTenantAdminScope(adminAccess, scope, profile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const fromParam = String(c.req.query('from') || '').trim();
+    const toParam = String(c.req.query('to') || '').trim();
+    const now = Date.now();
+    const defaultFrom = now - (90 * 24 * 60 * 60 * 1000);
+    const fromMs = fromParam ? new Date(fromParam).getTime() : defaultFrom;
+    const toMs = toParam ? new Date(toParam).getTime() : now;
+    const safeFromMs = Number.isFinite(fromMs) ? fromMs : defaultFrom;
+    const safeToMs = Number.isFinite(toMs) ? toMs : now;
+
+    const timeline = await getUserAuditTimeline(userId);
+    const events = timeline.filter((event: any) => {
+      const ts = new Date(String(event?.createdAt || '')).getTime();
+      if (!Number.isFinite(ts)) return false;
+      return ts >= safeFromMs && ts <= safeToMs;
+    });
+
+    const depositEvents = events.filter((event: any) => String(event?.type || '').startsWith('deposit'));
+    const withdrawalEvents = events.filter((event: any) => String(event?.type || '').startsWith('withdrawal'));
+    const adjustmentEvents = events.filter((event: any) => String(event?.type || '').includes('adjustment'));
+
+    const totalDeposits = roundCurrency(depositEvents.reduce((sum: number, event: any) => sum + toFiniteAmount(event?.amount), 0));
+    const totalWithdrawals = roundCurrency(withdrawalEvents.reduce((sum: number, event: any) => sum + toFiniteAmount(event?.amount), 0));
+
+    await appendReportAuditEvent({
+      tenantId: adminAccess.tenantId,
+      viewerUserId: adminAccess.userId,
+      viewerRole: adminAccess.isSuperAdmin ? 'super_admin' : 'limited_admin',
+      reportType: 'user_comprehensive_audit',
+      targetType: 'user',
+      targetId: userId,
+      filters: {
+        from: new Date(safeFromMs).toISOString(),
+        to: new Date(safeToMs).toISOString(),
+      },
+    });
+
+    return c.json({
+      success: true,
+      report: {
+        user: {
+          id: String(profile?.id || userId),
+          name: String(profile?.name || 'User'),
+          email: String(profile?.email || profile?.contactEmail || ''),
+          username: String(profile?.username || ''),
+          accountStatus: profile?.accountDisabled ? 'disabled' : (profile?.accountFrozen ? 'frozen' : 'active'),
+          balance: toFiniteAmount(profile?.balance),
+          vipTier: String(profile?.vipTier || 'Normal'),
+          createdAt: String(profile?.createdAt || ''),
+        },
+        range: {
+          from: new Date(safeFromMs).toISOString(),
+          to: new Date(safeToMs).toISOString(),
+        },
+        metrics: {
+          totalEvents: events.length,
+          depositCount: depositEvents.length,
+          withdrawalCount: withdrawalEvents.length,
+          adjustmentCount: adjustmentEvents.length,
+          totalDeposits,
+          totalWithdrawals,
+          netFlow: roundCurrency(totalDeposits - totalWithdrawals),
+        },
+        events,
+      },
+    });
+  } catch (error) {
+    console.error(`Error generating user audit report: ${error}`);
+    return c.json({ error: 'Internal server error while generating user audit report' }, 500);
   }
 });
 

@@ -5,6 +5,7 @@ import {
   assignUserPremium,
   deleteAdminUser,
   fetchAdminUsers,
+  fetchUserComprehensiveAuditReport,
   resetUserLoginPassword,
   resetUserTaskSet,
   resetUserWithdrawalPin,
@@ -14,7 +15,7 @@ import {
   updateUserVipTier,
 } from '../api';
 import { hasAdminPermission } from '../permissions';
-import type { AdminMetrics, AdminSession, AdminUserRecord } from '../types';
+import type { AdminMetrics, AdminSession, AdminUserRecord, UserComprehensiveAuditReport } from '../types';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
@@ -100,6 +101,9 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   // PIN/password reset form state
   const [newLoginPassword, setNewLoginPassword] = useState('');
   const [newWithdrawalPin, setNewWithdrawalPin] = useState('');
+  const [auditReport, setAuditReport] = useState<UserComprehensiveAuditReport | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
 
@@ -150,6 +154,39 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     setNewLoginPassword('');
     setNewWithdrawalPin('');
   }, [selectedUser?.id]);
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      setAuditReport(null);
+      setAuditError('');
+      return;
+    }
+
+    let cancelled = false;
+    const loadAudit = async () => {
+      setAuditLoading(true);
+      setAuditError('');
+      try {
+        const report = await fetchUserComprehensiveAuditReport(session, selectedUserId);
+        if (!cancelled) {
+          setAuditReport(report);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAuditError(err instanceof Error ? err.message : 'Failed to load user audit report');
+        }
+      } finally {
+        if (!cancelled) {
+          setAuditLoading(false);
+        }
+      }
+    };
+
+    loadAudit();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUserId, session]);
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -565,6 +602,48 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                 <div><span className="text-slate-500">Extra sets:</span> {Number(selectedUser?.extraTaskSets || 0)}</div>
                 <div><span className="text-slate-500">Withdrawal cap:</span> ${Number(selectedUser?.withdrawalLimit || 0).toLocaleString()}</div>
               </div>
+            </div>
+
+            <div className="space-y-3 pt-4 border-t">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Financial Audit</p>
+              {auditLoading && <p className="text-sm text-slate-500">Loading audit report...</p>}
+              {auditError && <p className="text-sm text-red-600">{auditError}</p>}
+              {auditReport && (
+                <>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div className="rounded border border-slate-200 p-2">
+                      <p className="text-xs text-slate-500">Deposits</p>
+                      <p className="font-semibold">${auditReport.metrics.totalDeposits.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded border border-slate-200 p-2">
+                      <p className="text-xs text-slate-500">Withdrawals</p>
+                      <p className="font-semibold">${auditReport.metrics.totalWithdrawals.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded border border-slate-200 p-2">
+                      <p className="text-xs text-slate-500">Net flow</p>
+                      <p className="font-semibold">${auditReport.metrics.netFlow.toFixed(2)}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {auditReport.events.slice(0, 12).map((event) => (
+                      <div key={event.id} className="rounded border border-slate-200 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-slate-800">{event.type.replaceAll('_', ' ')}</span>
+                          <span className="text-slate-500">{new Date(event.createdAt).toLocaleString()}</span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-2 text-slate-600">
+                          <span>Status: {event.status || 'n/a'}</span>
+                          <span>Amount: ${Number(event.amount || 0).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {auditReport.events.length === 0 && (
+                      <p className="text-xs text-slate-500">No audit events available.</p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* VIP Tier */}

@@ -12,6 +12,8 @@ import type {
   AdminUserRecord,
   AdminWithdrawalRequest,
   LimitedAdminAccount,
+  SubAdminComprehensiveReport,
+  UserComprehensiveAuditReport,
 } from './types';
 
 const ADMIN_FUNCTION_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
@@ -156,6 +158,44 @@ export async function fetchSubAdmins(session: AdminSession): Promise<LimitedAdmi
     updatedAt: admin?.updatedAt ? String(admin.updatedAt) : null,
     revokedAt: admin?.revokedAt ? String(admin.revokedAt) : null,
   }));
+}
+
+export async function fetchSubAdminComprehensiveReport(
+  session: AdminSession,
+  adminUserId: string,
+  range?: { from?: string; to?: string },
+): Promise<SubAdminComprehensiveReport> {
+  const params = new URLSearchParams();
+  if (range?.from) params.set('from', range.from);
+  if (range?.to) params.set('to', range.to);
+  const query = params.toString();
+  const response = await adminFetch(session, `/admin/reports/sub-admin/${encodeURIComponent(adminUserId)}${query ? `?${query}` : ''}`);
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to fetch sub-admin report');
+  }
+
+  const data = await response.json().catch(() => ({}));
+  return data?.report as SubAdminComprehensiveReport;
+}
+
+export async function fetchUserComprehensiveAuditReport(
+  session: AdminSession,
+  userId: string,
+  range?: { from?: string; to?: string },
+): Promise<UserComprehensiveAuditReport> {
+  const params = new URLSearchParams();
+  if (range?.from) params.set('from', range.from);
+  if (range?.to) params.set('to', range.to);
+  const query = params.toString();
+  const response = await adminFetch(session, `/admin/reports/users/${encodeURIComponent(userId)}${query ? `?${query}` : ''}`);
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to fetch user audit report');
+  }
+
+  const data = await response.json().catch(() => ({}));
+  return data?.report as UserComprehensiveAuditReport;
 }
 
 export async function createSubAdmin(
