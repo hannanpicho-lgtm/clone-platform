@@ -115,6 +115,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const canUnfreezeUsers = hasAdminPermission(session, 'users.unfreeze') || hasAdminPermission(session, 'users.manage');
   const canUpdateVip = hasAdminPermission(session, 'users.update_vip') || hasAdminPermission(session, 'users.manage');
   const canResetPasswords = hasAdminPermission(session, 'users.reset_password');
+  const canManageAnyUser = canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canResetTasks || canManageTaskLimits || canUpdateVip;
 
   const load = async () => {
     setLoading(true);
@@ -479,103 +480,139 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             </div>
           )}
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Subscription</TableHead>
-                <TableHead>Tier</TableHead>
-                <TableHead>Balance</TableHead>
-                <TableHead>Products</TableHead>
-                <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredUsers.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>
-                    <div className="font-medium">{user.name}</div>
+          <div className="space-y-3 md:hidden">
+            {filteredUsers.map((user) => (
+              <button
+                key={user.id}
+                type="button"
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-slate-300"
+                onClick={() => setSelectedUserId(user.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-medium text-slate-900">{user.name}</div>
                     <div className="text-xs text-slate-500">{user.email || user.id}</div>
-                    <div className="text-xs text-slate-500">Location: {formatLocation(user.lastLoginCountry)}</div>
-                    <div className="text-xs text-slate-500">IP: {formatIp(user.lastLoginIp)}</div>
-                    <div className="text-xs text-slate-500">Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'N/A'}</div>
-                    {isResetRequired(user) && <div className="text-xs font-semibold text-amber-700">Reset required</div>}
-                  </TableCell>
-                  <TableCell>{getAccountBadge(user)}</TableCell>
-                  <TableCell>
-                    <Badge variant={getSubscriptionStatus(user) === 'Active' ? 'default' : 'secondary'}>
-                      {getSubscriptionStatus(user)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{user.vipTier}</TableCell>
-                  <TableCell className={user.balance < 0 ? 'text-red-600' : 'text-green-700'}>${Number(user.balance || 0).toLocaleString()}</TableCell>
-                  <TableCell>{Number(user.productsSubmitted || 0)}</TableCell>
-                  <TableCell>{formatDate(user.createdAt)}</TableCell>
-                  <TableCell className="text-right">
-                    {canManageStatus || canDeleteUsers || canUnfreezeUsers || canAdjustBalance || canAssignPremium || canResetTasks || canManageTaskLimits || canUpdateVip ? (
-                      <div className="inline-flex items-center gap-2">
-                        {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={pendingUserId === user.id}
-                            onClick={() => handleUnfreeze(user)}
-                          >
-                            Unfreeze
-                          </Button>
-                        )}
-                        {canManageStatus && (
-                          <Button
-                            type="button"
-                            variant={user.accountDisabled ? 'default' : 'outline'}
-                            size="sm"
-                            disabled={pendingUserId === user.id}
-                            onClick={() => handleToggleStatus(user)}
-                          >
-                            {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSelectedUserId(user.id)}
-                        >
-                          Details
-                        </Button>
-                        {canDeleteUsers && (
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            disabled={pendingUserId === user.id}
-                            onClick={() => handleDeleteUser(user)}
-                          >
-                            Delete
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-                        <ShieldAlert className="h-3.5 w-3.5" />
-                        Read only
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {!loading && filteredUsers.length === 0 && (
+                  </div>
+                  {getAccountBadge(user)}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                  <div>Tier: <span className="font-medium text-slate-800">{user.vipTier}</span></div>
+                  <div>Products: <span className="font-medium text-slate-800">{Number(user.productsSubmitted || 0)}</span></div>
+                  <div>Balance: <span className={user.balance < 0 ? 'font-medium text-red-600' : 'font-medium text-green-700'}>${Number(user.balance || 0).toLocaleString()}</span></div>
+                  <div>Created: <span className="font-medium text-slate-800">{formatDate(user.createdAt)}</span></div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge variant={getSubscriptionStatus(user) === 'Active' ? 'default' : 'secondary'}>
+                    {getSubscriptionStatus(user)}
+                  </Badge>
+                  {isResetRequired(user) && <span className="text-xs font-semibold text-amber-700">Reset required</span>}
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedUserId(user.id)}>
+                    Details
+                  </Button>
+                  {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
+                    <Button type="button" variant="outline" size="sm" disabled={pendingUserId === user.id} onClick={() => handleUnfreeze(user)}>
+                      Unfreeze
+                    </Button>
+                  )}
+                  {canManageStatus && (
+                    <Button type="button" variant={user.accountDisabled ? 'default' : 'outline'} size="sm" disabled={pendingUserId === user.id} onClick={() => handleToggleStatus(user)}>
+                      {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
+                    </Button>
+                  )}
+                  {canDeleteUsers && (
+                    <Button type="button" variant="destructive" size="sm" disabled={pendingUserId === user.id} onClick={() => handleDeleteUser(user)}>
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              </button>
+            ))}
+
+            {!loading && filteredUsers.length === 0 && (
+              <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                No users match the current filters.
+              </div>
+            )}
+          </div>
+
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-slate-500">
-                    No users match the current filters.
-                  </TableCell>
+                  <TableHead>User</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Tier</TableHead>
+                  <TableHead>Balance</TableHead>
+                  <TableHead>Products</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filteredUsers.map((user) => (
+                  <TableRow
+                    key={user.id}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedUserId(user.id)}
+                  >
+                    <TableCell>
+                      <div className="font-medium">{user.name}</div>
+                      <div className="text-xs text-slate-500">{user.email || user.id}</div>
+                      <div className="text-xs text-slate-500">Location: {formatLocation(user.lastLoginCountry)} · IP: {formatIp(user.lastLoginIp)}</div>
+                      <div className="text-xs text-slate-500">Last login: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'N/A'}</div>
+                      {isResetRequired(user) && <div className="text-xs font-semibold text-amber-700">Reset required</div>}
+                    </TableCell>
+                    <TableCell>{getAccountBadge(user)}</TableCell>
+                    <TableCell>{user.vipTier}</TableCell>
+                    <TableCell className={user.balance < 0 ? 'text-red-600' : 'text-green-700'}>${Number(user.balance || 0).toLocaleString()}</TableCell>
+                    <TableCell>{Number(user.productsSubmitted || 0)}</TableCell>
+                    <TableCell>{formatDate(user.createdAt)}</TableCell>
+                    <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
+                      {canManageAnyUser ? (
+                        <div className="inline-flex items-center gap-2">
+                          {canUnfreezeUsers && user.accountFrozen && !user.accountDisabled && (
+                            <Button type="button" variant="outline" size="sm" disabled={pendingUserId === user.id} onClick={() => handleUnfreeze(user)}>
+                              Unfreeze
+                            </Button>
+                          )}
+                          {canManageStatus && (
+                            <Button type="button" variant={user.accountDisabled ? 'default' : 'outline'} size="sm" disabled={pendingUserId === user.id} onClick={() => handleToggleStatus(user)}>
+                              {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
+                            </Button>
+                          )}
+                          <Button type="button" size="sm" variant="outline" onClick={() => setSelectedUserId(user.id)}>
+                            Details
+                          </Button>
+                          {canDeleteUsers && (
+                            <Button type="button" variant="destructive" size="sm" disabled={pendingUserId === user.id} onClick={() => handleDeleteUser(user)}>
+                              Delete
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                          Read only
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!loading && filteredUsers.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-slate-500">
+                      No users match the current filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
 
         </CardContent>
       </Card>
