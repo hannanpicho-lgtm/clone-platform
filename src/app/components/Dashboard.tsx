@@ -236,7 +236,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const menuScrollRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [demoMode, setDemoMode] = useState(false);
   const [activeNav, setActiveNav] = useState('home');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -305,7 +304,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
-    username: 'Demo User',
+    username: '',
     contactEmail: '',
     loginPassword: '',
     confirmLoginPassword: '',
@@ -585,7 +584,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       id: `record-${Date.now()}`,
       timestamp: timestamp,
       productName: `🌟 Premium Bundle (${bundleCount} Products) (FROZEN)`,
-      productImage: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400',
+      productImage: '',
       totalAmount: mergedValue,
       profit: 0, // No profit until unfrozen
       status: 'pending',
@@ -690,7 +689,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
                 timestamp: String(record?.timestamp || ''),
                 productName: String(record?.productName || 'Product Task'),
-                productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
+                productImage: String(record?.productImage || ''),
                 totalAmount: Number(record?.totalAmount || 0),
                 profit: Number(record?.profit || 0),
                 status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
@@ -708,7 +707,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     fetchData().finally(() => {
       setIsLoading(false);
     });
-  }, [accessToken]);
+  }, [accessToken, refreshCounter]);
 
   useEffect(() => {
     if (depositMethod !== 'crypto') {
@@ -745,31 +744,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   }
 
   if (error || !profile || !metrics) {
-    // If demo mode is enabled, show demo data
-    if (demoMode) {
-      const demoProfile: UserProfile = {
-        id: 'demo-123',
-        email: 'demo@tanknewmedia.com',
-        invitationCode: 'DEMO1',
-        name: 'Demo User',
-        vipTier: 'Silver',
-        createdAt: new Date().toISOString(),
-      };
-      const demoMetrics: Metrics = {
-        alertCompressionRatio: 73,
-        ticketReductionRate: 62,
-        mttrImprovement: 23,
-        automationCoverage: 78,
-      };
-      
-      // Temporarily set demo data
-      if (!profile) setProfile(demoProfile);
-      if (!metrics) setMetrics(demoMetrics);
-      
-      // Continue to render dashboard below
-      return null; // Will render dashboard below
-    }
-    
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md w-full">
@@ -777,8 +751,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <h2 className="text-xl font-bold text-gray-900">Data is temporarily unavailable</h2>
             <p className="text-gray-600">{error || 'Please try again in a moment.'}</p>
             <div className="flex flex-col space-y-2">
-              <Button onClick={() => setDemoMode(true)} variant="default" className="w-full">
-                Continue
+              <Button onClick={() => { setError(''); setIsLoading(true); setRefreshCounter(c => c + 1); }} variant="default" className="w-full">
+                Try Again
               </Button>
               <Button onClick={onLogout} variant="outline" className="w-full">
                 Back to Login
@@ -790,22 +764,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     );
   }
 
-  // Use demo data if in demo mode
-  const displayProfile = demoMode && !profile ? {
-    id: 'demo-123',
-    email: 'demo@tanknewmedia.com',
-    invitationCode: 'DEMO1',
-    name: 'Demo User',
-    vipTier: 'Silver',
-    createdAt: new Date().toISOString(),
-  } : profile!;
-
-  const displayMetrics = demoMode && !metrics ? {
-    alertCompressionRatio: 73,
-    ticketReductionRate: 62,
-    mttrImprovement: 23,
-    automationCoverage: 78,
-  } : metrics!;
+  const displayProfile = profile!;
+  const displayMetrics = metrics!;
 
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
@@ -1768,57 +1728,55 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                 return;
                               }
 
-                              if (!demoMode) {
-                                try {
-                                  const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
-                                  const baseHeaders = {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${accessToken}`,
-                                    'apikey': publicAnonKey,
-                                  };
-                                  const fnBase = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
+                              try {
+                                const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
+                                const baseHeaders = {
+                                  'Content-Type': 'application/json',
+                                  'Authorization': `Bearer ${accessToken}`,
+                                  'apikey': publicAnonKey,
+                                };
+                                const fnBase = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
 
-                                  // Save contact email
-                                  const saveResponse = await fetch(`${fnBase}/profile/contact-email`, {
+                                // Save contact email
+                                const saveResponse = await fetch(`${fnBase}/profile/contact-email`, {
+                                  method: 'PUT',
+                                  headers: baseHeaders,
+                                  body: JSON.stringify({ contactEmail: normalizedContactEmail || null }),
+                                });
+                                const saveData = await saveResponse.json().catch(() => ({}));
+                                if (!saveResponse.ok) {
+                                  throw new Error(saveData?.error || 'Failed to update contact email');
+                                }
+                                setProfile((prev) => prev ? { ...prev, contactEmail: normalizedContactEmail || null } : prev);
+
+                                // Change login password if provided
+                                if (settingsForm.loginPassword) {
+                                  const pwResp = await fetch(`${fnBase}/profile/change-password`, {
                                     method: 'PUT',
                                     headers: baseHeaders,
-                                    body: JSON.stringify({ contactEmail: normalizedContactEmail || null }),
+                                    body: JSON.stringify({ newPassword: settingsForm.loginPassword }),
                                   });
-                                  const saveData = await saveResponse.json().catch(() => ({}));
-                                  if (!saveResponse.ok) {
-                                    throw new Error(saveData?.error || 'Failed to update contact email');
+                                  const pwData = await pwResp.json().catch(() => ({}));
+                                  if (!pwResp.ok) {
+                                    throw new Error(pwData?.error || 'Failed to update login password');
                                   }
-                                  setProfile((prev) => prev ? { ...prev, contactEmail: normalizedContactEmail || null } : prev);
-
-                                  // Change login password if provided
-                                  if (settingsForm.loginPassword) {
-                                    const pwResp = await fetch(`${fnBase}/profile/change-password`, {
-                                      method: 'PUT',
-                                      headers: baseHeaders,
-                                      body: JSON.stringify({ newPassword: settingsForm.loginPassword }),
-                                    });
-                                    const pwData = await pwResp.json().catch(() => ({}));
-                                    if (!pwResp.ok) {
-                                      throw new Error(pwData?.error || 'Failed to update login password');
-                                    }
-                                  }
-
-                                  // Change withdrawal password if provided
-                                  if (settingsForm.withdrawalPassword) {
-                                    const wpResp = await fetch(`${fnBase}/profile/change-withdrawal-password`, {
-                                      method: 'PUT',
-                                      headers: baseHeaders,
-                                      body: JSON.stringify({ newPin: settingsForm.withdrawalPassword }),
-                                    });
-                                    const wpData = await wpResp.json().catch(() => ({}));
-                                    if (!wpResp.ok) {
-                                      throw new Error(wpData?.error || 'Failed to update withdrawal password');
-                                    }
-                                  }
-                                } catch (saveErr: any) {
-                                  setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save settings'}` });
-                                  return;
                                 }
+
+                                // Change withdrawal password if provided
+                                if (settingsForm.withdrawalPassword) {
+                                  const wpResp = await fetch(`${fnBase}/profile/change-withdrawal-password`, {
+                                    method: 'PUT',
+                                    headers: baseHeaders,
+                                    body: JSON.stringify({ newPin: settingsForm.withdrawalPassword }),
+                                  });
+                                  const wpData = await wpResp.json().catch(() => ({}));
+                                  if (!wpResp.ok) {
+                                    throw new Error(wpData?.error || 'Failed to update withdrawal password');
+                                  }
+                                }
+                              } catch (saveErr: any) {
+                                setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save settings'}` });
+                                return;
                               }
 
                               setSettingsForm((prev) => ({ ...prev, loginPassword: '', confirmLoginPassword: '', withdrawalPassword: '', confirmWithdrawalPassword: '' }));
