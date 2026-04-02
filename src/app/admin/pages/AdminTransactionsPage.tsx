@@ -4,9 +4,11 @@ import { fetchAdminUsers } from '../api';
 import { useEffect } from 'react';
 import { AdminEmptyState } from '../components/AdminEmptyState';
 import { AdminPageHeader } from '../components/AdminPageHeader';
+import { UserAccountStatusBadge } from '../components/AdminStatusBadge';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface AdminTransactionsPageProps {
   session: AdminSession;
@@ -71,21 +73,56 @@ export function AdminTransactionsPage({ session }: AdminTransactionsPageProps) {
           {loading && <AdminEmptyState message="Loading…" />}
           {!loading && filteredUsers.length === 0 && <AdminEmptyState message="No transactions found." />}
 
-          {filteredUsers.map((user) => (
-            <div key={user.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div>
-                <div className="font-semibold text-slate-900">{user.name}</div>
-                <div className="text-sm text-slate-600">{user.vipTier} · {user.productsSubmitted} products submitted</div>
-                <div className="text-xs text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'No login recorded'}</div>
+          {!loading && (
+            <>
+              <div className="space-y-3 md:hidden">
+                {filteredUsers.map((user) => (
+                  <div key={user.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-slate-900">{user.name}</div>
+                        <div className="text-xs text-slate-500">{user.id}</div>
+                      </div>
+                      <UserAccountStatusBadge accountDisabled={user.accountDisabled} accountFrozen={user.accountFrozen} />
+                    </div>
+                    <div className="mt-2 text-sm text-slate-600">{user.vipTier} · {user.productsSubmitted} products submitted</div>
+                    <div className="mt-1 text-xs text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'No login recorded'}</div>
+                    <div className="mt-2 font-semibold text-green-700">${Number(user.totalEarnings || 0).toFixed(2)}</div>
+                  </div>
+                ))}
               </div>
-              <div className="text-right">
-                <div className="font-semibold text-green-700">${Number(user.totalEarnings || 0).toFixed(2)}</div>
-                <Badge variant={user.accountFrozen ? 'destructive' : user.accountDisabled ? 'secondary' : 'default'}>
-                  {user.accountFrozen ? 'frozen' : user.accountDisabled ? 'disabled' : 'active'}
-                </Badge>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Tier</TableHead>
+                      <TableHead>Products</TableHead>
+                      <TableHead>Earnings</TableHead>
+                      <TableHead>Last Login</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredUsers.map((user) => (
+                      <TableRow key={user.id}>
+                        <TableCell>
+                          <div className="font-medium">{user.name}</div>
+                          <div className="text-xs text-slate-500">{user.id}</div>
+                        </TableCell>
+                        <TableCell><UserAccountStatusBadge accountDisabled={user.accountDisabled} accountFrozen={user.accountFrozen} /></TableCell>
+                        <TableCell>{user.vipTier}</TableCell>
+                        <TableCell>{Number(user.productsSubmitted || 0)}</TableCell>
+                        <TableCell className="font-medium text-green-700">${Number(user.totalEarnings || 0).toFixed(2)}</TableCell>
+                        <TableCell className="text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'No login recorded'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
-          ))}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

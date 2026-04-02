@@ -9,6 +9,7 @@ import { AdminPageHeader } from '../components/AdminPageHeader';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface AdminInvitationsPageProps {
   session: AdminSession;
@@ -109,25 +110,68 @@ export function AdminInvitationsPage({ session }: AdminInvitationsPageProps) {
           {loading && <AdminEmptyState message="Loading codes…" />}
           {codes.length === 0 && !loading && <AdminEmptyState message="No invitation codes available." />}
 
-          {codes.map((item) => (
-            <div key={item.code} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div>
-                <div className="font-semibold text-slate-900">{item.code}</div>
-                <div className="text-sm text-slate-600">Owner: {item.owner} | Referrals: {item.referrals}</div>
-                <div className="text-xs text-slate-500">Generated: {item.generatedAt ? new Date(item.generatedAt).toLocaleString() : 'N/A'}</div>
+          {!loading && (
+            <>
+              <div className="space-y-3 md:hidden">
+                {codes.map((item) => (
+                  <div key={item.code} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="font-semibold text-slate-900">{item.code}</div>
+                    <div className="mt-1 text-sm text-slate-600">Owner: {item.owner} | Referrals: {item.referrals}</div>
+                    <div className="mt-1 text-xs text-slate-500">Generated: {item.generatedAt ? new Date(item.generatedAt).toLocaleString() : 'N/A'}</div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Badge variant={item.status === 'active' ? 'default' : 'secondary'}>{item.status}</Badge>
+                      <Button type="button" size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(item.code)}>
+                        <Copy className="mr-1 h-4 w-4" />
+                        Copy
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!canManageInvitations || saving} onClick={() => handleToggle(item)}>
+                        {item.status === 'active' ? 'Disable' : 'Enable'}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(item.code)}>
-                  <Copy className="mr-1 h-4 w-4" />
-                  Copy
-                </Button>
-                <Button type="button" size="sm" variant="outline" disabled={!canManageInvitations || saving} onClick={() => handleToggle(item)}>
-                  {item.status === 'active' ? 'Disable' : 'Enable'}
-                </Button>
-                <Badge variant={item.status === 'active' ? 'default' : 'secondary'}>{item.status}</Badge>
+
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Code</TableHead>
+                      <TableHead>Owner</TableHead>
+                      <TableHead>Referrals</TableHead>
+                      <TableHead>Generated</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {codes.map((item) => (
+                      <TableRow key={item.code}>
+                        <TableCell className="font-medium">{item.code}</TableCell>
+                        <TableCell>{item.owner}</TableCell>
+                        <TableCell>{item.referrals}</TableCell>
+                        <TableCell className="text-slate-500">{item.generatedAt ? new Date(item.generatedAt).toLocaleString() : 'N/A'}</TableCell>
+                        <TableCell>
+                          <Badge variant={item.status === 'active' ? 'default' : 'secondary'}>{item.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="inline-flex items-center gap-2">
+                            <Button type="button" size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(item.code)}>
+                              <Copy className="mr-1 h-4 w-4" />
+                              Copy
+                            </Button>
+                            <Button type="button" size="sm" variant="outline" disabled={!canManageInvitations || saving} onClick={() => handleToggle(item)}>
+                              {item.status === 'active' ? 'Disable' : 'Enable'}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
-          ))}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

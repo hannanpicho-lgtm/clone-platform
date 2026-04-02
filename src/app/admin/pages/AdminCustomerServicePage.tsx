@@ -9,6 +9,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface AdminCustomerServicePageProps {
   session: AdminSession;
@@ -110,38 +111,96 @@ export function AdminCustomerServicePage({ session }: AdminCustomerServicePagePr
           {loading && <AdminEmptyState message="Loading tickets…" />}
           {!loading && filtered.length === 0 && <AdminEmptyState message="No tickets in this filter." />}
 
-          {filtered.map((ticket) => (
-            <div key={ticket.id} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-slate-900">{ticket.id} | {ticket.userName}</div>
-                  <div className="text-sm text-slate-600">{ticket.subject}</div>
-                  <div className="text-xs text-slate-500">Priority: {ticket.priority} | Updated: {new Date(ticket.updatedAt).toLocaleString()} | Replies: {ticket.repliesCount}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'in_progress')}>
-                    In Progress
-                  </Button>
-                  <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'resolved')}>
-                    Resolve
-                  </Button>
-                  <Badge variant={ticket.status === 'resolved' ? 'secondary' : 'default'}>{ticket.status.replace('_', ' ')}</Badge>
-                </div>
+          {!loading && (
+            <>
+              <div className="space-y-3 md:hidden">
+                {filtered.map((ticket) => (
+                  <div key={ticket.id} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-slate-900">{ticket.id} | {ticket.userName}</div>
+                        <div className="text-sm text-slate-600">{ticket.subject}</div>
+                        <div className="text-xs text-slate-500">Priority: {ticket.priority} | Updated: {new Date(ticket.updatedAt).toLocaleString()} | Replies: {ticket.repliesCount}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button type="button" size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'in_progress')}>
+                          In Progress
+                        </Button>
+                        <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'resolved')}>
+                          Resolve
+                        </Button>
+                        <Badge variant={ticket.status === 'resolved' ? 'secondary' : 'default'}>{ticket.status.replace('_', ' ')}</Badge>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={drafts[ticket.id] || ''}
+                        onChange={(event) => setDrafts((prev) => ({ ...prev, [ticket.id]: event.target.value }))}
+                        placeholder="Type reply to user..."
+                        disabled={!canManageSupport}
+                      />
+                      <Button type="button" size="sm" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleReply(ticket.id)}>
+                        Send Reply
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
 
-              <div className="flex items-center gap-2">
-                <Input
-                  value={drafts[ticket.id] || ''}
-                  onChange={(event) => setDrafts((prev) => ({ ...prev, [ticket.id]: event.target.value }))}
-                  placeholder="Type reply to user..."
-                  disabled={!canManageSupport}
-                />
-                <Button type="button" size="sm" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleReply(ticket.id)}>
-                  Send Reply
-                </Button>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ticket</TableHead>
+                      <TableHead>Subject</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((ticket) => (
+                      <TableRow key={ticket.id}>
+                        <TableCell>
+                          <div className="font-medium">{ticket.userName}</div>
+                          <div className="text-xs text-slate-500">{ticket.id}</div>
+                          <div className="text-xs text-slate-500">Priority: {ticket.priority} · Replies: {ticket.repliesCount}</div>
+                        </TableCell>
+                        <TableCell>{ticket.subject}</TableCell>
+                        <TableCell>
+                          <Badge variant={ticket.status === 'resolved' ? 'secondary' : 'default'}>{ticket.status.replace('_', ' ')}</Badge>
+                        </TableCell>
+                        <TableCell className="text-slate-500">{new Date(ticket.updatedAt).toLocaleString()}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="mb-2 inline-flex items-center gap-2">
+                            <Button type="button" size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'in_progress')}>
+                              In Progress
+                            </Button>
+                            <Button type="button" size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleStatus(ticket.id, 'resolved')}>
+                              Resolve
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={drafts[ticket.id] || ''}
+                              onChange={(event) => setDrafts((prev) => ({ ...prev, [ticket.id]: event.target.value }))}
+                              placeholder="Type reply..."
+                              disabled={!canManageSupport}
+                              className="h-8"
+                            />
+                            <Button type="button" size="sm" disabled={!canManageSupport || savingId === ticket.id} onClick={() => handleReply(ticket.id)}>
+                              Send
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            </div>
-          ))}
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
