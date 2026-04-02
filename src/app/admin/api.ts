@@ -292,6 +292,28 @@ export async function updateUserTaskLimits(
   }
 }
 
+export async function resetUserLoginPassword(session: AdminSession, userId: string, newPassword: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/reset-login-password', {
+    method: 'POST',
+    body: JSON.stringify({ userId, newPassword }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to reset login password');
+  }
+}
+
+export async function resetUserWithdrawalPin(session: AdminSession, userId: string, newPin: string): Promise<void> {
+  const response = await adminFetch(session, '/admin/users/reset-withdrawal-password', {
+    method: 'POST',
+    body: JSON.stringify({ userId, newPin }),
+  });
+  if (!response || !response.ok) {
+    const data = response ? await response.json().catch(() => ({})) : {};
+    throw new Error(data?.error || 'Failed to reset withdrawal PIN');
+  }
+}
+
 export async function fetchAdminWithdrawals(session: AdminSession): Promise<AdminWithdrawalRequest[]> {
   const response = await adminFetch(session, '/admin/withdrawals');
   if (!response || !response.ok) {

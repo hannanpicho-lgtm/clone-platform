@@ -921,6 +921,7 @@ const ADMIN_ALLOWED_PERMISSIONS = [
   'users.manage_task_limits',
   'users.unfreeze',
   'users.update_vip',
+  'users.reset_password',
   'support.manage',
   'withdrawals.manage',
   'invitations.manage',
@@ -5278,6 +5279,100 @@ app.post('/admin/users/assign-premium', async (c) => {
   } catch (error) {
     console.error(`Error assigning premium to user: ${error}`);
     return c.json({ error: 'Internal server error while assigning premium' }, 500);
+  }
+});
+
+// Admin: reset user login password (sets it directly via Supabase Auth Admin API)
+app.post('/admin/users/reset-login-password', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.reset_password');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.reset_password', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded for password reset. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const userId = String(body?.userId || '').trim();
+    const newPassword = String(body?.newPassword || '').trim();
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+    if (newPassword.length < 8) {
+      return c.json({ error: 'newPassword must be at least 8 characters' }, 400);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const supabase = getServiceClient();
+    const { error: authError } = await supabase.auth.admin.updateUserById(String(userProfile.id), {
+      password: newPassword,
+    });
+
+    if (authError) {
+      return c.json({ error: authError.message || 'Failed to reset login password' }, 400);
+    }
+
+    return c.json({ success: true, userId: String(userProfile.id), message: 'Login password reset successfully' });
+  } catch (error) {
+    console.error(`Error resetting login password: ${error}`);
+    return c.json({ error: 'Internal server error while resetting login password' }, 500);
+  }
+});
+
+// Admin: reset user withdrawal PIN (sets a new hashed PIN directly on user KV record)
+app.post('/admin/users/reset-withdrawal-password', async (c) => {
+  try {
+    const adminAccess = await requireAdminPermission(c, 'users.reset_password');
+    if (!adminAccess.ok) {
+      return adminAccess.response;
+    }
+
+    const rateLimit = await enforceAdminRateLimit(c, adminAccess, 'users.reset_withdrawal_password', 20, 10 * 60 * 1000);
+    if (!rateLimit.allowed) {
+      return c.json({ error: `Rate limit exceeded. Try again in ${rateLimit.retryAfterSec}s.` }, 429);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const userId = String(body?.userId || '').trim();
+    const newPin = String(body?.newPin || '').trim();
+
+    if (!userId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+    if (newPin.length < 4) {
+      return c.json({ error: 'newPin must be at least 4 characters' }, 400);
+    }
+
+    const userProfile = await kv.get(`user:${userId}`);
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const scope = await getAdminScopeConfig(adminAccess);
+    if (!isUserInTenantAdminScope(adminAccess, scope, userProfile)) {
+      return c.json({ error: 'Forbidden - User is outside your admin scope' }, 403);
+    }
+
+    const hashedPin = await hashWithdrawalPassword(newPin);
+    await kv.set(`user:${userId}`, { ...userProfile, withdrawalPassword: hashedPin, updatedAt: new Date().toISOString() });
+
+    return c.json({ success: true, userId: String(userProfile.id), message: 'Withdrawal PIN reset successfully' });
+  } catch (error) {
+    console.error(`Error resetting withdrawal PIN: ${error}`);
+    return c.json({ error: 'Internal server error while resetting withdrawal PIN' }, 500);
   }
 });
 

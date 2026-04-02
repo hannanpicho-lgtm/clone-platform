@@ -15,6 +15,7 @@ export const SUB_ADMIN_PERMISSION_OPTIONS = [
   { value: 'users.manage_task_limits', label: 'Update task and withdrawal limits' },
   { value: 'users.unfreeze', label: 'Unfreeze frozen users' },
   { value: 'users.update_vip', label: 'Change VIP tiers' },
+  { value: 'users.reset_password', label: 'Reset login password and withdrawal PIN' },
   { value: 'withdrawals.manage', label: 'Approve and deny withdrawals' },
   { value: 'invitations.manage', label: 'Manage invitation codes' },
   { value: 'premium.manage', label: 'Manage premium products' },

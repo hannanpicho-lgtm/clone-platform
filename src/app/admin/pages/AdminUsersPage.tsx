@@ -5,7 +5,9 @@ import {
   assignUserPremium,
   deleteAdminUser,
   fetchAdminUsers,
+  resetUserLoginPassword,
   resetUserTaskSet,
+  resetUserWithdrawalPin,
   unfreezeUser,
   updateUserAccountStatus,
   updateUserTaskLimits,
@@ -95,6 +97,10 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [taskLimitExtra, setTaskLimitExtra] = useState('0');
   const [taskLimitWithdrawal, setTaskLimitWithdrawal] = useState('0');
 
+  // PIN/password reset form state
+  const [newLoginPassword, setNewLoginPassword] = useState('');
+  const [newWithdrawalPin, setNewWithdrawalPin] = useState('');
+
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
 
   const canDeleteUsers = session.role === 'super-admin';
@@ -104,6 +110,7 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const canManageTaskLimits = hasAdminPermission(session, 'users.manage_task_limits') || hasAdminPermission(session, 'users.manage');
   const canUnfreezeUsers = hasAdminPermission(session, 'users.unfreeze') || hasAdminPermission(session, 'users.manage');
   const canUpdateVip = hasAdminPermission(session, 'users.update_vip') || hasAdminPermission(session, 'users.manage');
+  const canResetPasswords = hasAdminPermission(session, 'users.reset_password');
 
   const load = async () => {
     setLoading(true);
@@ -140,6 +147,8 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     setAdjustNote('');
     setPremiumAmount('');
     setPremiumPosition('');
+    setNewLoginPassword('');
+    setNewWithdrawalPin('');
   }, [selectedUser?.id]);
 
   const filteredUsers = useMemo(() => {
@@ -327,6 +336,44 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update task limits');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleResetLoginPassword = async (user: AdminUserRecord) => {
+    if (newLoginPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await resetUserLoginPassword(session, user.id, newLoginPassword);
+      setMessage(`Login password reset for ${user.name}.`);
+      setNewLoginPassword('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset login password');
+    } finally {
+      setPendingUserId(null);
+    }
+  };
+
+  const handleResetWithdrawalPin = async (user: AdminUserRecord) => {
+    if (newWithdrawalPin.length < 4) {
+      setError('New PIN must be at least 4 characters.');
+      return;
+    }
+    try {
+      setPendingUserId(user.id);
+      setError('');
+      setMessage('');
+      await resetUserWithdrawalPin(session, user.id, newWithdrawalPin);
+      setMessage(`Withdrawal PIN reset for ${user.name}.`);
+      setNewWithdrawalPin('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset withdrawal PIN');
     } finally {
       setPendingUserId(null);
     }
@@ -607,6 +654,41 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                   </div>
                 </div>
                 <Button type="button" size="sm" disabled={!selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleUpdateTaskLimits(selectedUser)}>Save Limits</Button>
+              </div>
+            )}
+
+            {/* Password Resets */}
+            {canResetPasswords && (
+              <div className="space-y-3 pt-4 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Password Resets</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">New login password</Label>
+                    <Input
+                      type="password"
+                      value={newLoginPassword}
+                      onChange={(e) => setNewLoginPassword(e.target.value)}
+                      placeholder="Min 8 characters"
+                      className="h-8 text-sm"
+                    />
+                    <Button type="button" size="sm" className="w-full mt-1" disabled={!newLoginPassword || !selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleResetLoginPassword(selectedUser)}>
+                      Set Login Password
+                    </Button>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">New withdrawal PIN</Label>
+                    <Input
+                      type="password"
+                      value={newWithdrawalPin}
+                      onChange={(e) => setNewWithdrawalPin(e.target.value)}
+                      placeholder="Min 4 characters"
+                      className="h-8 text-sm"
+                    />
+                    <Button type="button" size="sm" className="w-full mt-1" disabled={!newWithdrawalPin || !selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleResetWithdrawalPin(selectedUser)}>
+                      Set Withdrawal PIN
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
 
