@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ShieldAlert } from 'lucide-react';
 import {
   adjustUserBalance,
@@ -18,7 +17,9 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 
 interface AdminUsersPageProps {
@@ -82,14 +83,19 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [vipTierDraft, setVipTierDraft] = useState('Normal');
-  const detailsPanelRef = useRef<HTMLDivElement>(null);
+  // Balance adjustment form state
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustCategory, setAdjustCategory] = useState('bonus');
+  const [adjustNote, setAdjustNote] = useState('');
+  // Premium assignment form state
+  const [premiumAmount, setPremiumAmount] = useState('');
+  const [premiumPosition, setPremiumPosition] = useState('');
+  // Task limits form state
+  const [taskLimitDaily, setTaskLimitDaily] = useState('3');
+  const [taskLimitExtra, setTaskLimitExtra] = useState('0');
+  const [taskLimitWithdrawal, setTaskLimitWithdrawal] = useState('0');
 
   const canManageStatus = hasAdminPermission(session, 'users.manage_status');
-    useEffect(() => {
-      if (selectedUserId && detailsPanelRef.current) {
-        setTimeout(() => detailsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-      }
-    }, [selectedUserId]);
 
   const canDeleteUsers = session.role === 'super-admin';
   const canAdjustBalance = hasAdminPermission(session, 'users.adjust_balance') || hasAdminPermission(session, 'users.manage');
@@ -122,10 +128,19 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
     [users, selectedUserId],
   );
 
+  // Initialise sheet form fields whenever a different user is selected
   useEffect(() => {
     if (!selectedUser) return;
     setVipTierDraft(selectedUser.vipTier || 'Normal');
-  }, [selectedUser?.id, selectedUser?.vipTier]);
+    setTaskLimitDaily(String(selectedUser.dailyTaskSetLimit ?? 3));
+    setTaskLimitExtra(String(selectedUser.extraTaskSets ?? 0));
+    setTaskLimitWithdrawal(String(selectedUser.withdrawalLimit ?? 0));
+    setAdjustAmount('');
+    setAdjustCategory('bonus');
+    setAdjustNote('');
+    setPremiumAmount('');
+    setPremiumPosition('');
+  }, [selectedUser?.id]);
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -221,22 +236,19 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   };
 
   const handleAdjustBalance = async (user: AdminUserRecord) => {
-    const amountRaw = window.prompt(`Adjust balance for ${user.name}. Enter amount (+/-):`, '100');
-    if (amountRaw === null) return;
-    const amount = Number(amountRaw);
+    const amount = Number(adjustAmount);
     if (!Number.isFinite(amount) || amount === 0) {
-      setError('Invalid amount.');
+      setError('Enter a non-zero adjustment amount.');
       return;
     }
-    const category = window.prompt('Category (bonus/reward/topup/adjustment):', 'bonus') || 'bonus';
-    const note = window.prompt('Optional note:', '') || '';
-
     try {
       setPendingUserId(user.id);
       setError('');
       setMessage('');
-      await adjustUserBalance(session, { userId: user.id, amount, category, note });
-      setMessage(`${user.name} balance adjusted.`);
+      await adjustUserBalance(session, { userId: user.id, amount, category: adjustCategory, note: adjustNote });
+      setMessage(`Balance adjusted by $${amount > 0 ? '+' : ''}${amount} for ${user.name}.`);
+      setAdjustAmount('');
+      setAdjustNote('');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to adjust balance');
@@ -246,26 +258,24 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   };
 
   const handleAssignPremium = async (user: AdminUserRecord) => {
-    const amountRaw = window.prompt(`Assign premium amount for ${user.name}:`, '1000');
-    if (amountRaw === null) return;
-    const amount = Number(amountRaw);
+    const amount = Number(premiumAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError('Invalid premium amount.');
+      setError('Enter a valid premium amount greater than 0.');
       return;
     }
-    const posRaw = window.prompt('Optional encounter position:', '');
-    const position = posRaw && posRaw.trim() ? Number(posRaw) : undefined;
-    if (typeof position !== 'undefined' && !Number.isFinite(position)) {
-      setError('Invalid premium position.');
+    const posNum = premiumPosition.trim() ? Number(premiumPosition) : undefined;
+    if (typeof posNum !== 'undefined' && !Number.isFinite(posNum)) {
+      setError('Invalid position — enter a number or leave blank.');
       return;
     }
-
     try {
       setPendingUserId(user.id);
       setError('');
       setMessage('');
-      await assignUserPremium(session, { userId: user.id, amount, position });
-      setMessage(`Premium assigned to ${user.name}.`);
+      await assignUserPremium(session, { userId: user.id, amount, position: posNum });
+      setMessage(`Premium of $${amount} assigned to ${user.name}.`);
+      setPremiumAmount('');
+      setPremiumPosition('');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign premium');
@@ -291,16 +301,9 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
   };
 
   const handleUpdateTaskLimits = async (user: AdminUserRecord) => {
-    const dailyRaw = window.prompt('Daily task set limit:', String(user.dailyTaskSetLimit || 3));
-    if (dailyRaw === null) return;
-    const extraRaw = window.prompt('Extra task sets:', String(user.extraTaskSets || 0));
-    if (extraRaw === null) return;
-    const withdrawalRaw = window.prompt('Withdrawal limit (0 = no cap):', String(user.withdrawalLimit || 0));
-    if (withdrawalRaw === null) return;
-
-    const dailyTaskSetLimit = Number(dailyRaw);
-    const extraTaskSets = Number(extraRaw);
-    const withdrawalLimit = Number(withdrawalRaw);
+    const dailyTaskSetLimit = Number(taskLimitDaily);
+    const extraTaskSets = Number(taskLimitExtra);
+    const withdrawalLimit = Number(taskLimitWithdrawal);
 
     if (!Number.isFinite(dailyTaskSetLimit) || dailyTaskSetLimit < 1) {
       setError('Daily task set limit must be at least 1.');
@@ -451,28 +454,6 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
                             {pendingUserId === user.id ? 'Saving...' : user.accountDisabled ? 'Activate' : 'Suspend'}
                           </Button>
                         )}
-                        {canAssignPremium && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={pendingUserId === user.id || user.accountDisabled}
-                            onClick={() => handleAssignPremium(user)}
-                          >
-                            Premium
-                          </Button>
-                        )}
-                        {canAdjustBalance && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={pendingUserId === user.id || user.accountDisabled}
-                            onClick={() => handleAdjustBalance(user)}
-                          >
-                            Adjust
-                          </Button>
-                        )}
                         <Button
                           type="button"
                           size="sm"
@@ -512,57 +493,141 @@ export function AdminUsersPage({ session }: AdminUsersPageProps) {
             </TableBody>
           </Table>
 
-          {selectedUser && (
-            <Card ref={detailsPanelRef} className="border-slate-200 bg-slate-50">
-              <CardHeader>
-                <CardTitle>User Details</CardTitle>
-                <CardDescription>{selectedUser.name} ({selectedUser.email || selectedUser.id})</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="text-sm"><span className="text-slate-500">Total earnings:</span> ${Number(selectedUser.totalEarnings || 0).toLocaleString()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Frozen negative:</span> ${Number(selectedUser.frozenNegativeAmount || 0).toLocaleString()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Task progress:</span> {Number(selectedUser.currentSetTasksCompleted || 0)} / {tasksPerSetForTier()}</div>
-                  <div className="text-sm"><span className="text-slate-500">Daily sets used:</span> {Number(selectedUser.taskSetsCompletedToday || 0)}</div>
-                  <div className="text-sm"><span className="text-slate-500">Daily limit:</span> {Number(selectedUser.dailyTaskSetLimit || 0)}</div>
-                  <div className="text-sm"><span className="text-slate-500">Extra sets:</span> {Number(selectedUser.extraTaskSets || 0)}</div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {canUpdateVip && (
-                    <>
-                      <Select value={vipTierDraft} onValueChange={setVipTierDraft}>
-                        <SelectTrigger className="w-[180px]"><SelectValue placeholder="VIP Tier" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Normal">Normal</SelectItem>
-                          <SelectItem value="Silver">Silver</SelectItem>
-                          <SelectItem value="Gold">Gold</SelectItem>
-                          <SelectItem value="Platinum">Platinum</SelectItem>
-                          <SelectItem value="Diamond">Diamond</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button type="button" size="sm" disabled={pendingUserId === selectedUser.id} onClick={() => handleUpdateVip(selectedUser)}>
-                        Update VIP
-                      </Button>
-                    </>
-                  )}
-                  {canResetTasks && (
-                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleResetTaskSet(selectedUser)}>
-                      Reset Task Set
-                    </Button>
-                  )}
-                  {canManageTaskLimits && (
-                    <Button type="button" size="sm" variant="outline" disabled={pendingUserId === selectedUser.id || selectedUser.accountDisabled} onClick={() => handleUpdateTaskLimits(selectedUser)}>
-                      Set Limits
-                    </Button>
-                  )}
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedUserId(null)}>Close</Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </CardContent>
       </Card>
+
+      {/* User details slide-over sheet */}
+      <Sheet open={!!selectedUserId} onOpenChange={(open) => { if (!open) setSelectedUserId(null); }}>
+        <SheetContent className="sm:max-w-xl flex flex-col gap-0 p-0">
+          <SheetHeader className="px-6 py-4 border-b shrink-0">
+            <SheetTitle>{selectedUser?.name}</SheetTitle>
+            <SheetDescription>{selectedUser?.email || selectedUser?.id}</SheetDescription>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+            {/* Overview stats */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Account Overview</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                <div><span className="text-slate-500">Balance:</span> <span className={selectedUser && selectedUser.balance < 0 ? 'text-red-600 font-medium' : 'text-green-700 font-medium'}>${Number(selectedUser?.balance || 0).toLocaleString()}</span></div>
+                <div><span className="text-slate-500">Total earnings:</span> ${Number(selectedUser?.totalEarnings || 0).toLocaleString()}</div>
+                <div><span className="text-slate-500">VIP tier:</span> {selectedUser?.vipTier}</div>
+                <div><span className="text-slate-500">Products submitted:</span> {Number(selectedUser?.productsSubmitted || 0)}</div>
+                <div><span className="text-slate-500">Task progress:</span> {Number(selectedUser?.currentSetTasksCompleted || 0)}</div>
+                <div><span className="text-slate-500">Sets today:</span> {Number(selectedUser?.taskSetsCompletedToday || 0)} / {Number(selectedUser?.dailyTaskSetLimit || 0)}</div>
+                <div><span className="text-slate-500">Extra sets:</span> {Number(selectedUser?.extraTaskSets || 0)}</div>
+                <div><span className="text-slate-500">Withdrawal cap:</span> ${Number(selectedUser?.withdrawalLimit || 0).toLocaleString()}</div>
+              </div>
+            </div>
+
+            {/* VIP Tier */}
+            {canUpdateVip && (
+              <div className="space-y-2 pt-4 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">VIP Tier</p>
+                <div className="flex gap-2 items-center">
+                  <Select value={vipTierDraft} onValueChange={setVipTierDraft}>
+                    <SelectTrigger className="w-40"><SelectValue placeholder="Select tier" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Normal">Normal</SelectItem>
+                      <SelectItem value="Silver">Silver</SelectItem>
+                      <SelectItem value="Gold">Gold</SelectItem>
+                      <SelectItem value="Platinum">Platinum</SelectItem>
+                      <SelectItem value="Diamond">Diamond</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" size="sm" disabled={!selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleUpdateVip(selectedUser)}>Save</Button>
+                </div>
+              </div>
+            )}
+
+            {/* Balance Adjustment */}
+            {canAdjustBalance && (
+              <div className="space-y-3 pt-4 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjust Balance</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Amount (+/−)</Label>
+                    <Input type="number" value={adjustAmount} onChange={(e) => setAdjustAmount(e.target.value)} placeholder="e.g. 100 or -50" className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Category</Label>
+                    <Select value={adjustCategory} onValueChange={setAdjustCategory}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bonus">Bonus</SelectItem>
+                        <SelectItem value="reward">Reward</SelectItem>
+                        <SelectItem value="topup">Topup</SelectItem>
+                        <SelectItem value="adjustment">Adjustment</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-600">Note (optional)</Label>
+                  <Input value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="Internal note" className="h-8 text-sm" />
+                </div>
+                <Button type="button" size="sm" disabled={!adjustAmount || !selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleAdjustBalance(selectedUser)}>Apply Adjustment</Button>
+              </div>
+            )}
+
+            {/* Premium Assignment */}
+            {canAssignPremium && (
+              <div className="space-y-3 pt-4 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assign Premium Order</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Amount ($)</Label>
+                    <Input type="number" min={1} value={premiumAmount} onChange={(e) => setPremiumAmount(e.target.value)} placeholder="e.g. 1000" className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Position (optional)</Label>
+                    <Input type="number" min={1} value={premiumPosition} onChange={(e) => setPremiumPosition(e.target.value)} placeholder="Leave blank for auto" className="h-8 text-sm" />
+                  </div>
+                </div>
+                <Button type="button" size="sm" disabled={!premiumAmount || !selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleAssignPremium(selectedUser)}>Assign Premium</Button>
+              </div>
+            )}
+
+            {/* Task Limits */}
+            {canManageTaskLimits && (
+              <div className="space-y-3 pt-4 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Task Limits</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Daily set limit</Label>
+                    <Input type="number" min={1} value={taskLimitDaily} onChange={(e) => setTaskLimitDaily(e.target.value)} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Extra sets</Label>
+                    <Input type="number" min={0} value={taskLimitExtra} onChange={(e) => setTaskLimitExtra(e.target.value)} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-600">Withdrawal cap ($)</Label>
+                    <Input type="number" min={0} value={taskLimitWithdrawal} onChange={(e) => setTaskLimitWithdrawal(e.target.value)} className="h-8 text-sm" />
+                  </div>
+                </div>
+                <Button type="button" size="sm" disabled={!selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleUpdateTaskLimits(selectedUser)}>Save Limits</Button>
+              </div>
+            )}
+
+            {/* Quick actions */}
+            <div className="flex flex-wrap gap-2 pt-4 border-t">
+              {canResetTasks && (
+                <Button type="button" size="sm" variant="outline" disabled={!selectedUser || pendingUserId === selectedUser.id || !!selectedUser?.accountDisabled} onClick={() => selectedUser && handleResetTaskSet(selectedUser)}>Reset Task Set</Button>
+              )}
+              {canUnfreezeUsers && selectedUser?.accountFrozen && (
+                <Button type="button" size="sm" variant="outline" disabled={!selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleUnfreeze(selectedUser)}>Unfreeze</Button>
+              )}
+              {canDeleteUsers && (
+                <Button type="button" size="sm" variant="destructive" disabled={!selectedUser || pendingUserId === selectedUser.id} onClick={() => selectedUser && handleDeleteUser(selectedUser)}>Delete User</Button>
+              )}
+            </div>
+
+            {message && <p className="text-sm text-green-600">{message}</p>}
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
