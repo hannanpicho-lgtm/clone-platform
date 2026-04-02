@@ -2826,6 +2826,12 @@ app.get("/admin/users", async (c) => {
     const scope = await getAdminScopeConfig(adminAccess);
     const requestTenantId = adminAccess.tenantId;
 
+    // Parse pagination params (?page=1&limit=50, max 200 per page)
+    const pageParam = Number(c.req.query('page') || 1);
+    const limitParam = Number(c.req.query('limit') || 50);
+    const page = Math.max(1, Number.isFinite(pageParam) ? pageParam : 1);
+    const limit = Math.min(200, Math.max(1, Number.isFinite(limitParam) ? limitParam : 50));
+
     const todayDate = new Date().toISOString().slice(0, 10);
     const rawUsers = await kv.getByPrefix('user:');
     const users = (rawUsers ?? [])
@@ -2862,22 +2868,15 @@ app.get("/admin/users", async (c) => {
       };
     });
 
-    const usersWithEarnings = await Promise.all(users.map(async (user: any) => {
-      const totalEarnings = await resolveUserTotalEarnings(user);
-      return {
-        ...user,
-        totalEarnings,
-        frozenNegativeAmount: resolveFrozenNegativeAmount(user),
-      };
-    }));
-
-    const scopedUsers = usersWithEarnings.filter((user: any) => isUserInTenantAdminScope(adminAccess, scope, user));
+    // Scope filter + sort — no profit lookups yet
+    const scopedUsers = users.filter((user: any) => isUserInTenantAdminScope(adminAccess, scope, user));
     const sortedUsers = scopedUsers.sort((a: any, b: any) => {
       const bCreatedAt = new Date(b?.createdAt || 0).getTime();
       const aCreatedAt = new Date(a?.createdAt || 0).getTime();
       return bCreatedAt - aCreatedAt;
     });
 
+    // Metrics computed from all scoped users (balance/count fields only — no earnings query needed)
     const metrics = {
       totalUsers: sortedUsers.length,
       totalRevenue: sortedUsers.reduce((sum: number, user: any) => sum + Math.max(0, Number(user.balance) || 0), 0),
@@ -2887,7 +2886,24 @@ app.get("/admin/users", async (c) => {
       totalCommissionsPaid: 0,
     };
 
-    return c.json({ success: true, users: sortedUsers, metrics });
+    // Paginate before profit lookups — only resolve earnings for the current page
+    const total = sortedUsers.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const skip = (page - 1) * limit;
+    const pageUsers = sortedUsers.slice(skip, skip + limit);
+
+    const usersWithEarnings = await Promise.all(pageUsers.map(async (user: any) => {
+      const totalEarnings = await resolveUserTotalEarnings(user);
+      return {
+        ...user,
+        totalEarnings,
+        frozenNegativeAmount: resolveFrozenNegativeAmount(user),
+      };
+    }));
+
+    const pagination = { total, page, limit, totalPages };
+
+    return c.json({ success: true, users: usersWithEarnings, metrics, pagination });
   } catch (error) {
     console.error(`Error fetching admin users: ${error}`);
     return c.json({ error: 'Internal server error while fetching admin users' }, 500);
@@ -4611,6 +4627,11 @@ app.post("/request-withdrawal", async (c) => {
     // Store withdrawal request
     await kv.set(`withdrawal:${withdrawalId}`, withdrawalRequest);
 
+    // Maintain per-user withdrawal index for efficient history lookups
+    const userWithdrawalIndex = await kv.get(`withdrawal-index:${userId}`) || [];
+    userWithdrawalIndex.push(withdrawalId);
+    await kv.set(`withdrawal-index:${userId}`, userWithdrawalIndex);
+
     // Add to pending queue
     const pendingWithdrawals = await kv.get('withdrawals:pending') || [];
     pendingWithdrawals.push(withdrawalId);
@@ -4661,13 +4682,26 @@ app.get("/withdrawal-history", async (c) => {
       return c.json({ error: 'Forbidden - Tenant mismatch for user profile' }, 403);
     }
 
-    // Get all withdrawals for this user
-    const allWithdrawals = await kv.getByPrefix('withdrawal:');
-    const userWithdrawals = (allWithdrawals || [])
-      .filter((w: any) => w?.userId === userId)
-      .sort((a: any, b: any) => 
-        new Date(b?.requestedAt || 0).getTime() - new Date(a?.requestedAt || 0).getTime()
+    // Get all withdrawals for this user via per-user index (fast path),
+    // falling back to a full prefix scan for legacy data and auto-building the index.
+    const withdrawalIndex = await kv.get(`withdrawal-index:${userId}`);
+    let userWithdrawals: any[];
+    if (withdrawalIndex !== null) {
+      // Index exists — fetch only this user's withdrawals (O(user's records))
+      const fetched = await Promise.all(
+        (withdrawalIndex as string[]).map((id: string) => kv.get(`withdrawal:${id}`))
       );
+      userWithdrawals = fetched.filter(Boolean);
+    } else {
+      // Legacy fallback: full scan, then build index so next call is fast
+      const allWithdrawals = await kv.getByPrefix('withdrawal:');
+      userWithdrawals = (allWithdrawals || []).filter((w: any) => w?.userId === userId);
+      const ids = userWithdrawals.map((w: any) => w?.id).filter(Boolean);
+      await kv.set(`withdrawal-index:${userId}`, ids);
+    }
+    userWithdrawals = userWithdrawals.sort((a: any, b: any) =>
+      new Date(b?.requestedAt || 0).getTime() - new Date(a?.requestedAt || 0).getTime()
+    );
 
     return c.json({
       success: true,
@@ -5122,6 +5156,9 @@ app.delete('/admin/users/:userId', async (c) => {
       await kv.set('withdrawals:approved', approved);
       await kv.set('withdrawals:denied', denied);
     }
+
+    // Clear per-user withdrawal index for the deleted user
+    await kv.set(`withdrawal-index:${userId}`, []).catch(() => undefined);
 
     return c.json({
       success: true,
