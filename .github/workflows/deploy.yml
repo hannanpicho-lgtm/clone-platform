@@ -95,11 +95,6 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Setup Supabase CLI
-        run: |
-          npm install -g supabase
-          supabase --version
-      
       - name: Deploy Edge Function
         run: npx supabase functions deploy make-server-44a642d3 --no-verify-jwt
         env:
