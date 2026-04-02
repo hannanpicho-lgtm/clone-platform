@@ -131,6 +131,7 @@ jobs:
       - name: Create Deployment
         uses: actions/github-script@v6
         if: success()
+        continue-on-error: true
         with:
           script: |
             const deployment = await github.rest.repos.createDeployment({
