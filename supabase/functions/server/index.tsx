@@ -5322,7 +5322,13 @@ app.post('/admin/users/reset-login-password', async (c) => {
     });
 
     if (authError) {
-      return c.json({ error: authError.message || 'Failed to reset login password' }, 400);
+      const rawMsg = String(authError.message || '');
+      const isNotFound = rawMsg === 'Not Found' || rawMsg.toLowerCase().includes('not found') || (authError as any)?.status === 404;
+      return c.json({
+        error: isNotFound
+          ? 'This user does not have a login account in the authentication system. Only users who registered through the app can have their login password reset.'
+          : (rawMsg || 'Failed to reset login password'),
+      }, 400);
     }
 
     return c.json({ success: true, userId: String(userProfile.id), message: 'Login password reset successfully' });
