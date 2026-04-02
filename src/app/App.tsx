@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useVersionCheck } from '../hooks/useVersionCheck';
 import { AuthPage } from './components/AuthPage';
 import { Dashboard } from './components/Dashboard';
 import { AdminApp } from './admin/AdminApp';
@@ -9,6 +10,7 @@ console.log("App.tsx loaded");
 
 export default function App() {
   const envAdminPortalOnly = String(import.meta.env.VITE_ADMIN_PORTAL_ONLY || '').toLowerCase() === 'true';
+  const updateAvailable = useVersionCheck();
   const isAdminPortalHost = typeof window !== 'undefined'
     ? window.location.hostname.includes('tank-admin-portal')
     : false;
@@ -167,6 +169,18 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      {updateAvailable && (
+        <div className="fixed inset-x-0 top-0 z-[9999] flex items-center justify-center gap-3 bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow">
+          <span>A new version of this platform is available.</span>
+          <button
+            type="button"
+            className="rounded border border-white/40 px-2 py-0.5 text-xs font-semibold underline-offset-2 hover:underline"
+            onClick={() => window.location.reload()}
+          >
+            Refresh now
+          </button>
+        </div>
+      )}
       <div className="min-h-screen">
         {adminPortalOnly ? (
           <AdminApp />
