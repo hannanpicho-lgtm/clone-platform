@@ -62,6 +62,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: UI integrity check
+        run: npm run check:ui
+
       - name: Build frontend
         run: npm run build
       

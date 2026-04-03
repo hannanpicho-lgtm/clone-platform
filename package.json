@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "npx vite",
-    "build": "vite build",
+    "build": "node scripts/ui-integrity-check.mjs && vite build",
+    "check:ui": "node scripts/ui-integrity-check.mjs",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
     "preview": "npx vite preview",
     "test:endpoints": "node test-new-endpoints.js",
     "test:customer-service": "node test-customer-service-endpoints.js",

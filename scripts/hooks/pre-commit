@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# Pre-commit hook: UI Integrity Check
+# Prevents commits that would remove critical UI markers from shipping.
+#
+# To install: cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Or run: npm run setup:hooks
+#
+# To bypass in an emergency: git commit --no-verify
+# (but the CI pipeline will still enforce this check)
+
+echo ""
+echo "Running UI integrity check..."
+echo ""
+
+node scripts/ui-integrity-check.mjs
+
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "Commit BLOCKED by UI integrity check."
+  echo "Fix the issues above before committing."
+  echo ""
+  echo "Emergency bypass: git commit --no-verify"
+  echo "(CI will still enforce this check)"
+  echo ""
+  exit 1
+fi
