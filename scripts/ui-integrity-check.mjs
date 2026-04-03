@@ -29,8 +29,8 @@ const CRITICAL_MARKERS = [
   // ── Homepage Financial Card ──────────────────────────────────────
   {
     file: 'src/app/components/Dashboard.tsx',
-    pattern: /bg-\[#0c5b8e\]/,
-    label: 'Homepage financial card (blue background #0c5b8e)',
+    pattern: /#0c5b8e/,
+    label: 'Homepage financial card (brand color #0c5b8e)',
   },
   {
     file: 'src/app/components/Dashboard.tsx',

@@ -1080,17 +1080,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
       {/* Side Menu Overlay */}
       {showMenu && (
-        <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowMenu(false)}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50" onClick={() => setShowMenu(false)}>
           <div 
-            className="absolute left-0 top-0 bottom-0 w-[90vw] max-w-[390px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-2xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-[88vw] max-w-[380px] bg-gradient-to-br from-[#0f1629] via-[#162040] to-[#0f1629] shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with User Info */}
-            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-5 pt-6 pb-5" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
+            <div className="relative bg-gradient-to-br from-blue-600/30 to-indigo-700/30 px-5 pt-6 pb-5 border-b border-white/5" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
               {/* Close Button */}
               <button 
                 onClick={() => setShowMenu(false)} 
-                className="absolute top-4 right-4 bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
+                className="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2 rounded-xl transition-all duration-200 active:scale-95"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1099,7 +1099,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* User Avatar and Info */}
               <div className="flex items-start space-x-3 mb-5 pr-11">
-                <div className="w-14 h-14 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
+                <div className="w-14 h-14 rounded-full border-2 border-white/20 overflow-hidden bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center ring-3 ring-white/10">
                   {!avatarError ? (
                     <img
                       src={avatarSrc}
@@ -1112,35 +1112,35 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   )}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-bold text-[1.05rem] leading-tight break-words">{displayProfile.name}</h3>
-                  <div className="mt-2 bg-white/10 rounded-lg p-2.5 space-y-1.5">
-                    <p className="text-blue-100 text-xs">
-                      <span className="font-semibold">Member ID:</span>{' '}
-                      <span className="font-mono tracking-[0.06em]">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
+                  <h3 className="text-white font-bold text-base leading-tight break-words">{displayProfile.name}</h3>
+                  <div className="mt-2 bg-white/5 rounded-xl p-2.5 space-y-1.5 border border-white/5">
+                    <p className="text-blue-200/80 text-xs">
+                      <span className="font-semibold text-blue-100/90">Member ID:</span>{' '}
+                      <span className="font-mono tracking-wide">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
                     </p>
-                    <p className="text-blue-100 text-xs">
-                      <span className="font-semibold">Invite Code:</span>{' '}
-                      <span className="font-mono tracking-[0.06em]">{displayProfile.invitationCode || 'Not assigned'}</span>
+                    <p className="text-blue-200/80 text-xs">
+                      <span className="font-semibold text-blue-100/90">Invite Code:</span>{' '}
+                      <span className="font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</span>
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Stats and Credit Score */}
-              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3.5">
+              <div className="bg-white/5 backdrop-blur-sm rounded-xl p-3.5 border border-white/5">
                 <div className="flex justify-between items-start">
                   {/* Left side - Stats */}
                   <div className="space-y-2.5 flex-1">
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Today's Commission</p>
-                      <p className="text-emerald-100 font-bold tabular-nums text-[1.08rem] leading-none">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-300/70 text-[10px] uppercase tracking-[0.12em] font-medium">Today's Commission</p>
+                      <p className="text-emerald-300 font-bold tabular-nums text-[1.08rem] leading-none">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Total Account Balance</p>
+                      <p className="text-blue-300/70 text-[10px] uppercase tracking-[0.12em] font-medium">Total Account Balance</p>
                       <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${balance.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Current Balance</p>
+                      <p className="text-blue-300/70 text-[10px] uppercase tracking-[0.12em] font-medium">Current Balance</p>
                       <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
                     </div>
                   </div>
@@ -1181,24 +1181,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             </div>
 
             {/* Menu Items - Light Background */}
-            <div ref={menuScrollRef} className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-5">
+            <div ref={menuScrollRef} className="flex-1 overflow-y-auto bg-gray-50/95 px-4 py-4 space-y-5">
               {/* Sticky Quick Actions */}
-              <div className="sticky top-0 z-10 bg-gray-50 pb-3 border-b border-gray-200">
-                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Quick Actions</h4>
+              <div className="sticky top-0 z-10 bg-gray-50/95 backdrop-blur-sm pb-3 border-b border-gray-100">
+                <h4 className="text-gray-500 font-semibold text-xs uppercase tracking-wider mb-2">Quick Actions</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <button 
                     onClick={() => {
                       setShowMenu(false);
                       setActiveNav('analytics');
                     }}
-                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                    className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-2 border border-gray-100 active:scale-[0.97]"
                   >
                     <span className="text-lg">📤</span>
                     <span className="text-gray-900 font-semibold text-sm">Upload</span>
                   </button>
                   <button 
                     onClick={() => setShowWithdrawalModal(true)}
-                    className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-2 border border-red-300"
+                    className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-2 border border-gray-100 active:scale-[0.97]"
                   >
                     <span className="text-lg">💵</span>
                     <span className="text-gray-900 font-semibold text-sm">Cash Out</span>
@@ -1213,7 +1213,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowMemberID(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left active:scale-[0.97] border border-gray-50"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🆔</span>
@@ -1225,7 +1225,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowActivity(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left active:scale-[0.97] border border-gray-50"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">🎟️</span>
@@ -1237,7 +1237,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowAboutUs(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left active:scale-[0.97] border border-gray-50"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">ℹ️</span>
@@ -1249,7 +1249,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                     setShowMenu(false);
                     setShowCertificate(true);
                   }}
-                  className="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left"
+                  className="bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left active:scale-[0.97] border border-gray-50"
                 >
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl">📜</span>
@@ -1260,14 +1260,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* Profit Sharing Section */}
               <div>
-                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">💰 Profit Sharing</h4>
+                <h4 className="text-gray-500 font-semibold text-xs uppercase tracking-wider mb-2">💰 Profit Sharing</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
                       setShowMenu(false);
                       setShowEarnings(true);
                     }}
-                    className="w-full bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-green-500"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-emerald-100 active:scale-[0.97]"
                   >
                     <span className="text-xl">💵</span>
                     <span className="text-gray-900 font-medium">My Earnings</span>
@@ -1278,7 +1278,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowReferrals(true);
                     }}
-                    className="w-full bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-purple-500"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-violet-100 active:scale-[0.97]"
                   >
                     <span className="text-xl">👥</span>
                     <span className="text-gray-900 font-medium">My Referrals</span>
@@ -1289,7 +1289,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowWithdrawal(true);
                     }}
-                    className="w-full bg-gradient-to-r from-red-50 to-red-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3 border-l-4 border-red-500"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-rose-100 active:scale-[0.97]"
                   >
                     <span className="text-xl">💸</span>
                     <span className="text-gray-900 font-medium">Request Withdrawal</span>
@@ -1300,14 +1300,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* Profile Section */}
               <div>
-                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Profile</h4>
+                <h4 className="text-gray-500 font-semibold text-xs uppercase tracking-wider mb-2">Profile</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
                       setShowMenu(false);
                       setActiveNav('settings');
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">✏️</span>
                     <span className="text-gray-900 font-medium">Edit Profile</span>
@@ -1317,7 +1317,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setActiveNav('settings');
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">💳</span>
                     <span className="text-gray-900 font-medium">Financial Information</span>
@@ -1327,14 +1327,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
               {/* Others Section */}
               <div>
-                <h4 className="text-gray-700 font-semibold text-sm uppercase tracking-wide mb-2">Others</h4>
+                <h4 className="text-gray-500 font-semibold text-xs uppercase tracking-wider mb-2">Others</h4>
                 <div className="space-y-2">
                   <button 
                     onClick={() => {
                       setShowMenu(false);
                       openFaqSection();
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">❓</span>
                     <span className="text-gray-900 font-medium">FAQ & Knowledge Base</span>
@@ -1344,7 +1344,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowLiveChat(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">💬</span>
                     <span className="text-gray-900 font-medium">Live Chat Support</span>
@@ -1354,7 +1354,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowSupportTickets(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">🎫</span>
                     <span className="text-gray-900 font-medium">Support Tickets</span>
@@ -1364,7 +1364,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowChat(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">📞</span>
                     <span className="text-gray-900 font-medium">Contact Us</span>
@@ -1374,7 +1374,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowBonusPayouts(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">🎁</span>
                     <span className="text-gray-900 font-medium">Bonus Payouts</span>
@@ -1384,7 +1384,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowAnalytics(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">📊</span>
                     <span className="text-gray-900 font-medium">Analytics Dashboard</span>
@@ -1394,7 +1394,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowLeaderboard(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">🏆</span>
                     <span className="text-gray-900 font-medium">Top Referrers</span>
@@ -1404,7 +1404,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowEmailPreferences(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">📧</span>
                     <span className="text-gray-900 font-medium">Email Preferences</span>
@@ -1414,7 +1414,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                       setShowMenu(false);
                       setShowNotifications(true);
                     }}
-                    className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
+                    className="w-full bg-white rounded-xl p-3 shadow-sm hover:shadow-md transition-all duration-200 text-left flex items-center space-x-3 border border-gray-50 active:scale-[0.97]"
                   >
                     <span className="text-xl">🔔</span>
                     <span className="text-gray-900 font-medium">Notification</span>
@@ -1471,18 +1471,18 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       )}
 
       {/* Dark Header */}
-      <header className="bg-[#1a1d2e] text-white sticky top-0 z-50">
+      <header className="bg-gradient-to-r from-[#0f1629] to-[#1a1d2e] text-white sticky top-0 z-50 shadow-lg">
         <div className="flex items-center justify-between px-4 py-3">
           <button 
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors" 
+            className="p-2 hover:bg-white/10 rounded-xl transition-all duration-200 active:scale-95" 
             onClick={() => setShowMenu(!showMenu)}
           >
             <Menu className="h-6 w-6" />
           </button>
           <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2">
             <button
-              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              className="p-2 hover:bg-white/10 rounded-xl transition-all duration-200 active:scale-95"
               onClick={() => setManualRefreshToken((prev) => prev + 1)}
               aria-label="Refresh dashboard"
               title="Refresh dashboard"
@@ -1491,11 +1491,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               <RefreshCw className={`h-5 w-5 ${isManualRefreshing ? 'animate-spin' : ''}`} />
             </button>
             <button
-              className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+              className="p-1 hover:bg-white/10 rounded-xl transition-all duration-200 active:scale-95"
               onClick={() => setShowMenu(true)}
               aria-label="Open profile"
             >
-              <div className="relative w-9 h-9 rounded-full border-2 border-white/70 overflow-hidden bg-slate-700 flex items-center justify-center">
+              <div className="relative w-9 h-9 rounded-full border-2 border-white/40 overflow-hidden bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center ring-2 ring-white/10">
                 {!avatarError ? (
                   <img
                     src={avatarSrc}
@@ -1509,11 +1509,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </div>
             </button>
             <button 
-              className="p-2 relative hover:bg-white/10 rounded-lg transition-colors" 
+              className="p-2 relative hover:bg-white/10 rounded-xl transition-all duration-200 active:scale-95" 
               onClick={() => setShowNotifications(!showNotifications)}
             >
               <Bell className="h-6 w-6" />
-              <span className="absolute top-1 right-1 bg-red-500 rounded-full w-2 h-2"></span>
+              <span className="absolute top-1.5 right-1.5 bg-red-500 rounded-full w-2 h-2 ring-2 ring-[#1a1d2e]"></span>
             </button>
           </div>
         </div>
@@ -1521,7 +1521,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       
       {/* Hero Section with Background Image */}
       {activeNav === 'home' && (
-        <div className="relative h-64 overflow-hidden bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500">
+        <div className="relative h-56 overflow-hidden bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-500">
           <div className="absolute inset-0 opacity-20">
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-gray-900"></div>
           </div>
@@ -1533,24 +1533,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           >
             <svg className="absolute inset-0 w-full h-full" viewBox="0 0 1000 400" preserveAspectRatio="none">
               <defs>
-                <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
-                  <path d="M 50 0 L 0 0 0 50" fill="none" stroke="white" strokeWidth="0.5" opacity="0.1"/>
+                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5" opacity="0.08"/>
                 </pattern>
               </defs>
               <rect width="1000" height="400" fill="url(#grid)" />
             </svg>
           </motion.div>
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-gray-50"></div>
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-gray-50"></div>
           <div className="absolute top-4 left-0 right-0 overflow-hidden">
             <motion.div 
-              className="hidden sm:inline-flex items-center space-x-4 bg-[#1a1d2e]/80 backdrop-blur-sm text-white px-4 py-2 rounded-full whitespace-nowrap"
+              className="hidden sm:inline-flex items-center space-x-4 glass text-white px-5 py-2.5 rounded-full whitespace-nowrap border border-white/10"
               initial={{ x: '100%' }}
               animate={{ x: '-100%' }}
               transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
             >
-              <Bell className="h-4 w-4 text-purple-400 flex-shrink-0" />
+              <Bell className="h-4 w-4 text-cyan-300 flex-shrink-0" />
               <span className="text-sm font-medium">{branding.tickerText}</span>
-              <Bell className="h-4 w-4 text-purple-400 flex-shrink-0" />
+              <Bell className="h-4 w-4 text-cyan-300 flex-shrink-0" />
               <span className="text-sm font-medium">{branding.tickerText}</span>
             </motion.div>
           </div>
@@ -1583,19 +1583,19 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         {activeNav === 'home' && (
           <>
             {/* Open and Extensible Card */}
-            <Card className="mb-6 shadow-lg">
+            <Card className="mb-6 shadow-lg border-0 bg-white/80 backdrop-blur-sm">
               <CardContent className="pt-6">
                 <h2 className="text-2xl font-bold text-gray-900 mb-3 text-center">
                   Open and extensible
                 </h2>
-                <p className="text-sm text-gray-600 text-center leading-relaxed">
+                <p className="text-sm text-gray-500 text-center leading-relaxed">
                   {branding.homeCardBody}
                 </p>
               </CardContent>
             </Card>
 
             {/* Home Financial Summary */}
-            <Card className="mb-6 overflow-hidden border-0 bg-[#0c5b8e] text-white shadow-lg">
+            <Card className="mb-6 overflow-hidden border-0 bg-gradient-to-br from-[#0c5b8e] to-[#064a73] text-white shadow-xl">
               <CardContent className="p-0">
                 {accountFrozen && (
                   <div className="border-b border-white/35 bg-[#0a4f7b] px-6 py-4 text-center">
@@ -1666,7 +1666,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <div className="mb-6 grid gap-3 sm:grid-cols-2">
               <Button
                 onClick={() => setActiveNav('analytics')}
-                className="btn-primary-action w-full bg-blue-600 text-white"
+                variant="gradient"
+                size="lg"
+                className="w-full"
               >
                 Submit Products & Earn
               </Button>
@@ -1684,7 +1686,9 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
                   setShowDepositModal(true);
                 }}
-                className="btn-primary-action w-full bg-slate-800 text-white"
+                variant="outline"
+                size="lg"
+                className="w-full border-gray-300 text-gray-700 hover:bg-gray-50"
               >
                 Deposit Funds (Bank/Crypto)
               </Button>
@@ -1693,10 +1697,10 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             {/* VIP Levels Section */}
             <div className="mb-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-[#4c2eff]">Vip Levels</h3>
+                <h3 className="text-lg font-bold text-gray-900">Vip Levels</h3>
                 <button 
                   onClick={() => setShowVIPCarousel(true)}
-                  className="flex items-center text-[#ff2e9f] text-sm font-medium hover:text-[#ff1e8f] transition-colors"
+                  className="flex items-center text-blue-600 text-sm font-semibold hover:text-blue-700 transition-colors"
                 >
                   View More
                   <svg className="w-4 h-4 ml-1" viewBox="0 0 20 20" fill="currentColor">
@@ -1709,7 +1713,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               <div className="-mx-4 px-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pb-2">
                   {/* Normal Tier */}
-                  <Card className="bg-gradient-to-r from-blue-500 to-blue-700 text-white shadow-lg overflow-hidden">
+                  <Card className="bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-lg overflow-hidden border-0">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center space-x-2">
@@ -1732,7 +1736,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   </Card>
 
                   {/* Silver Tier */}
-                  <Card className="bg-gradient-to-r from-gray-400 to-gray-600 text-white shadow-lg overflow-hidden">
+                  <Card className="bg-gradient-to-br from-slate-400 to-slate-600 text-white shadow-lg overflow-hidden border-0">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center space-x-2">
@@ -1755,7 +1759,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   </Card>
 
                   {/* Gold Tier */}
-                  <Card className="bg-gradient-to-r from-yellow-400 to-yellow-600 text-white shadow-lg overflow-hidden ring-4 ring-yellow-300">
+                  <Card className="bg-gradient-to-br from-amber-400 to-amber-600 text-white shadow-lg overflow-hidden border-0 ring-2 ring-amber-300/50">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center space-x-2">
@@ -1785,28 +1789,28 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
 
             {/* Metrics Section */}
             <div className="grid grid-cols-2 gap-4 mb-6">
-              <Card className="shadow-sm">
+              <Card className="shadow-sm border-0 bg-gradient-to-br from-cyan-50 to-blue-50 card-hover">
                 <CardContent className="pt-6 text-center">
-                  <p className="text-xs text-gray-600 mb-2">Compress alerts by</p>
-                  <p className="text-5xl font-bold text-[#00bfff]">{displayMetrics.alertCompressionRatio}%</p>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Compress alerts by</p>
+                  <p className="text-5xl font-bold text-blue-600">{displayMetrics.alertCompressionRatio}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm border-0 bg-gradient-to-br from-pink-50 to-rose-50 card-hover">
                 <CardContent className="pt-6 text-center">
-                  <p className="text-xs text-gray-600 mb-2">Identify critical alerts in</p>
-                  <p className="text-5xl font-bold text-[#ff2e9f]">{displayMetrics.mttrImprovement}s</p>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Identify critical alerts in</p>
+                  <p className="text-5xl font-bold text-rose-500">{displayMetrics.mttrImprovement}s</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm border-0 bg-gradient-to-br from-emerald-50 to-teal-50 card-hover">
                 <CardContent className="pt-6 text-center">
-                  <p className="text-xs text-gray-600 mb-2">Reduce ServiceNow tickets by</p>
-                  <p className="text-3xl font-bold text-gray-900">{displayMetrics.ticketReductionRate}%</p>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Reduce ServiceNow tickets by</p>
+                  <p className="text-3xl font-bold text-emerald-600">{displayMetrics.ticketReductionRate}%</p>
                 </CardContent>
               </Card>
-              <Card className="shadow-sm">
+              <Card className="shadow-sm border-0 bg-gradient-to-br from-violet-50 to-purple-50 card-hover">
                 <CardContent className="pt-6 text-center">
-                  <p className="text-xs text-gray-600 mb-2">Save up to</p>
-                  <p className="text-3xl font-bold text-gray-900">{displayMetrics.automationCoverage}%</p>
+                  <p className="text-xs font-medium text-gray-500 mb-2">Save up to</p>
+                  <p className="text-3xl font-bold text-violet-600">{displayMetrics.automationCoverage}%</p>
                 </CardContent>
               </Card>
             </div>
@@ -2337,42 +2341,42 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#1a1d2e] text-white shadow-lg z-40">
-        <div className="grid grid-cols-4 gap-1 px-2 py-3">
+      <nav className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#0f1629] to-[#1a1d2e] text-white shadow-2xl z-40 safe-bottom border-t border-white/5">
+        <div className="grid grid-cols-4 gap-1 px-3 py-2.5">
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'home' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`flex flex-col items-center space-y-0.5 py-1.5 rounded-xl transition-all duration-200 ${activeNav === 'home' ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-gray-300'}`}
             onClick={() => setActiveNav('home')}
           >
-            <Home className="h-6 w-6" />
-            <span className="text-xs">Home</span>
+            <Home className={`h-5 w-5 ${activeNav === 'home' ? 'drop-shadow-[0_0_6px_rgba(96,165,250,0.5)]' : ''}`} />
+            <span className="text-[10px] font-medium">Home</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'analytics' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`flex flex-col items-center space-y-0.5 py-1.5 rounded-xl transition-all duration-200 ${activeNav === 'analytics' ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-gray-300'}`}
             onClick={() => setActiveNav('analytics')}
           >
-            <BarChart3 className="h-6 w-6" />
-            <span className="text-xs">Starting</span>
+            <BarChart3 className={`h-5 w-5 ${activeNav === 'analytics' ? 'drop-shadow-[0_0_6px_rgba(96,165,250,0.5)]' : ''}`} />
+            <span className="text-[10px] font-medium">Starting</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'reports' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`flex flex-col items-center space-y-0.5 py-1.5 rounded-xl transition-all duration-200 ${activeNav === 'reports' ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-gray-300'}`}
             onClick={() => setActiveNav('reports')}
           >
-            <FileText className="h-6 w-6" />
-            <span className="text-xs">Reports</span>
+            <FileText className={`h-5 w-5 ${activeNav === 'reports' ? 'drop-shadow-[0_0_6px_rgba(96,165,250,0.5)]' : ''}`} />
+            <span className="text-[10px] font-medium">Reports</span>
           </button>
           <button 
-            className={`flex flex-col items-center space-y-1 transition-colors ${activeNav === 'settings' ? 'text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+            className={`flex flex-col items-center space-y-0.5 py-1.5 rounded-xl transition-all duration-200 ${activeNav === 'settings' ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:text-gray-300'}`}
             onClick={() => setActiveNav('settings')}
           >
-            <Settings className="h-6 w-6" />
-            <span className="text-xs">Settings</span>
+            <Settings className={`h-5 w-5 ${activeNav === 'settings' ? 'drop-shadow-[0_0_6px_rgba(96,165,250,0.5)]' : ''}`} />
+            <span className="text-[10px] font-medium">Settings</span>
           </button>
         </div>
       </nav>
 
       {/* Floating Chat Button */}
       <button 
-        className="fixed bottom-20 right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6 py-3 shadow-lg flex items-center space-x-2 z-50 transition-all active:scale-95"
+        className="fixed bottom-20 right-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-full px-5 py-3 shadow-xl hover:shadow-2xl flex items-center space-x-2 z-50 transition-all duration-200 active:scale-95 border border-white/10"
         onClick={() => setShowChat(true)}
       >
         <MessageCircle className="h-5 w-5" />
