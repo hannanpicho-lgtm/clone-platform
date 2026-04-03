@@ -20,7 +20,6 @@ import {
 import { ProductsView, ProductData } from './ProductsView';
 import { ProductReviewPage } from './ProductReviewPage';
 import { VIPTiersCarousel } from './VIPTiersCarousel';
-import { FAQPage } from './FAQPage';
 import { EarningsDashboard } from './EarningsDashboard';
 import { ReferralManager } from './ReferralManager';
 import { WithdrawalForm } from './WithdrawalForm';
@@ -86,10 +85,13 @@ interface UserProfile {
   freezeAmount?: number;
   withdrawalLimit?: number;
   productsSubmitted?: number;
+  creditScore?: number;
   dailyTaskSetLimit?: number;
   extraTaskSets?: number;
   taskSetsCompletedToday?: number;
   currentSetTasksCompleted?: number;
+  todayProfit?: number;
+  todayProfitDate?: string | null;
   premiumAssignment?: {
     orderId?: string;
     amount?: number;
@@ -239,6 +241,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const menuScrollRef = useRef<HTMLDivElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [demoMode, setDemoMode] = useState(false);
   const [activeNav, setActiveNav] = useState('home');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -298,16 +301,24 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const [showSupportTickets, setShowSupportTickets] = useState(false);
   const [showLiveChat, setShowLiveChat] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0); // For refreshing earnings/referrals
+  const [manualRefreshToken, setManualRefreshToken] = useState(0);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   
   // Withdrawal password modal state
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
   const [uiNotice, setUiNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
+  // Forced password change modal state
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [passwordChangeForm, setPasswordChangeForm] = useState({ newPassword: '', confirmPassword: '' });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  
   // Settings state
   const [editingSettings, setEditingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState({
-    username: '',
+    username: 'Demo User',
     contactEmail: '',
     loginPassword: '',
     confirmLoginPassword: '',
@@ -396,8 +407,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           setTaskActionNotice(message);
           return;
         }
-        setCurrentProduct(fallbackProduct);
-        setShowReviewPage(true);
+        setTaskActionNotice('Unable to load the next task from server. Task order is locked by admin position rules. Please retry.');
         return;
       }
 
@@ -414,8 +424,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       });
       setShowReviewPage(true);
     } catch {
-      setCurrentProduct(fallbackProduct);
-      setShowReviewPage(true);
+      setTaskActionNotice('Network issue while loading the next task. Task order is preserved; please try again.');
     }
   };
 
@@ -433,6 +442,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         productName: currentProduct.name,
         productValue: currentProduct.totalAmount,
         profit: currentProduct.profit,
+        productImage: currentProduct.image,
+        ratingNo: currentProduct.ratingNo,
       }),
     });
 
@@ -509,6 +520,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       ...prev,
       balance: Number(updatedUser?.balance ?? prev.balance ?? 0),
       productsSubmitted: Number(updatedUser?.productsSubmitted ?? prev.productsSubmitted ?? 0),
+      creditScore: Number.isFinite(Number(updatedUser?.creditScore)) ? Number(updatedUser?.creditScore) : Number(prev.creditScore ?? 100),
       dailyTaskSetLimit: Number(updatedUser?.dailyTaskSetLimit ?? prev.dailyTaskSetLimit ?? 1),
       extraTaskSets: Number(updatedUser?.extraTaskSets ?? prev.extraTaskSets ?? 0),
       taskSetsCompletedToday: Number(updatedUser?.taskSetsCompletedToday ?? prev.taskSetsCompletedToday ?? 0),
@@ -587,7 +599,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       id: `record-${Date.now()}`,
       timestamp: timestamp,
       productName: `🌟 Premium Bundle (${bundleCount} Products) (FROZEN)`,
-      productImage: '',
+      productImage: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400',
       totalAmount: mergedValue,
       profit: 0, // No profit until unfrozen
       status: 'pending',
@@ -601,8 +613,67 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     }, 100);
   };
 
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!passwordChangeForm.newPassword.trim()) {
+      setPasswordChangeError('Password is required');
+      return;
+    }
+
+    if (passwordChangeForm.newPassword.length < 6) {
+      setPasswordChangeError('Password must be at least 6 characters');
+      return;
+    }
+
+    if (passwordChangeForm.newPassword !== passwordChangeForm.confirmPassword) {
+      setPasswordChangeError('Passwords do not match');
+      return;
+    }
+
+    try {
+      setPasswordChangeLoading(true);
+      setPasswordChangeError('');
+
+      const { projectId } = await import('~/utils/supabase/info');
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-44a642d3/change-password-on-login`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ newPassword: passwordChangeForm.newPassword }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to change password');
+      }
+
+      // Password changed successfully
+      setShowPasswordChangeModal(false);
+      setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+      setUiNotice({ type: 'success', text: '✅ Password changed successfully! You can now access your account.' });
+      
+      // Reload profile to update must_change_password flag
+      setTimeout(() => {
+        setUiNotice(null);
+      }, 3000);
+
+    } catch (error: any) {
+      setPasswordChangeError(String(error?.message || 'Failed to change password'));
+    } finally {
+      setPasswordChangeLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setIsLoading(true);
+    if (manualRefreshToken === 0) {
+      setIsLoading(true);
+    } else {
+      setIsManualRefreshing(true);
+    }
 
     const fetchData = async () => {
         try {
@@ -648,6 +719,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           });
 
           setBalance(Number(loadedProfile?.balance ?? 0));
+          const todayDate = new Date().toISOString().slice(0, 10);
+          const loadedTodayProfit = String(loadedProfile?.todayProfitDate || '') === todayDate
+            ? Number(loadedProfile?.todayProfit ?? 0)
+            : 0;
+          setTodaysProfit(loadedTodayProfit);
           setTotalEarnings(Number(loadedProfile?.totalEarnings ?? loadedProfile?.balance ?? 0));
           setProductsSubmitted(Number(loadedProfile?.productsSubmitted ?? 0));
           setAccountFrozen(Boolean(loadedProfile?.accountFrozen ?? false));
@@ -670,6 +746,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             });
           }
 
+          // Check if user must change password (e.g., after credential reset by admin)
+          if (Boolean(loadedProfile?.must_change_password ?? false)) {
+            setShowPasswordChangeModal(true);
+            setPasswordChangeForm({ newPassword: '', confirmPassword: '' });
+            setPasswordChangeError('');
+          }
+          
           setError('');
         } catch (err: any) {
           const message = String(err?.message || 'Please try again in a moment.');
@@ -692,7 +775,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 id: String(record?.id || `record-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
                 timestamp: String(record?.timestamp || ''),
                 productName: String(record?.productName || 'Product Task'),
-                productImage: String(record?.productImage || ''),
+                productImage: String(record?.productImage || 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=400'),
                 totalAmount: Number(record?.totalAmount || 0),
                 profit: Number(record?.profit || 0),
                 status: (['approved', 'pending', 'frozen'].includes(String(record?.status || '').toLowerCase())
@@ -708,9 +791,20 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         }
     };
     fetchData().finally(() => {
-      setIsLoading(false);
+      if (manualRefreshToken === 0) {
+        setIsLoading(false);
+      }
+      setIsManualRefreshing(false);
     });
-  }, [accessToken, refreshCounter]);
+  }, [accessToken, manualRefreshToken]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setManualRefreshToken((prev) => prev + 1);
+    }, 45000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (depositMethod !== 'crypto') {
@@ -747,6 +841,32 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   }
 
   if (error || !profile || !metrics) {
+    // If demo mode is enabled, show demo data
+    if (demoMode) {
+      const demoProfile: UserProfile = {
+        id: 'demo-123',
+        email: 'demo@tanknewmedia.com',
+        invitationCode: 'DEMO1',
+        name: 'Demo User',
+        vipTier: 'Silver',
+        creditScore: 100,
+        createdAt: new Date().toISOString(),
+      };
+      const demoMetrics: Metrics = {
+        alertCompressionRatio: 73,
+        ticketReductionRate: 62,
+        mttrImprovement: 23,
+        automationCoverage: 78,
+      };
+      
+      // Temporarily set demo data
+      if (!profile) setProfile(demoProfile);
+      if (!metrics) setMetrics(demoMetrics);
+      
+      // Continue to render dashboard below
+      return null; // Will render dashboard below
+    }
+    
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Card className="max-w-md w-full">
@@ -754,8 +874,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
             <h2 className="text-xl font-bold text-gray-900">Data is temporarily unavailable</h2>
             <p className="text-gray-600">{error || 'Please try again in a moment.'}</p>
             <div className="flex flex-col space-y-2">
-              <Button onClick={() => { setError(''); setIsLoading(true); setRefreshCounter(c => c + 1); }} variant="default" className="w-full">
-                Try Again
+              <Button onClick={() => setDemoMode(true)} variant="default" className="w-full">
+                Continue
               </Button>
               <Button onClick={onLogout} variant="outline" className="w-full">
                 Back to Login
@@ -767,8 +887,23 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
     );
   }
 
-  const displayProfile = profile!;
-  const displayMetrics = metrics!;
+  // Use demo data if in demo mode
+  const displayProfile = demoMode && !profile ? {
+    id: 'demo-123',
+    email: 'demo@tanknewmedia.com',
+    invitationCode: 'DEMO1',
+    name: 'Demo User',
+    vipTier: 'Silver',
+    creditScore: 100,
+    createdAt: new Date().toISOString(),
+  } : profile!;
+
+  const displayMetrics = demoMode && !metrics ? {
+    alertCompressionRatio: 73,
+    ticketReductionRate: 62,
+    mttrImprovement: 23,
+    automationCoverage: 78,
+  } : metrics!;
 
   const formatUsdFigure = (value: number) => {
     const safeValue = Number.isFinite(value) ? value : 0;
@@ -813,6 +948,17 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   );
   const creditScoreValue = Math.max(0, Math.min(100, Number((displayProfile as any)?.creditScore ?? 100)));
   const creditScoreOffset = 2 * Math.PI * 40 * (1 - creditScoreValue / 100);
+
+  const openFaqSection = () => {
+    setShowFAQ(true);
+    setActiveNav('home');
+    setTimeout(() => {
+      const faqSection = document.getElementById('faq-knowledge-section');
+      if (faqSection) {
+        faqSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 120);
+  };
 
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
@@ -936,11 +1082,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
       {showMenu && (
         <div className="fixed inset-0 bg-black/50 z-50" onClick={() => setShowMenu(false)}>
           <div 
-            className="absolute left-0 top-0 bottom-0 w-[88vw] max-w-[360px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-[90vw] max-w-[390px] bg-gradient-to-br from-blue-900 via-blue-800 to-blue-900 shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header with User Info */}
-            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-4 pt-5 pb-4" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
+            <div className="relative bg-gradient-to-br from-blue-600 to-blue-800 px-5 pt-6 pb-5" style={{ paddingTop: 'max(env(safe-area-inset-top), 1.25rem)' }}>
               {/* Close Button */}
               <button 
                 onClick={() => setShowMenu(false)} 
@@ -952,8 +1098,8 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </button>
 
               {/* User Avatar and Info */}
-              <div className="flex items-start space-x-3 mb-4 pr-11">
-                <div className="w-12 h-12 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
+              <div className="flex items-start space-x-3 mb-5 pr-11">
+                <div className="w-14 h-14 rounded-full border-2 border-white/60 overflow-hidden bg-blue-300 flex items-center justify-center">
                   {!avatarError ? (
                     <img
                       src={avatarSrc}
@@ -966,36 +1112,36 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   )}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white font-bold text-base leading-tight break-words">{displayProfile.name}</h3>
-                  <div className="mt-2 bg-white/10 rounded-lg p-2 space-y-1">
+                  <h3 className="text-white font-bold text-[1.05rem] leading-tight break-words">{displayProfile.name}</h3>
+                  <div className="mt-2 bg-white/10 rounded-lg p-2.5 space-y-1.5">
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Member ID:</span>{' '}
-                      <span className="font-mono tracking-wide">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
+                      <span className="font-mono tracking-[0.06em]">{displayProfile.id.substring(0, 6).toUpperCase()}</span>
                     </p>
                     <p className="text-blue-100 text-xs">
                       <span className="font-semibold">Invite Code:</span>{' '}
-                      <span className="font-mono tracking-wide">{displayProfile.invitationCode || 'Not assigned'}</span>
+                      <span className="font-mono tracking-[0.06em]">{displayProfile.invitationCode || 'Not assigned'}</span>
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Stats and Credit Score */}
-              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3.5">
                 <div className="flex justify-between items-start">
                   {/* Left side - Stats */}
-                  <div className="space-y-2 flex-1">
+                  <div className="space-y-2.5 flex-1">
                     <div>
-                      <p className="text-blue-200 text-xs">Today's Profit</p>
-                      <p className="text-white font-bold text-lg">${todaysProfit.toFixed(2)}</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Today's Commission</p>
+                      <p className="text-emerald-100 font-bold tabular-nums text-[1.08rem] leading-none">${todaysProfit.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Total Asset</p>
-                      <p className="text-white font-bold text-lg">${balance.toFixed(2)}</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Total Account Balance</p>
+                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${balance.toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-xs">Assets</p>
-                      <p className="text-white font-bold text-lg">$0</p>
+                      <p className="text-blue-200 text-[10px] uppercase tracking-[0.12em]">Current Balance</p>
+                      <p className="text-white font-bold tabular-nums text-[1.08rem] leading-none">${Math.max(0, currentBalanceBeforePremiumValue).toFixed(2)}</p>
                     </div>
                   </div>
 
@@ -1019,12 +1165,13 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         stroke="#22c55e"
                         strokeWidth="8"
                         fill="none"
-                        strokeDasharray={`${2 * Math.PI * 40 * 0.6} ${2 * Math.PI * 40}`}
+                        strokeDasharray={`${2 * Math.PI * 40}`}
+                        strokeDashoffset={creditScoreOffset}
                         strokeLinecap="round"
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-white font-bold text-xl">60%</span>
+                      <span className="text-white font-bold text-xl">{Math.round(creditScoreValue)}%</span>
                       <span className="text-blue-200 text-xs">Credit</span>
                       <span className="text-blue-200 text-xs">Score</span>
                     </div>
@@ -1185,7 +1332,7 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                   <button 
                     onClick={() => {
                       setShowMenu(false);
-                      setShowFAQ(true);
+                      openFaqSection();
                     }}
                     className="w-full bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow text-left flex items-center space-x-3"
                   >
@@ -1334,6 +1481,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
           </button>
           <h1 className="text-2xl font-bold tracking-wider">{branding.logoText}</h1>
           <div className="flex items-center space-x-3">
+            <button
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              onClick={() => setManualRefreshToken((prev) => prev + 1)}
+              aria-label="Refresh dashboard"
+              title="Refresh dashboard"
+              disabled={isManualRefreshing}
+            >
+              <RefreshCw className={`h-5 w-5 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+            </button>
             <button
               className="p-1 hover:bg-white/10 rounded-lg transition-colors"
               onClick={() => setShowMenu(true)}
@@ -1654,6 +1810,40 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </CardContent>
               </Card>
             </div>
+
+            {showFAQ && (
+              <section id="faq-knowledge-section" className="mb-6 scroll-mt-24">
+                <Card className="overflow-hidden border border-blue-100 shadow-lg">
+                  <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-4 text-white">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-xl font-bold">FAQ & Knowledge Base</h3>
+                        <p className="text-xs text-white/90">Get quick answers without leaving your dashboard.</p>
+                      </div>
+                      <button
+                        onClick={() => setShowFAQ(false)}
+                        className="rounded-lg border border-white/40 px-3 py-1 text-sm font-semibold text-white hover:bg-white/10"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                  </div>
+                  <CardContent className="px-5 py-5">
+                    <FAQ
+                      accessToken={accessToken}
+                      onCreateSupportTicket={() => {
+                        setShowFAQ(false);
+                        setShowSupportTickets(true);
+                      }}
+                      onStartLiveChat={() => {
+                        setShowFAQ(false);
+                        setShowLiveChat(true);
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </section>
+            )}
           </>
         )}
 
@@ -1833,55 +2023,57 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                                 return;
                               }
 
-                              try {
-                                const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
-                                const baseHeaders = {
-                                  'Content-Type': 'application/json',
-                                  'Authorization': `Bearer ${accessToken}`,
-                                  'apikey': publicAnonKey,
-                                };
-                                const fnBase = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
+                              if (!demoMode) {
+                                try {
+                                  const { projectId, publicAnonKey } = await import('~/utils/supabase/info');
+                                  const baseHeaders = {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${accessToken}`,
+                                    'apikey': publicAnonKey,
+                                  };
+                                  const fnBase = `https://${projectId}.supabase.co/functions/v1/make-server-44a642d3`;
 
-                                // Save contact email
-                                const saveResponse = await fetch(`${fnBase}/profile/contact-email`, {
-                                  method: 'PUT',
-                                  headers: baseHeaders,
-                                  body: JSON.stringify({ contactEmail: normalizedContactEmail || null }),
-                                });
-                                const saveData = await saveResponse.json().catch(() => ({}));
-                                if (!saveResponse.ok) {
-                                  throw new Error(saveData?.error || 'Failed to update contact email');
-                                }
-                                setProfile((prev) => prev ? { ...prev, contactEmail: normalizedContactEmail || null } : prev);
-
-                                // Change login password if provided
-                                if (settingsForm.loginPassword) {
-                                  const pwResp = await fetch(`${fnBase}/profile/change-password`, {
+                                  // Save contact email
+                                  const saveResponse = await fetch(`${fnBase}/profile/contact-email`, {
                                     method: 'PUT',
                                     headers: baseHeaders,
-                                    body: JSON.stringify({ newPassword: settingsForm.loginPassword }),
+                                    body: JSON.stringify({ contactEmail: normalizedContactEmail || null }),
                                   });
-                                  const pwData = await pwResp.json().catch(() => ({}));
-                                  if (!pwResp.ok) {
-                                    throw new Error(pwData?.error || 'Failed to update login password');
+                                  const saveData = await saveResponse.json().catch(() => ({}));
+                                  if (!saveResponse.ok) {
+                                    throw new Error(saveData?.error || 'Failed to update contact email');
                                   }
-                                }
+                                  setProfile((prev) => prev ? { ...prev, contactEmail: normalizedContactEmail || null } : prev);
 
-                                // Change withdrawal password if provided
-                                if (settingsForm.withdrawalPassword) {
-                                  const wpResp = await fetch(`${fnBase}/profile/change-withdrawal-password`, {
-                                    method: 'PUT',
-                                    headers: baseHeaders,
-                                    body: JSON.stringify({ newPin: settingsForm.withdrawalPassword }),
-                                  });
-                                  const wpData = await wpResp.json().catch(() => ({}));
-                                  if (!wpResp.ok) {
-                                    throw new Error(wpData?.error || 'Failed to update withdrawal password');
+                                  // Change login password if provided
+                                  if (settingsForm.loginPassword) {
+                                    const pwResp = await fetch(`${fnBase}/profile/change-password`, {
+                                      method: 'PUT',
+                                      headers: baseHeaders,
+                                      body: JSON.stringify({ newPassword: settingsForm.loginPassword }),
+                                    });
+                                    const pwData = await pwResp.json().catch(() => ({}));
+                                    if (!pwResp.ok) {
+                                      throw new Error(pwData?.error || 'Failed to update login password');
+                                    }
                                   }
+
+                                  // Change withdrawal password if provided
+                                  if (settingsForm.withdrawalPassword) {
+                                    const wpResp = await fetch(`${fnBase}/profile/change-withdrawal-password`, {
+                                      method: 'PUT',
+                                      headers: baseHeaders,
+                                      body: JSON.stringify({ newPin: settingsForm.withdrawalPassword }),
+                                    });
+                                    const wpData = await wpResp.json().catch(() => ({}));
+                                    if (!wpResp.ok) {
+                                      throw new Error(wpData?.error || 'Failed to update withdrawal password');
+                                    }
+                                  }
+                                } catch (saveErr: any) {
+                                  setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save settings'}` });
+                                  return;
                                 }
-                              } catch (saveErr: any) {
-                                setUiNotice({ type: 'error', text: `${saveErr?.message || 'Failed to save settings'}` });
-                                return;
                               }
 
                               setSettingsForm((prev) => ({ ...prev, loginPassword: '', confirmLoginPassword: '', withdrawalPassword: '', confirmWithdrawalPassword: '' }));
@@ -2204,13 +2396,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         />
       )}
 
-      {/* FAQ Page */}
-      {showFAQ && (
-        <FAQPage
-          onClose={() => setShowFAQ(false)}
-        />
-      )}
-
       {/* About Us Page */}
       {showAboutUs && (
         <AboutUsPage
@@ -2420,13 +2605,15 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </div>
             </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-gray-200 p-6 pt-4 bg-white">
-                <Button variant="outline" className="w-full" onClick={() => setShowDepositModal(false)}>
+              <div className="btn-container border-t border-gray-200 p-6 pt-4 bg-white">
+                <div className="btn-group">
+                <Button variant="outline" onClick={() => setShowDepositModal(false)}>
                   Cancel
                 </Button>
-                <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
+                <Button className="btn-primary-action bg-blue-600 hover:bg-blue-700 text-white" onClick={submitDepositRequest} disabled={isSubmittingDeposit}>
                   {isSubmittingDeposit ? 'Submitting...' : 'Submit Deposit Request'}
                 </Button>
+                </div>
               </div>
           </div>
         </div>
@@ -2458,13 +2645,14 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 </div>
 
                 {/* Buttons */}
-                <div className="flex space-x-3 pt-4">
+                <div className="btn-container pt-4">
+                  <div className="btn-group">
                   <button
                     onClick={() => {
                       setShowWithdrawalModal(false);
                       setWithdrawalPassword('');
                     }}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                    className="min-w-0 rounded-lg border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
                   >
                     Cancel
                   </button>
@@ -2479,10 +2667,11 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                         setUiNotice({ type: 'error', text: 'Please enter your withdrawal password' });
                       }
                     }}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+                    className="btn-primary-action min-w-0 rounded-lg bg-green-600 px-4 py-2 font-medium text-white transition-colors hover:bg-green-700"
                   >
                     Submit
                   </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2580,6 +2769,70 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
                 />
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forced Password Change Modal */}
+      {showPasswordChangeModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4">
+              <h2 className="text-xl font-bold text-white">Change Your Password</h2>
+              <p className="text-sm text-amber-100 mt-1">Your account requires a password change for security reasons</p>
+            </div>
+
+            {/* Content */}
+            <form onSubmit={handlePasswordChange} className="px-6 py-6 space-y-4">
+              {passwordChangeError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 p-3">
+                  <p className="text-sm text-red-700 font-medium">{passwordChangeError}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordChangeForm.newPassword}
+                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, newPassword: e.target.value }))}
+                  placeholder="Enter new password (min. 6 characters)"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
+                  disabled={passwordChangeLoading}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordChangeForm.confirmPassword}
+                  onChange={(e) => setPasswordChangeForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  placeholder="Confirm new password"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none transition"
+                  disabled={passwordChangeLoading}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="submit"
+                  disabled={passwordChangeLoading || !passwordChangeForm.newPassword}
+                  className="flex-1 px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  {passwordChangeLoading ? 'Changing...' : 'Change Password'}
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-500 text-center">
+                ⚠️ You must change your password before access is granted to your account
+              </p>
+            </form>
           </div>
         </div>
       )}
@@ -2746,42 +2999,6 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
         </div>
       )}
 
-      {/* FAQ Modal */}
-      {showFAQ && (
-        <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
-          <div className="min-h-screen flex items-start justify-center pt-4 pb-20">
-            <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full mx-4">
-              {/* Header */}
-              <div className="bg-gradient-to-r from-violet-500 to-purple-600 px-6 py-6 sticky top-0">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-white">❓ FAQ & Knowledge Base</h2>
-                  <button
-                    onClick={() => setShowFAQ(false)}
-                    className="text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div className="px-6 py-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                <FAQ
-                  accessToken={accessToken}
-                  onCreateSupportTicket={() => {
-                    setShowFAQ(false);
-                    setShowSupportTickets(true);
-                  }}
-                  onStartLiveChat={() => {
-                    setShowFAQ(false);
-                    setShowLiveChat(true);
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
