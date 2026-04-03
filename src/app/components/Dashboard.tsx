@@ -7,6 +7,9 @@ import {
   Menu,
   Bell,
   User,
+  RefreshCw,
+  Rocket,
+  Snowflake,
   Home,
   BarChart3,
   FileText,
@@ -767,6 +770,50 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
   const displayProfile = profile!;
   const displayMetrics = metrics!;
 
+  const formatUsdFigure = (value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    const hasDecimals = Math.abs(safeValue % 1) > 0;
+    return `${safeValue.toLocaleString(undefined, {
+      minimumFractionDigits: hasDecimals ? 2 : 0,
+      maximumFractionDigits: 2,
+    })} USD`;
+  };
+
+  const totalAccountBalanceValue = Number(balance || 0);
+  const premiumProjectedProfitValue = Number(
+    (activePremiumAssignment as any)?.potentialProfit
+    ?? premiumProfitBeforeFreeze
+    ?? 0,
+  );
+  const currentBalanceBeforePremiumRaw = Number(
+    (displayProfile as any)?.premiumAssignment?.previousBalance
+    ?? (displayProfile as any)?.principalBalance
+    ?? totalAccountBalanceValue,
+  );
+  const currentBalanceBeforePremiumValue = Math.max(0, currentBalanceBeforePremiumRaw);
+  const upholdAmountMagnitudeValue = Number(
+    accountFrozen
+      ? Math.max(
+          Number(freezeAmount || 0),
+          Number((activePremiumAssignment as any)?.topUpRequired || 0),
+          Math.abs(Math.min(totalAccountBalanceValue, 0)),
+        )
+      : 0,
+  );
+  const upholdAmountValue = accountFrozen ? -Math.abs(upholdAmountMagnitudeValue) : 0;
+  const projectedTotalAccountBalanceValue = Number(
+    accountFrozen
+      ? currentBalanceBeforePremiumValue + upholdAmountMagnitudeValue + premiumProjectedProfitValue
+      : totalAccountBalanceValue,
+  );
+  const todaysCommissionValue = Number(
+    accountFrozen
+      ? Number(todaysProfit || 0) + premiumProjectedProfitValue
+      : Number(todaysProfit || 0),
+  );
+  const creditScoreValue = Math.max(0, Math.min(100, Number((displayProfile as any)?.creditScore ?? 100)));
+  const creditScoreOffset = 2 * Math.PI * 40 * (1 - creditScoreValue / 100);
+
   const submitDepositRequest = async () => {
     const amount = Number(depositAmount || 0);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -1391,43 +1438,101 @@ export function Dashboard({ accessToken, onLogout }: DashboardProps) {
               </CardContent>
             </Card>
 
-            {/* Balance Display */}
-            <Card className="mb-6 shadow-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm opacity-90 mb-1">Total Earnings</p>
-                    <p className="text-4xl font-bold">${totalEarnings.toFixed(2)}</p>
-                    <p className="text-xs opacity-80 mt-2">{productsSubmitted} products submitted</p>
+            {/* Home Financial Summary */}
+            <Card className="mb-6 overflow-hidden border-0 bg-[#0c5b8e] text-white shadow-lg">
+              <CardContent className="p-0">
+                {accountFrozen && (
+                  <div className="border-b border-white/35 bg-[#0a4f7b] px-6 py-4 text-center">
+                    <p className="mx-auto inline-flex items-center rounded-full border border-red-300/60 bg-red-500/20 px-3 py-1 text-xs font-bold tracking-wide text-red-100">
+                      ACCOUNT TEMPORARILY FROZEN
+                    </p>
+                    <p className="mt-2 text-sm font-semibold tracking-wide text-white/95">
+                      Your account is temporarily frozen due to a premium product. Complete the required action to unlock and receive your profit.
+                    </p>
                   </div>
-                  <Wallet className="h-16 w-16 opacity-30" />
+                )}
+
+                <div className="px-6 py-6">
+                  <div className="mb-4 text-center">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/80">Financial Summary</p>
+                    <h3 className="mt-2 text-[1.7rem] sm:text-3xl font-black tracking-wide leading-tight">Clear Account Snapshot</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
+                      <div className="flex items-center gap-3">
+                        <Rocket className="h-8 w-8 text-emerald-200" />
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Today&apos;s Commission</p>
+                      </div>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-emerald-100">{formatUsdFigure(todaysCommissionValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Includes today&apos;s realized earnings.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
+                      <div className="flex items-center gap-3">
+                        <Wallet className="h-8 w-8 text-white/95" />
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Total Account Balance</p>
+                      </div>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(projectedTotalAccountBalanceValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Current balance plus premium release projection.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 sm:p-5">
+                      <div className="flex items-center gap-3">
+                        <Wallet className="h-8 w-8 text-white/95" />
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-white/80">Current Balance</p>
+                      </div>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-white">{formatUsdFigure(currentBalanceBeforePremiumValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs leading-relaxed text-white/80">Base balance before premium settlement adjustments.</p>
+                    </div>
+
+                    <div className="rounded-2xl border border-red-300/40 bg-red-500/20 p-4 sm:p-5">
+                      <div className="flex items-center gap-3">
+                        <Snowflake className="h-8 w-8 text-red-100" />
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-red-100">Uphold Amount</p>
+                      </div>
+                      <p className="mt-2 text-[1.75rem] sm:text-3xl font-black tabular-nums leading-none text-red-100">{formatUsdFigure(upholdAmountValue)}</p>
+                      <p className="mt-2 text-[11px] sm:text-xs font-semibold leading-relaxed text-red-100">Negative deficit held during premium freeze.</p>
+                    </div>
+                  </div>
+
+                  {accountFrozen && premiumProjectedProfitValue > 0 && (
+                    <div className="mt-4 rounded-xl border border-emerald-300/50 bg-emerald-500/20 px-4 py-3 text-center">
+                      <p className="text-sm font-semibold text-emerald-100">
+                        Expected premium profit after unfreeze: +{formatUsdFigure(Math.abs(premiumProjectedProfitValue))}
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <Button 
-                  onClick={() => setActiveNav('analytics')}
-                  className="w-full mt-4 bg-white text-green-600 hover:bg-gray-100"
-                >
-                  Submit Products & Earn
-                </Button>
-                <Button
-                  onClick={() => {
-                    setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
-                    const modalAssets = getDepositCryptoAssets(depositConfig);
-                    const modalDefaultAssetCode = String(
-                      depositConfig?.crypto?.defaultAsset
-                      || modalAssets?.[0]?.asset
-                      || 'BTC'
-                    ).toUpperCase();
-                    const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
-                    setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
-                    setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
-                    setShowDepositModal(true);
-                  }}
-                  className="w-full mt-3 bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Deposit Funds (Bank/Crypto)
-                </Button>
               </CardContent>
             </Card>
+
+            <div className="mb-6 grid gap-3 sm:grid-cols-2">
+              <Button
+                onClick={() => setActiveNav('analytics')}
+                className="btn-primary-action w-full bg-blue-600 text-white"
+              >
+                Submit Products & Earn
+              </Button>
+              <Button
+                onClick={() => {
+                  setDepositSourceWalletAddress(cryptoWallet.walletAddress || '');
+                  const modalAssets = getDepositCryptoAssets(depositConfig);
+                  const modalDefaultAssetCode = String(
+                    depositConfig?.crypto?.defaultAsset
+                    || modalAssets?.[0]?.asset
+                    || 'BTC'
+                  ).toUpperCase();
+                  const modalSelectedAsset = modalAssets.find((item) => String(item.asset || '').toUpperCase() === modalDefaultAssetCode) || modalAssets[0] || null;
+                  setDepositCryptoAsset(String(modalSelectedAsset?.asset || modalDefaultAssetCode || 'BTC').toUpperCase());
+                  setDepositCryptoNetwork(String(modalSelectedAsset?.network || modalSelectedAsset?.networks?.[0] || 'Bitcoin'));
+                  setShowDepositModal(true);
+                }}
+                className="btn-primary-action w-full bg-slate-800 text-white"
+              >
+                Deposit Funds (Bank/Crypto)
+              </Button>
+            </div>
 
             {/* VIP Levels Section */}
             <div className="mb-6">
