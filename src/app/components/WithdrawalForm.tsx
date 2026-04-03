@@ -122,7 +122,8 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || 'Unable to submit withdrawal request right now');
+        console.error('Withdrawal API error:', response.status, data);
+        setError(data.error || `Withdrawal failed (${response.status})`);
         return;
       }
 
@@ -136,9 +137,9 @@ export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimi
       if (onSuccess) {
         onSuccess();
       }
-    } catch (err) {
-      setError('Unable to submit withdrawal request right now');
-      console.error('Withdrawal error:', err);
+    } catch (err: any) {
+      console.error('Withdrawal network error:', err);
+      setError(err?.message || 'Network error — check your connection and try again');
     } finally {
       setLoading(false);
     }
