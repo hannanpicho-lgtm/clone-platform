@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, TrendingUp } from 'lucide-react';
+import { functionsBaseUrl } from '~/utils/supabase/info';
 
 interface EarningsByLevel {
   [key: string]: number;
@@ -10,8 +11,6 @@ interface EarningsByLevel {
 interface MultiLevelEarningsProps {
   accessToken: string;
 }
-
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
 
 export function MultiLevelEarnings({ accessToken }: MultiLevelEarningsProps) {
   const [earnings, setEarnings] = useState<any>(null);
@@ -22,7 +21,7 @@ export function MultiLevelEarnings({ accessToken }: MultiLevelEarningsProps) {
     try {
       setLoading(true);
       setError('');
-      const response = await fetch(`${BASE_URL}/make-server-44a642d3/earnings-multilevel`, {
+      const response = await fetch(`${functionsBaseUrl}/make-server-44a642d3/earnings-multilevel`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const data = await response.json();

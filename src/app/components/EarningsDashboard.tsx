@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { AlertCircle, Copy, Loader2, TrendingUp, Users, Wallet } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
+import { functionsBaseUrl } from '~/utils/supabase/info';
 
 interface EarningsData {
   balance: number;
@@ -32,8 +33,7 @@ export function EarningsDashboard({
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-  const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
+  const FUNCTIONS_BASE_URL = functionsBaseUrl;
 
   useEffect(() => {
     fetchEarnings();

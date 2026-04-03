@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, CheckCircle, Clock, X } from 'lucide-react';
+import { functionsBaseUrl } from '~/utils/supabase/info';
 
 interface WithdrawalFormProps {
   accessToken: string;
@@ -24,8 +25,7 @@ interface WithdrawalRequest {
   denialReason?: string;
 }
 
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
+const FUNCTIONS_BASE_URL = functionsBaseUrl;
 
 export function WithdrawalForm({ accessToken, currentBalance = 0, withdrawalLimit = 0, onSuccess }: WithdrawalFormProps) {
   const [amount, setAmount] = useState('');

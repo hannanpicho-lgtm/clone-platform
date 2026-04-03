@@ -16,11 +16,11 @@ interface CheckInStatus {
 interface MembershipLevel {
   level: number; name: string; icon: string; gradient: string; headline: string; features: string[];
 }
+import { functionsBaseUrl } from '~/utils/supabase/info';
+
 interface ActivityPageProps { onClose: () => void; accessToken: string; }
 
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-const FN_BASE = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
-const API = `${FN_BASE}/make-server-44a642d3`;
+const API = `${functionsBaseUrl}/make-server-44a642d3`;
 
 const DEFAULT_MILESTONES: CheckInMilestone[] = [
   { day: 3, reward: 500 }, { day: 5, reward: 1000 }, { day: 15, reward: 1500 }, { day: 30, reward: 2000 },

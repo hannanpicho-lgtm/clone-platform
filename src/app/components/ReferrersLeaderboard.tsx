@@ -15,8 +15,8 @@ interface ReferrersLeaderboardProps {
   accessToken: string;
 }
 
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
+import { functionsBaseUrl } from '~/utils/supabase/info';
+const FUNCTIONS_BASE_URL = functionsBaseUrl;
 
 export function ReferrersLeaderboard({ accessToken }: ReferrersLeaderboardProps) {
   const [leaderboard, setLeaderboard] = useState<LeaderboardUser[]>([]);

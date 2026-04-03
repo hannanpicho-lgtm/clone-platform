@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { AlertCircle, Loader2, Users, DollarSign, Calendar } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
+import { functionsBaseUrl } from '~/utils/supabase/info';
 
 interface Referral {
   childId: string;
@@ -23,8 +24,7 @@ export function ReferralManager({ accessToken }: { accessToken: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
-  const FUNCTIONS_BASE_URL = BASE_URL.endsWith('/functions/v1') ? BASE_URL : `${BASE_URL}/functions/v1`;
+  const FUNCTIONS_BASE_URL = functionsBaseUrl;
 
   useEffect(() => {
     fetchReferrals();

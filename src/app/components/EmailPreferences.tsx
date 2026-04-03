@@ -6,6 +6,8 @@ import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, CheckCircle, Bell } from 'lucide-react';
 
+// BASE_URL removed — unused (no fetch calls in this component)
+
 interface NotificationPreferences {
   emailNotifications: boolean;
   withdrawalNotifications: boolean;
@@ -18,8 +20,6 @@ interface EmailPreferencesProps {
   profile: any;
   onUpdate?: (preferences: NotificationPreferences) => void;
 }
-
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '') || '';
 
 export function EmailPreferences({ profile, onUpdate }: EmailPreferencesProps) {
   const [preferences, setPreferences] = useState<NotificationPreferences>({
