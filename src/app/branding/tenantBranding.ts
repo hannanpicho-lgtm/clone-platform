@@ -62,7 +62,8 @@ export const resolveFrontendTenantId = (hostOrHostname?: string | null): Fronten
   if (host.includes('localhost') || host.includes('127.0.0.1')) {
     return 'tank';
   }
-  return null;
+  // Default: any unrecognized domain (e.g. clone-platform.pages.dev) → tank
+  return 'tank';
 };
 
 export const getTenantBranding = (tenantId: FrontendTenantId | null | undefined): TenantBranding => {

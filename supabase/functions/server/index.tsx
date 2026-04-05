@@ -99,7 +99,8 @@ const resolveRequestTenantId = (c: any): TenantId | null => {
   if (host.includes('localhost') || host.includes('127.0.0.1')) {
     return DEFAULT_TENANT_ID;
   }
-  return null;
+  // Default: any unrecognized host (e.g. Supabase Edge Function host) → default tenant
+  return DEFAULT_TENANT_ID;
 };
 
 const requireTenantId = (c: any): { ok: true; tenantId: TenantId } | { ok: false; response: any } => {
